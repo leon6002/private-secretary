@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "Bash(npm run *)",
+      "mcp__claude_ai_Gmail__search_threads",
+      "mcp__claude_ai_Slack__slack_search_public",
+      "WebSearch",
+      "WebFetch(domain:en.wikipedia.org)",
+      "WebFetch(domain:www.lazydogrestaurants.com)",
+      "WebFetch(domain:www.xmap.ai)",
+      "Bash(npm install *)",
+      "Bash(wechat-cli --help)",
+      "Bash(npm ls *)",
+      "Bash(wxecho --help)",
+      "Bash(npm view *)",
+      "Bash(curl -sL https://raw.githubusercontent.com/ylytdeng/wechat-decrypt/main/package.json)",
+      "Bash(curl -sL \"https://api.github.com/repos/ylytdeng/wechat-decrypt/commits?per_page=5\")",
+      "Bash(curl -sL \"https://api.github.com/repos/freestylefly/wechat-cli/commits?per_page=5\")",
+      "Bash(curl -sL \"https://api.github.com/repos/chang-xinhai/WxEcho/commits?per_page=5\")",
+      "Bash(claude mcp *)",
+      "Bash(claude --version)",
+      "Bash(gh api *)",
+      "Bash(curl -s \"https://api.github.com/repos/multica-ai/andrej-karpathy-skills/git/trees/main?recursive=1\")",
+      "Bash(lsof -nP -iTCP:4317 -sTCP:LISTEN)",
+      "Bash(curl -sS -m 5 -i http://127.0.0.1:4317/)",
+      "Bash(ps -o pid,lstart,command -p 68857)",
+      "Bash(curl -sS -m 10 -o /tmp/ps_state.json -w \"HTTP %{http_code}\\\\n\" http://127.0.0.1:4317/api/state)",
+      "Read(//tmp/**)",
+      "Bash(curl -sS -m 10 -o /tmp/ps_personas.json -w \"HTTP %{http_code}\\\\n\" http://127.0.0.1:4317/api/personas)",
+      "Bash(cd *)",
+      "Bash(claude -p --help)",
+      "Bash(grep -iA1 \"output-format\\\\|model\\\\|append-system\")"
+    ]
+  }
+}

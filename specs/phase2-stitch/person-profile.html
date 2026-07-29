@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Person Profile - Relay Cockpit</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&amp;family=IBM+Plex+Sans+SC:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          "colors": {
+                  "primary": "#2563EB",
+                  "primary-container": "#2563EB",
+                  "background": "#F7F7F8",
+                  "surface": "#FFFFFF",
+                  "surface-container-lowest": "#FFFFFF",
+                  "surface-container-low": "#F8FAFC",
+                  "surface-container": "#F1F5F9",
+                  "surface-container-high": "#E2E8F0",
+                  "surface-container-highest": "#F1F5F9",
+                  "on-background": "#1A1D21",
+                  "on-surface": "#1A1D21",
+                  "on-surface-variant": "#64748B",
+                  "outline": "#64748B",
+                  "outline-variant": "#E5E7EB",
+                  "warning": "#F59E0B",
+                  "warning-container": "#FEF3C7",
+                  "on-warning-container": "#78350F",
+                  "tertiary": "#2563EB",
+                  "slack": "#4A154B",
+                  "slack-bg": "#EAE5EB",
+                  "gmail": "#EA4335",
+                  "gmail-bg": "#FCECEB"
+          },
+          "borderRadius": {
+                  "DEFAULT": "0.25rem",
+                  "lg": "0.5rem",
+                  "xl": "0.75rem",
+                  "2xl": "0.75rem",
+                  "full": "9999px"
+          },
+          "spacing": {
+                  "lg": "1.5rem",
+                  "xl": "2rem",
+                  "sm": "0.5rem",
+                  "xs": "0.25rem",
+                  "md": "1rem",
+                  "margin": "1.5rem",
+                  "gutter": "1rem"
+          },
+          "fontFamily": {
+                  "headline": [
+                          "IBM Plex Sans", "IBM Plex Sans SC", "sans-serif"
+                  ],
+                  "display": [
+                          "IBM Plex Sans", "IBM Plex Sans SC", "sans-serif"
+                  ],
+                  "body-base": [
+                          "IBM Plex Sans", "IBM Plex Sans SC", "sans-serif"
+                  ],
+                  "label-sm": [
+                          "IBM Plex Sans", "IBM Plex Sans SC", "sans-serif"
+                  ],
+                  "label-xs": [
+                          "IBM Plex Sans", "IBM Plex Sans SC", "sans-serif"
+                  ],
+                  "body-medium": [
+                          "IBM Plex Sans", "IBM Plex Sans SC", "sans-serif"
+                  ]
+          },
+          "fontSize": {
+                  "headline": [
+                          "18px",
+                          {
+                                  "lineHeight": "28px",
+                                  "letterSpacing": "-0.01em",
+                                  "fontWeight": "500"
+                          }
+                  ],
+                  "display": [
+                          "24px",
+                          {
+                                  "lineHeight": "32px",
+                                  "letterSpacing": "-0.02em",
+                                  "fontWeight": "600"
+                          }
+                  ],
+                  "display-lg": [
+                          "32px",
+                          {
+                                  "lineHeight": "40px",
+                                  "letterSpacing": "-0.02em",
+                                  "fontWeight": "700"
+                          }
+                  ],
+                  "body-base": [
+                          "14px",
+                          {
+                                  "lineHeight": "20px",
+                                  "fontWeight": "400"
+                          }
+                  ],
+                  "label-sm": [
+                          "12px",
+                          {
+                                  "lineHeight": "16px",
+                                  "letterSpacing": "0.02em",
+                                  "fontWeight": "500"
+                          }
+                  ],
+                  "label-xs": [
+                          "11px",
+                          {
+                                  "lineHeight": "14px",
+                                  "letterSpacing": "0.05em",
+                                  "fontWeight": "600"
+                          }
+                  ],
+                  "body-medium": [
+                          "14px",
+                          {
+                                  "lineHeight": "20px",
+                                  "fontWeight": "500"
+                          }
+                  ]
+          }
+        },
+      },
+    }
+  </script>
+<style>
+    .hairline-border {
+      border-width: 0.5px;
+      border-color: theme('colors.outline-variant');
+    }
+    .hairline-border-b {
+      border-bottom-width: 0.5px;
+      border-bottom-color: theme('colors.outline-variant');
+    }
+    .hairline-border-r {
+      border-right-width: 0.5px;
+      border-right-color: theme('colors.outline-variant');
+    }
+    .scrollbar-hide::-webkit-scrollbar {
+        display: none;
+    }
+    .scrollbar-hide {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+    }
+  </style>
+</head>
+<body class="bg-background text-on-background font-body-base antialiased h-screen flex overflow-hidden">
+<!-- Slim Left Rail -->
+<nav class="w-[56px] flex-shrink-0 bg-surface hairline-border-r flex flex-col items-center py-4 h-full z-20 relative">
+<!-- Brand Mark -->
+<div class="w-8 h-8 rounded-md bg-surface-container-high flex items-center justify-center text-on-surface font-bold text-lg mb-8 cursor-default">
+    s.
+</div>
+<!-- Nav Items -->
+<div class="flex-1 flex flex-col gap-y-2 w-full items-center">
+<!-- Inbox -->
+<button class="w-10 h-10 rounded-lg flex items-center justify-center text-on-surface-variant hover:bg-surface-container transition-colors group" title="Queue">
+<span class="material-symbols-outlined text-[24px]">inbox</span>
+</button>
+<!-- People (Active) -->
+<div class="w-full relative flex items-center justify-center py-1">
+<div class="absolute left-0 top-0 bottom-0 w-[2px] bg-primary"></div>
+<button class="w-10 h-10 rounded-lg flex items-center justify-center text-primary bg-primary/10 transition-colors group" title="People">
+<span class="material-symbols-outlined text-[24px]" style="font-variation-settings: 'FILL' 1;">group</span>
+</button>
+</div>
+<!-- Connections -->
+<button class="w-10 h-10 rounded-lg flex items-center justify-center text-on-surface-variant hover:bg-surface-container transition-colors group" title="Connections">
+<span class="material-symbols-outlined text-[24px]">hub</span>
+</button>
+</div>
+</nav>
+<!-- Second Column: Contact Switcher -->
+<aside class="w-[72px] flex-shrink-0 bg-surface hairline-border-r flex flex-col items-center py-sm h-full z-10 relative">
+<button class="w-10 h-10 rounded-lg flex items-center justify-center text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors mb-xl group" title="Back to Queue">
+<span class="material-symbols-outlined text-[20px] group-hover:-translate-x-0.5 transition-transform">arrow_back</span>
+</button>
+<div class="flex-1 flex flex-col gap-y-sm overflow-y-auto scrollbar-hide w-full items-center">
+<!-- Active Avatar -->
+<div class="relative cursor-pointer group">
+<div class="w-10 h-10 rounded-full overflow-hidden border-2 border-primary p-[1px]">
+<img alt="Alexander Voss profile" class="w-full h-full object-cover rounded-full" data-alt="A professional headshot of a middle-aged European executive with short graying hair, wearing a dark tailored suit and a crisp white shirt without a tie. The background is a brightly lit, minimalist modern office with blurred architectural glass. The lighting is high-key and even, conveying trust and competence in a corporate setting. The overall aesthetic is clean, light-mode, and professional." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDL9xeuWBQXFZUI0y65WDpzHOGa6BnOCWBHCY6iFu91y_9PJkYjgvm-13DeTy3yri8VBwEPLACUmkJGvsPqqPoVxZHAFdrepskkiAbDHeByPhwvUsZKx7u3ZS-R9uexR5h5PFD0k_UJiKJEbPVt0vkY8IjO0XsTmnFsrnY_y_iMRF0MSzSVsfb9op6Ft9vS75Je39zUuiaMibFClh-3uoNMOWoPtvLMCHk58FXPt17wPQ-h8JZ35-2QcqLN3wfKItAGq8NBjoTPULs"/>
+</div>
+</div>
+<!-- Queue Avatars -->
+<div class="w-10 h-10 rounded-full overflow-hidden opacity-60 hover:opacity-100 transition-opacity cursor-pointer border border-transparent hover:border-outline-variant">
+<img alt="Queue person 1" class="w-full h-full object-cover" data-alt="A professional headshot of a young Asian female professional smiling warmly, wearing a neat navy blue blazer over a light blouse. The background is a bright, soft-focus minimalist interior. The lighting is bright and cheerful, fitting a modern productivity tool's light mode aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDCV5GCB3jB4u6UTIDlw9JnQhui-MD12p2_7HylsWEnsBTszfhtesB7Md3Rd9O2eh1j17DD6BcImGK83Nh6I0t7MOxULITm3_NxA3HEehjVJpk71vlAiOjLuvRatTdbArKNbXOOAP4vGehdyDzOXB098z4-930vnGh7rwgBbpOTSkqHmJNRFbV6fxHHyYtcPwi-XZjIiM0QpefK8Pj56W83Xd96LU8zrGohQNhq6vZqSlrpUkDs3ORARXFBp2o2FujU495KC9CNv2s"/>
+</div>
+<div class="w-10 h-10 rounded-full overflow-hidden opacity-60 hover:opacity-100 transition-opacity cursor-pointer border border-transparent hover:border-outline-variant">
+<img alt="Queue person 2" class="w-full h-full object-cover" data-alt="A clean, bright headshot of a man with a short beard and glasses, wearing a simple gray crewneck sweater. He has a thoughtful expression. The background is a pristine, light gray flat surface. The styling is minimalist, flat, and highly suited for a precision UI dashboard." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDXoHZZLssDdqmQQ71g6P2d_GUYC2KPTenocqIJQFPGg-Mkb--N1O2IxRp7AOAgUgXPXiVyGgDnuJfEddqfHI-rtIWCASzj99v711AHWY9yGKZrYDhTZrUfHRNssPBeWbXM1j5E7lF-YpTaBpWhv6xbLB3_hXjXn4oipT4NyGArMni5Kxi_cv-qFzhiCDEu9OMGWwsufTvFNIYJmzI_HmO8zHif3SB9VJmMwI-5oKfR1lvb2TTIZ7PAR06DpSMtcfCa6vAFHgkxB5Y"/>
+</div>
+<div class="w-10 h-10 rounded-full bg-surface-container flex items-center justify-center text-on-surface-variant font-label-sm mt-sm cursor-pointer hover:bg-surface-container-high transition-colors">
+        +3
+      </div>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="flex-1 flex flex-col h-full overflow-hidden relative bg-background">
+<!-- REVIEW STATE BANNER -->
+<div class="bg-warning-container text-on-warning-container px-lg py-sm flex items-center justify-between flex-shrink-0 hairline-border-b">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px] text-warning">info</span>
+<span class="font-body-medium text-body-medium">Staged rebuild awaiting review — manual fields will be preserved</span>
+</div>
+<div class="flex items-center gap-3">
+<button class="px-3 py-1.5 rounded-lg border border-warning/30 hover:bg-warning/10 font-label-sm text-label-sm text-on-warning-container transition-colors">Review diff</button>
+<button class="px-3 py-1.5 rounded-lg bg-warning text-white font-label-sm text-label-sm hover:bg-warning/90 transition-colors">Promote</button>
+</div>
+</div>
+<!-- Scrollable Canvas -->
+<div class="flex-1 overflow-y-auto p-lg lg:p-xl xl:px-24 pb-32">
+<div class="max-w-5xl mx-auto space-y-xl">
+<!-- 1. IDENTITY HEADER -->
+<header class="flex flex-col gap-4">
+<div class="flex items-end justify-between">
+<div class="flex items-center gap-4">
+<h1 class="font-display text-[32px] leading-[40px] tracking-[-0.02em] font-bold text-on-surface">Alexander Voss</h1>
+<div class="flex items-center gap-1 text-primary bg-primary/10 px-2 py-1 rounded-lg border border-primary/20">
+<span class="material-symbols-outlined text-[16px]">arrow_upward</span>
+<span class="font-label-sm text-label-sm font-semibold">Leads-them</span>
+</div>
+</div>
+<!-- Platform handles -->
+<div class="flex items-center gap-3">
+<div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slack-bg text-slack border border-slack/20 cursor-default">
+<span class="material-symbols-outlined text-[16px]">chat</span>
+<span class="font-label-sm text-label-sm">Slack</span>
+</div>
+<div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-gmail-bg text-gmail border border-gmail/20 cursor-default">
+<span class="material-symbols-outlined text-[16px]">mail</span>
+<span class="font-label-sm text-label-sm">Gmail</span>
+</div>
+<div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-surface-container text-on-surface-variant border border-dashed border-outline-variant cursor-default opacity-60">
+<span class="material-symbols-outlined text-[16px]">forum</span>
+<span class="font-label-sm text-label-sm">WeChat</span>
+</div>
+</div>
+</div>
+<!-- Attributes Chips -->
+<div class="flex flex-wrap items-center gap-2">
+<span class="px-2.5 py-1 rounded-full bg-surface-container-highest text-on-surface font-body-base text-body-base hairline-border">CTO @ Acme Corp</span>
+<span class="px-2.5 py-1 rounded-full bg-surface-container-highest text-on-surface font-body-base text-body-base hairline-border">Leo's direct lead</span>
+<span class="px-2.5 py-1 rounded-full bg-surface-container-highest text-on-surface font-body-base text-body-base hairline-border">English/German</span>
+<span class="px-2.5 py-1 rounded-full bg-surface-container-highest text-on-surface font-body-base text-body-base hairline-border">Formal</span>
+<span class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-container-highest text-on-surface font-body-base text-body-base hairline-border">
+<span class="material-symbols-outlined text-[14px] text-on-surface-variant">schedule</span>
+              Berlin (GMT+1) · 14:02
+            </span>
+</div>
+</header>
+<!-- 2. PROVENANCE-AWARE FIELD CARDS & 6. VOICE STYLE CARD (Bento Grid) -->
+<section class="grid grid-cols-1 lg:grid-cols-3 gap-lg">
+<!-- Fields Grid -->
+<div class="lg:col-span-2 bg-surface rounded-2xl hairline-border p-5 relative overflow-visible">
+<h2 class="font-headline text-headline text-on-surface mb-4">Core Knowledge</h2>
+<div class="grid grid-cols-2 gap-4">
+<!-- Manual Field -->
+<div class="flex flex-col gap-1 p-3 rounded-lg bg-background hover:bg-surface-container-low transition-colors group cursor-default">
+<div class="flex items-center justify-between">
+<span class="font-label-sm text-label-sm text-on-surface-variant">Favorite Coffee</span>
+<div class="flex items-center justify-center w-5 h-5 rounded bg-surface-container-highest text-on-surface-variant" title="Manual Entry">
+<span class="material-symbols-outlined text-[12px] font-bold" style="font-variation-settings: 'FILL' 1;">lock</span>
+</div>
+</div>
+<span class="font-body-base text-body-base text-on-surface font-medium">Flat White, extra hot</span>
+</div>
+<!-- Inferred Field with Popover -->
+<div class="flex flex-col gap-1 p-3 rounded-lg bg-background hover:bg-surface-container-low transition-colors group cursor-pointer relative">
+<div class="flex items-center justify-between">
+<span class="font-label-sm text-label-sm text-on-surface-variant">Assistant Name</span>
+<div class="flex items-center justify-center w-5 h-5 rounded border border-dashed border-primary text-primary bg-primary/5" title="Inferred Entry">
+<span class="font-label-xs text-label-xs font-bold">I</span>
+</div>
+</div>
+<span class="font-body-base text-body-base text-on-surface font-medium">Sarah Miller</span>
+<!-- Popover Evidence (Absolute positioned) -->
+<div class="absolute top-full left-0 mt-2 w-72 bg-surface rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.08)] border border-outline-variant p-4 z-20 flex flex-col gap-3">
+<div class="flex items-center justify-between">
+<span class="font-label-xs text-label-xs text-on-surface-variant uppercase tracking-wider">Source Evidence</span>
+<span class="material-symbols-outlined text-[14px] text-on-surface-variant cursor-pointer hover:text-on-surface">close</span>
+</div>
+<div class="pl-3 border-l-2 border-primary">
+<p class="font-body-base text-body-base text-on-surface italic">"Sarah will handle the booking"</p>
+</div>
+<div class="flex items-center justify-between mt-1">
+<span class="font-label-sm text-label-sm text-on-surface-variant">Jun 12 · Slack</span>
+<button class="font-label-sm text-label-sm text-primary hover:underline">View source</button>
+</div>
+</div>
+</div>
+<!-- Inferred Field -->
+<div class="flex flex-col gap-1 p-3 rounded-lg bg-background hover:bg-surface-container-low transition-colors group cursor-default">
+<div class="flex items-center justify-between">
+<span class="font-label-sm text-label-sm text-on-surface-variant">Travel Preference</span>
+<div class="flex items-center justify-center w-5 h-5 rounded border border-dashed border-primary text-primary bg-primary/5" title="Inferred Entry">
+<span class="font-label-xs text-label-xs font-bold">I</span>
+</div>
+</div>
+<span class="font-body-base text-body-base text-on-surface font-medium">Aisle seat, Morning flights</span>
+</div>
+<!-- Manual Field -->
+<div class="flex flex-col gap-1 p-3 rounded-lg bg-background hover:bg-surface-container-low transition-colors group cursor-default">
+<div class="flex items-center justify-between">
+<span class="font-label-sm text-label-sm text-on-surface-variant">Dietary Restrictions</span>
+<div class="flex items-center justify-center w-5 h-5 rounded bg-surface-container-highest text-on-surface-variant" title="Manual Entry">
+<span class="material-symbols-outlined text-[12px] font-bold" style="font-variation-settings: 'FILL' 1;">lock</span>
+</div>
+</div>
+<span class="font-body-base text-body-base text-on-surface font-medium">Pescatarian</span>
+</div>
+</div>
+</div>
+<!-- Voice & Style Card -->
+<div class="bg-surface rounded-2xl hairline-border p-5 flex flex-col h-full">
+<div class="flex items-center justify-between mb-4">
+<h2 class="font-headline text-headline text-on-surface flex items-center gap-2">
+<span class="material-symbols-outlined text-[20px] text-primary">record_voice_over</span>
+                Voice &amp; Style
+              </h2>
+<button class="text-on-surface-variant hover:text-on-surface transition-colors">
+<span class="material-symbols-outlined text-[20px]">keyboard_arrow_up</span>
+</button>
+</div>
+<div class="flex-1 flex flex-col gap-4">
+<div>
+<span class="block font-label-sm text-label-sm text-on-surface-variant mb-1">Tone</span>
+<span class="font-body-base text-body-base text-on-surface">Precise, high-tempo, prefers executive summaries.</span>
+</div>
+<div>
+<span class="block font-label-sm text-label-sm text-on-surface-variant mb-1">Register</span>
+<span class="font-body-base text-body-base text-on-surface">Formal, no emojis.</span>
+</div>
+</div>
+</div>
+</section>
+<!-- 3. TASKS WITH THIS PERSON -->
+<section class="bg-surface rounded-2xl hairline-border overflow-hidden">
+<div class="p-5 hairline-border-b bg-surface">
+<h2 class="font-headline text-headline text-on-surface">Active Tasks</h2>
+</div>
+<div class="flex flex-col">
+<!-- Task Row -->
+<div class="px-5 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-surface-container-low transition-colors group hairline-border-b last:border-b-0 cursor-pointer">
+<div class="flex flex-col gap-1">
+<div class="flex items-center gap-3">
+<span class="font-body-medium text-body-medium text-on-surface text-[15px]">Chicago field-testing trip Jun 16-17</span>
+<span class="px-2 py-0.5 rounded-full bg-surface-container-highest text-on-surface-variant font-label-sm text-[10px] uppercase tracking-wider font-bold">Waiting</span>
+</div>
+<div class="flex items-center gap-4 text-on-surface-variant">
+<!-- Sub actions -->
+<div class="flex items-center gap-1" title="Reply: Complete">
+<span class="material-symbols-outlined text-[14px] text-primary">check_circle</span>
+<span class="font-label-sm text-label-sm">reply</span>
+</div>
+<div class="flex items-center gap-1" title="Calendar: Complete">
+<span class="material-symbols-outlined text-[14px] text-primary">check_circle</span>
+<span class="font-label-sm text-label-sm">calendar</span>
+</div>
+<div class="flex items-center gap-1" title="Inventory: Pending">
+<span class="material-symbols-outlined text-[14px] text-outline-variant">radio_button_unchecked</span>
+<span class="font-label-sm text-label-sm text-outline">inventory</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-[-8px]">
+<div class="w-8 h-8 rounded-full border-2 border-surface overflow-hidden z-20">
+<img alt="Person 1" class="w-full h-full object-cover" data-alt="Small circular headshot of a young woman with natural makeup looking directly at the camera, light background." src="https://lh3.googleusercontent.com/aida-public/AB6AXuC65eGHg_c7uAOMtvSCc34sHW54efKSDvBi5hgm8UzNr99yesmciouYaAgoGbF2i3WU_YfmR5F_gBXxdD0YTOaxQm_xXT92iW27Rvk3bTiYyXeL80cgCSIQSeDTM7vvaka05R-S7W-kXmw7BfJ1ofXPdUvW-YxNndar7AFxP1y2d8_QmJjVJYnGutxT2mT1_8KlqCuivIlh_PcHaBwlBO3EdqNM3WUEEuGqvtODlnrpsJlgtSL1uR9VohcG_XIy_6RSjE64rlSPiYs"/>
+</div>
+<div class="w-8 h-8 rounded-full border-2 border-surface overflow-hidden z-10 -ml-3">
+<img alt="Person 2" class="w-full h-full object-cover" data-alt="Small circular headshot of a young man with short dark hair, light background." src="https://lh3.googleusercontent.com/aida-public/AB6AXuB7dhk9ad-oe7M9I5075PSqP39nJnB_yeAj6uHlel_1XbRoviaR9dAQJNgNb6JVeZ0dBH5ep9GB7NnveAtYNxLpxqYSfvwOLiI5hoP0wOv--QQwdB671u9W6cwvk775LlNv9JL71iogvqe9yu3UBzWdKYy1_RswR3_wh1zslf0R8rVoHbJ3LhlkQv-x8G3etf98C0qMgt4lR62zMBduhazpph2gjcudzebnaFlhbNWp1bhiPX9GG3VJViwoquO8zo_wPVMH90dtMcY"/>
+</div>
+<div class="w-8 h-8 rounded-full border-2 border-surface bg-surface-container flex items-center justify-center text-on-surface-variant font-label-sm z-0 -ml-3">
+                  +1
+                </div>
+</div>
+</div>
+<!-- Task Row 2 -->
+<div class="px-5 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-surface-container-low transition-colors group cursor-pointer">
+<div class="flex flex-col gap-1">
+<div class="flex items-center gap-3">
+<span class="font-body-medium text-body-medium text-on-surface text-[15px]">Review Q2 performance metrics</span>
+<span class="px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 font-label-sm text-[10px] uppercase tracking-wider font-bold">Action Needed</span>
+</div>
+<div class="flex items-center gap-4 text-on-surface-variant">
+<div class="flex items-center gap-1" title="Document: Pending">
+<span class="material-symbols-outlined text-[14px] text-outline-variant">radio_button_unchecked</span>
+<span class="font-label-sm text-label-sm text-outline">compile doc</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Bottom Grid: 4. COMMITMENTS & 5. OPEN THREADS -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-lg">
+<!-- 4. COMMITMENTS LEDGER -->
+<section class="bg-surface rounded-2xl hairline-border flex flex-col overflow-hidden">
+<div class="p-4 hairline-border-b bg-surface">
+<h2 class="font-headline text-headline text-on-surface">Commitments Ledger</h2>
+</div>
+<div class="grid grid-cols-2 hairline-border-b bg-surface-container-low">
+<div class="p-3 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider hairline-border-r">They Owe</div>
+<div class="p-3 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">I Owe</div>
+</div>
+<div class="flex-1 overflow-y-auto">
+<!-- They Owe Entry -->
+<div class="grid grid-cols-2 hairline-border-b last:border-b-0 hover:bg-surface-container-low transition-colors">
+<div class="p-3 hairline-border-r flex items-start gap-2 group">
+<span class="material-symbols-outlined text-[16px] text-on-surface-variant mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer hover:text-primary" title="View source">link</span>
+<span class="font-body-base text-body-base text-on-surface">Final budget sign-off</span>
+<span class="ml-auto font-label-xs text-error font-semibold mt-1">Overdue</span>
+</div>
+<div class="p-3"></div> <!-- Empty I Owe side -->
+</div>
+<!-- I Owe Entry -->
+<div class="grid grid-cols-2 hairline-border-b last:border-b-0 hover:bg-surface-container-low transition-colors">
+<div class="p-3 hairline-border-r"></div> <!-- Empty They Owe side -->
+<div class="p-3 flex items-start gap-2 group">
+<span class="material-symbols-outlined text-[16px] text-on-surface-variant mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer hover:text-primary" title="View source">link</span>
+<div class="flex flex-col">
+<span class="font-body-base text-body-base text-on-surface">Follow up with master's student</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">September</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- 5. OPEN THREADS -->
+<section class="bg-surface rounded-2xl hairline-border flex flex-col overflow-hidden">
+<div class="p-4 hairline-border-b bg-surface">
+<h2 class="font-headline text-headline text-on-surface">Open Threads</h2>
+</div>
+<div class="p-4 flex flex-col gap-3">
+<div class="flex items-start gap-3 group">
+<div class="w-1.5 h-1.5 rounded-full bg-primary mt-2"></div>
+<div class="flex-1 flex items-center justify-between">
+<span class="font-body-base text-body-base text-on-surface">Acme delivery push-back query</span>
+<button class="p-1.5 rounded text-on-surface-variant opacity-0 group-hover:opacity-100 hover:bg-surface-container hover:text-primary transition-all">
+<span class="material-symbols-outlined text-[18px]">open_in_new</span>
+</button>
+</div>
+</div>
+<div class="flex items-start gap-3 group">
+<div class="w-1.5 h-1.5 rounded-full bg-primary mt-2"></div>
+<div class="flex-1 flex items-center justify-between">
+<span class="font-body-base text-body-base text-on-surface">Q3 Hiring plan feedback</span>
+<button class="p-1.5 rounded text-on-surface-variant opacity-0 group-hover:opacity-100 hover:bg-surface-container hover:text-primary transition-all">
+<span class="material-symbols-outlined text-[18px]">open_in_new</span>
+</button>
+</div>
+</div>
+</div>
+</section>
+</div>
+</div>
+</div>
+</main>
+</body></html>

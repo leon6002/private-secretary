@@ -1,0 +1,229 @@
+# SETUP — connecting the engine to YOUR accounts
+
+Work top to bottom. After each step there is a command that proves the step
+worked; if it doesn't print what's shown, stop there rather than continuing.
+
+**Platform:** macOS. Secrets live in the macOS Keychain and the WeChat reader
+depends on macOS-only decryption. Slack + Gmail + Calendar would port to Linux;
+WeChat would not.
+
+---
+
+## 0. Prerequisites
+
+| Need | Why | Check |
+|---|---|---|
+| Node 20+ | runtime | `node -v` |
+| A **Claude subscription** + the `claude` CLI logged in | all inference runs through `claude -p`, so there is no API bill | `claude -p "say OK"` prints `OK` |
+| macOS Keychain access | every token is read from there, never from a file | — |
+
+```bash
+npm install
+npm test          # 552 passing. Needs no credentials — do this first.
+```
+
+If the suite passes you have a working engine with no data. Everything below is
+about giving it *your* data.
+
+---
+
+## 1. Tell it who you are  ← do this before anything else
+
+```bash
+cp config/identity.example.json config/identity.json
+$EDITOR config/identity.json
+```
+
+This is the only place the engine learns whose messages it reads. With no
+config it is deliberately **inert** — it polls nothing rather than reaching for
+whatever happens to be in your Keychain.
+
+```jsonc
+{
+  "primaryEmail": "you@yourcompany.com",
+  "slackAccounts": [{ "account": "you@yourcompany.com", "label": "slack:direct" }],
+  "mailboxes": ["you@yourcompany.com"],
+  "calendarMailbox": "you@yourcompany.com"
+}
+```
+
+- `slackAccounts` — one entry per Slack **workspace**. `account` is the Keychain
+  account name you'll store that workspace's token under (step 2). The first
+  entry is the primary; its cursor slice keeps the legacy key.
+- `mailboxes` — every Gmail address to poll. Each needs its own OAuth bundle
+  (step 3).
+- `label` values key persisted state (cursors, per-source errors). **Don't rename
+  a label after you've been running**, or that source starts from scratch.
+
+Verify:
+
+```bash
+npx tsx -e 'import{describeIdentity}from"./relay/io/identity.js";console.log(describeIdentity())'
+# identity: you@yourcompany.com (from …/config/identity.json) — slack=slack:direct mailboxes=1 calendar=you@…
+```
+
+---
+
+## 2. Slack
+
+You need a **user** token (`xoxp-`), not a bot token — the engine reads your DMs
+as you.
+
+1. Create an app at <https://api.slack.com/apps> → **OAuth & Permissions**.
+2. Add **User Token Scopes**: `channels:history`, `groups:history`, `im:history`,
+   `mpim:history`, `channels:read`, `groups:read`, `im:read`, `mpim:read`,
+   `users:read`, `users.profile:read`, `chat:write`, `files:read`.
+3. Install to workspace, copy the **User OAuth Token** (`xoxp-…`).
+4. Store it under the Keychain account you put in `identity.json`:
+
+```bash
+security add-generic-password -U -s taiv-secretary-slack \
+  -a you@yourcompany.com -w 'xoxp-…'
+```
+
+Repeat per workspace, one Keychain entry per `slackAccounts[].account`.
+
+```bash
+npx tsx scripts/smoke-slack-direct.ts     # lists your DM channels
+```
+
+---
+
+## 3. Gmail + Calendar (per mailbox)
+
+1. Google Cloud console → new project → enable **Gmail API** and **Google
+   Calendar API**.
+2. **OAuth consent screen** → External → add yourself as a Test user.
+3. **Credentials** → OAuth client ID → *Desktop app* → download the client JSON.
+4. Store the client JSON once:
+
+```bash
+security add-generic-password -U -s taiv-secretary-google-client \
+  -a default -w "$(cat ~/Downloads/client_secret_*.json)"
+```
+
+5. Authorise each mailbox (opens a browser; grants
+   `gmail.modify` + `calendar.events`):
+
+```bash
+npx tsx scripts/run-cockpit.ts --port 4317   # then use the re-auth link in the UI
+# …or drive it directly:
+npx tsx -e 'import{startGmailReauth}from"./relay/cockpit/reauth.js";startGmailReauth("you@yourcompany.com")'
+```
+
+```bash
+npx tsx scripts/smoke-gmail-direct.ts     # recent messages per mailbox
+npx tsx scripts/smoke-calendar.ts         # lists calendars
+```
+
+**Gmail tokens expire.** When the daemon logs
+`OAuth refresh failed … HTTP 400`, that mailbox needs re-authorising — re-run
+step 5. Nothing else recovers it.
+
+---
+
+## 4. WeChat (optional, macOS only, version-pinned)
+
+Skip this unless you need WeChat. It is the most fragile part of the system.
+
+Requires the `wechat-decrypt` MCP server and **WeChat 4.1.8.106 specifically** —
+4.1.10+ changes the in-memory key layout and the scanner finds nothing. You must
+also re-sign WeChat ad-hoc so its memory is readable, and turn OFF WeChat's
+auto-update or it will silently upgrade and break the chain.
+
+Full walkthrough, including the `0 unique keys` decision tree:
+`specs/wechat-local-decrypt.md` and `specs/wechat-decrypt-migration.md`.
+
+```bash
+npx tsx scripts/smoke-wechat-mcp.ts       # prints recent sessions
+```
+
+WeChat 1:1 has **no official send API** — approved WeChat replies wait for you
+to paste them manually. That is intentional, not a missing feature.
+
+---
+
+## 5. Contact profiles (personas)
+
+The engine works without them but reads intent much worse: no sense of who this
+person is, what they own, or how they write.
+
+`personas/` is gitignored — a persona is a private dossier on a real colleague.
+See `personas/README.md`, and `personas/_example/` for the schema.
+
+Build your own (one-time, never part of the scan loop):
+
+```
+/persona-bootstrap --contacts top:10
+```
+
+Output lands in `personas/_staged/` for review; a separate promote step moves it
+live. Start with your 5–10 most frequent contacts.
+
+---
+
+## 6. Business facts (recommended)
+
+```bash
+cp config/business-context.example.md config/business-context.md
+$EDITOR config/business-context.md
+```
+
+Stops the model inventing a business reality (who is a customer vs a partner,
+what stage the company is at). Without it the drafting prompt forbids asserting
+any business fact not stated verbatim in the message — safe, just less useful.
+
+Same idea for how *you* write: `config/owner-voice.md` (see the `owner-voice`
+skill). Without it drafts read as generically human rather than as you.
+
+---
+
+## 7. Run it
+
+```bash
+# The triage UI — start here, it works with an empty queue.
+npx tsx scripts/run-cockpit.ts --port 4317
+
+# One scan round, then exit (safe first run: nothing sends).
+npx tsx scripts/run-secretary.ts --once
+
+# The daemon.
+npx tsx scripts/run-notify.ts
+```
+
+Useful daemon flags: `--no-consolidate`, `--no-plan`, `--no-persona-update`,
+`--no-refresh`, `--refresh-max N`, `--max-draft N`, `--draft-model <model>`,
+`--wechat-ms / --gmail-ms / --slack-ms <interval>`.
+
+To run it at login, see `scripts/launchagent/install.sh`. One trap worth knowing:
+**launchd cannot write logs under `~/Documents`** (TCC blocks it) — the job dies
+with exit 78 and no output. Keep log paths in `~/Library/Logs`.
+
+---
+
+## 8. Prove it works end-to-end
+
+```bash
+npx tsx scripts/run-secretary.ts --once
+npm run relay -- queue state/loop-state.json    # rows should appear
+```
+
+Then open <http://127.0.0.1:4317>, pick a card, and press **Edit** (not Approve)
+to confirm the drafting looks sane before you let anything leave the machine.
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `identity: UNCONFIGURED` | no `config/identity.json` | step 1 |
+| Everything scans but no cards | `claude` not logged in — every LLM pass fails while platform scans still succeed, so it *looks* healthy | `claude -p "say OK"`; log in |
+| `OAuth refresh failed … HTTP 400` | Gmail token expired | re-run step 3.5 for that mailbox |
+| WeChat `0 unique keys` | wrong WeChat version, or app not re-signed / not logged in | `specs/wechat-local-decrypt.md` |
+| `channel_not_found` on Slack | that channel belongs to a different workspace | expected while probing multi-workspace; harmless |
+| launchd job dies, exit 78, empty log | log path under `~/Documents` | move logs to `~/Library/Logs` |
+| Queue looks stale / duplicated | concurrent writers | **stop the daemon before any manual state surgery** — `pkill -f run-notify.ts` and confirm none remain |
+
+> **Never edit `state/loop-state.json` by hand while the daemon is running.**
+> Concurrent writers corrupt the queue; this has cost real work before.

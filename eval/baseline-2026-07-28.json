@@ -1,0 +1,826 @@
+{
+  "generated_at": "2026-07-28T13:33:23.798Z",
+  "label_count": 345,
+  "human_decided": 345,
+  "lifecycle_only": 0,
+  "by_type": [
+    {
+      "action_type": "task",
+      "executed": 56,
+      "rejected": 70,
+      "deferred": 0,
+      "decided": 126,
+      "precision": 0.4444444444444444,
+      "small_n": false,
+      "semantics": "人点了完成 —— 可能是真做了,也可能只是划掉"
+    },
+    {
+      "action_type": "ignore",
+      "executed": 92,
+      "rejected": 17,
+      "deferred": 0,
+      "decided": 109,
+      "precision": 0.8440366972477065,
+      "small_n": false,
+      "semantics": "人同意忽略 —— 是「一致率」,不是「有用度」"
+    },
+    {
+      "action_type": "reply",
+      "executed": 16,
+      "rejected": 79,
+      "deferred": 0,
+      "decided": 95,
+      "precision": 0.16842105263157894,
+      "small_n": false,
+      "semantics": "人采纳了草稿(最严格)"
+    },
+    {
+      "action_type": "calendar",
+      "executed": 8,
+      "rejected": 2,
+      "deferred": 0,
+      "decided": 10,
+      "precision": 0.8,
+      "small_n": false,
+      "semantics": "人接受了事件(时间/地点/参会人可用)"
+    },
+    {
+      "action_type": "relay",
+      "executed": 5,
+      "rejected": 0,
+      "deferred": 0,
+      "decided": 5,
+      "precision": 1,
+      "small_n": true,
+      "semantics": "人采纳了转述草稿"
+    }
+  ],
+  "confidence_by_type": {
+    "relay": [
+      {
+        "bucket": 0.7,
+        "executed": 2,
+        "rejected": 0,
+        "n": 2,
+        "approveRate": 1,
+        "small_n": true
+      },
+      {
+        "bucket": 0.8,
+        "executed": 1,
+        "rejected": 0,
+        "n": 1,
+        "approveRate": 1,
+        "small_n": true
+      },
+      {
+        "bucket": 0.9,
+        "executed": 2,
+        "rejected": 0,
+        "n": 2,
+        "approveRate": 1,
+        "small_n": true
+      }
+    ],
+    "reply": [
+      {
+        "bucket": 0.3,
+        "executed": 1,
+        "rejected": 1,
+        "n": 2,
+        "approveRate": 0.5,
+        "small_n": true
+      },
+      {
+        "bucket": 0.4,
+        "executed": 0,
+        "rejected": 2,
+        "n": 2,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.5,
+        "executed": 2,
+        "rejected": 12,
+        "n": 14,
+        "approveRate": 0.14285714285714285,
+        "small_n": false
+      },
+      {
+        "bucket": 0.6,
+        "executed": 3,
+        "rejected": 19,
+        "n": 22,
+        "approveRate": 0.13636363636363635,
+        "small_n": false
+      },
+      {
+        "bucket": 0.7,
+        "executed": 6,
+        "rejected": 22,
+        "n": 28,
+        "approveRate": 0.21428571428571427,
+        "small_n": false
+      },
+      {
+        "bucket": 0.8,
+        "executed": 3,
+        "rejected": 13,
+        "n": 16,
+        "approveRate": 0.1875,
+        "small_n": false
+      },
+      {
+        "bucket": 0.9,
+        "executed": 1,
+        "rejected": 9,
+        "n": 10,
+        "approveRate": 0.1,
+        "small_n": false
+      },
+      {
+        "bucket": 1,
+        "executed": 0,
+        "rejected": 1,
+        "n": 1,
+        "approveRate": 0,
+        "small_n": true
+      }
+    ],
+    "task": [
+      {
+        "bucket": 0.3,
+        "executed": 0,
+        "rejected": 1,
+        "n": 1,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.4,
+        "executed": 0,
+        "rejected": 3,
+        "n": 3,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.5,
+        "executed": 1,
+        "rejected": 8,
+        "n": 9,
+        "approveRate": 0.1111111111111111,
+        "small_n": true
+      },
+      {
+        "bucket": 0.6,
+        "executed": 3,
+        "rejected": 12,
+        "n": 15,
+        "approveRate": 0.2,
+        "small_n": false
+      },
+      {
+        "bucket": 0.7,
+        "executed": 8,
+        "rejected": 23,
+        "n": 31,
+        "approveRate": 0.25806451612903225,
+        "small_n": false
+      },
+      {
+        "bucket": 0.8,
+        "executed": 12,
+        "rejected": 17,
+        "n": 29,
+        "approveRate": 0.41379310344827586,
+        "small_n": false
+      },
+      {
+        "bucket": 0.9,
+        "executed": 29,
+        "rejected": 5,
+        "n": 34,
+        "approveRate": 0.8529411764705882,
+        "small_n": false
+      },
+      {
+        "bucket": 1,
+        "executed": 3,
+        "rejected": 1,
+        "n": 4,
+        "approveRate": 0.75,
+        "small_n": true
+      }
+    ],
+    "ignore": [
+      {
+        "bucket": 0.6,
+        "executed": 0,
+        "rejected": 1,
+        "n": 1,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.7,
+        "executed": 0,
+        "rejected": 3,
+        "n": 3,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.8,
+        "executed": 5,
+        "rejected": 3,
+        "n": 8,
+        "approveRate": 0.625,
+        "small_n": true
+      },
+      {
+        "bucket": 0.9,
+        "executed": 56,
+        "rejected": 7,
+        "n": 63,
+        "approveRate": 0.8888888888888888,
+        "small_n": false
+      },
+      {
+        "bucket": 1,
+        "executed": 31,
+        "rejected": 3,
+        "n": 34,
+        "approveRate": 0.9117647058823529,
+        "small_n": false
+      }
+    ],
+    "calendar": [
+      {
+        "bucket": 0.8,
+        "executed": 1,
+        "rejected": 0,
+        "n": 1,
+        "approveRate": 1,
+        "small_n": true
+      },
+      {
+        "bucket": 0.9,
+        "executed": 7,
+        "rejected": 1,
+        "n": 8,
+        "approveRate": 0.875,
+        "small_n": true
+      },
+      {
+        "bucket": 1,
+        "executed": 0,
+        "rejected": 1,
+        "n": 1,
+        "approveRate": 0,
+        "small_n": true
+      }
+    ]
+  },
+  "exact_confidence_by_type": {
+    "relay": [
+      {
+        "bucket": 0.7,
+        "executed": 2,
+        "rejected": 0,
+        "n": 2,
+        "approveRate": 1,
+        "small_n": true
+      },
+      {
+        "bucket": 0.8,
+        "executed": 1,
+        "rejected": 0,
+        "n": 1,
+        "approveRate": 1,
+        "small_n": true
+      },
+      {
+        "bucket": 0.85,
+        "executed": 1,
+        "rejected": 0,
+        "n": 1,
+        "approveRate": 1,
+        "small_n": true
+      },
+      {
+        "bucket": 0.9,
+        "executed": 1,
+        "rejected": 0,
+        "n": 1,
+        "approveRate": 1,
+        "small_n": true
+      }
+    ],
+    "reply": [
+      {
+        "bucket": 0.3,
+        "executed": 1,
+        "rejected": 1,
+        "n": 2,
+        "approveRate": 0.5,
+        "small_n": true
+      },
+      {
+        "bucket": 0.4,
+        "executed": 0,
+        "rejected": 2,
+        "n": 2,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.45,
+        "executed": 1,
+        "rejected": 7,
+        "n": 8,
+        "approveRate": 0.125,
+        "small_n": true
+      },
+      {
+        "bucket": 0.5,
+        "executed": 1,
+        "rejected": 5,
+        "n": 6,
+        "approveRate": 0.16666666666666666,
+        "small_n": true
+      },
+      {
+        "bucket": 0.55,
+        "executed": 1,
+        "rejected": 9,
+        "n": 10,
+        "approveRate": 0.1,
+        "small_n": false
+      },
+      {
+        "bucket": 0.58,
+        "executed": 0,
+        "rejected": 1,
+        "n": 1,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.6,
+        "executed": 1,
+        "rejected": 6,
+        "n": 7,
+        "approveRate": 0.14285714285714285,
+        "small_n": true
+      },
+      {
+        "bucket": 0.62,
+        "executed": 1,
+        "rejected": 3,
+        "n": 4,
+        "approveRate": 0.25,
+        "small_n": true
+      },
+      {
+        "bucket": 0.65,
+        "executed": 0,
+        "rejected": 3,
+        "n": 3,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.66,
+        "executed": 0,
+        "rejected": 1,
+        "n": 1,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.68,
+        "executed": 0,
+        "rejected": 2,
+        "n": 2,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.7,
+        "executed": 3,
+        "rejected": 1,
+        "n": 4,
+        "approveRate": 0.75,
+        "small_n": true
+      },
+      {
+        "bucket": 0.72,
+        "executed": 3,
+        "rejected": 15,
+        "n": 18,
+        "approveRate": 0.16666666666666666,
+        "small_n": false
+      },
+      {
+        "bucket": 0.75,
+        "executed": 2,
+        "rejected": 1,
+        "n": 3,
+        "approveRate": 0.6666666666666666,
+        "small_n": true
+      },
+      {
+        "bucket": 0.78,
+        "executed": 0,
+        "rejected": 1,
+        "n": 1,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.8,
+        "executed": 0,
+        "rejected": 2,
+        "n": 2,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.82,
+        "executed": 1,
+        "rejected": 9,
+        "n": 10,
+        "approveRate": 0.1,
+        "small_n": false
+      },
+      {
+        "bucket": 0.85,
+        "executed": 1,
+        "rejected": 5,
+        "n": 6,
+        "approveRate": 0.16666666666666666,
+        "small_n": true
+      },
+      {
+        "bucket": 0.9,
+        "executed": 0,
+        "rejected": 3,
+        "n": 3,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.92,
+        "executed": 0,
+        "rejected": 1,
+        "n": 1,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.95,
+        "executed": 0,
+        "rejected": 1,
+        "n": 1,
+        "approveRate": 0,
+        "small_n": true
+      }
+    ],
+    "task": [
+      {
+        "bucket": 0.3,
+        "executed": 0,
+        "rejected": 1,
+        "n": 1,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.4,
+        "executed": 0,
+        "rejected": 3,
+        "n": 3,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.45,
+        "executed": 0,
+        "rejected": 5,
+        "n": 5,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.5,
+        "executed": 1,
+        "rejected": 3,
+        "n": 4,
+        "approveRate": 0.25,
+        "small_n": true
+      },
+      {
+        "bucket": 0.55,
+        "executed": 2,
+        "rejected": 6,
+        "n": 8,
+        "approveRate": 0.25,
+        "small_n": true
+      },
+      {
+        "bucket": 0.6,
+        "executed": 1,
+        "rejected": 5,
+        "n": 6,
+        "approveRate": 0.16666666666666666,
+        "small_n": true
+      },
+      {
+        "bucket": 0.62,
+        "executed": 0,
+        "rejected": 1,
+        "n": 1,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.7,
+        "executed": 5,
+        "rejected": 13,
+        "n": 18,
+        "approveRate": 0.2777777777777778,
+        "small_n": false
+      },
+      {
+        "bucket": 0.72,
+        "executed": 3,
+        "rejected": 10,
+        "n": 13,
+        "approveRate": 0.23076923076923078,
+        "small_n": false
+      },
+      {
+        "bucket": 0.75,
+        "executed": 1,
+        "rejected": 6,
+        "n": 7,
+        "approveRate": 0.14285714285714285,
+        "small_n": true
+      },
+      {
+        "bucket": 0.78,
+        "executed": 1,
+        "rejected": 2,
+        "n": 3,
+        "approveRate": 0.3333333333333333,
+        "small_n": true
+      },
+      {
+        "bucket": 0.8,
+        "executed": 2,
+        "rejected": 4,
+        "n": 6,
+        "approveRate": 0.3333333333333333,
+        "small_n": true
+      },
+      {
+        "bucket": 0.82,
+        "executed": 7,
+        "rejected": 5,
+        "n": 12,
+        "approveRate": 0.5833333333333334,
+        "small_n": false
+      },
+      {
+        "bucket": 0.83,
+        "executed": 1,
+        "rejected": 0,
+        "n": 1,
+        "approveRate": 1,
+        "small_n": true
+      },
+      {
+        "bucket": 0.85,
+        "executed": 2,
+        "rejected": 4,
+        "n": 6,
+        "approveRate": 0.3333333333333333,
+        "small_n": true
+      },
+      {
+        "bucket": 0.86,
+        "executed": 1,
+        "rejected": 0,
+        "n": 1,
+        "approveRate": 1,
+        "small_n": true
+      },
+      {
+        "bucket": 0.9,
+        "executed": 26,
+        "rejected": 1,
+        "n": 27,
+        "approveRate": 0.9629629629629629,
+        "small_n": false
+      },
+      {
+        "bucket": 0.95,
+        "executed": 3,
+        "rejected": 1,
+        "n": 4,
+        "approveRate": 0.75,
+        "small_n": true
+      }
+    ],
+    "ignore": [
+      {
+        "bucket": 0.6,
+        "executed": 0,
+        "rejected": 1,
+        "n": 1,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.72,
+        "executed": 0,
+        "rejected": 3,
+        "n": 3,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.75,
+        "executed": 1,
+        "rejected": 0,
+        "n": 1,
+        "approveRate": 1,
+        "small_n": true
+      },
+      {
+        "bucket": 0.78,
+        "executed": 0,
+        "rejected": 1,
+        "n": 1,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.82,
+        "executed": 3,
+        "rejected": 2,
+        "n": 5,
+        "approveRate": 0.6,
+        "small_n": true
+      },
+      {
+        "bucket": 0.84,
+        "executed": 1,
+        "rejected": 0,
+        "n": 1,
+        "approveRate": 1,
+        "small_n": true
+      },
+      {
+        "bucket": 0.85,
+        "executed": 2,
+        "rejected": 3,
+        "n": 5,
+        "approveRate": 0.4,
+        "small_n": true
+      },
+      {
+        "bucket": 0.86,
+        "executed": 2,
+        "rejected": 0,
+        "n": 2,
+        "approveRate": 1,
+        "small_n": true
+      },
+      {
+        "bucket": 0.88,
+        "executed": 1,
+        "rejected": 1,
+        "n": 2,
+        "approveRate": 0.5,
+        "small_n": true
+      },
+      {
+        "bucket": 0.9,
+        "executed": 36,
+        "rejected": 2,
+        "n": 38,
+        "approveRate": 0.9473684210526315,
+        "small_n": false
+      },
+      {
+        "bucket": 0.92,
+        "executed": 8,
+        "rejected": 1,
+        "n": 9,
+        "approveRate": 0.8888888888888888,
+        "small_n": true
+      },
+      {
+        "bucket": 0.93,
+        "executed": 4,
+        "rejected": 0,
+        "n": 4,
+        "approveRate": 1,
+        "small_n": true
+      },
+      {
+        "bucket": 0.94,
+        "executed": 3,
+        "rejected": 0,
+        "n": 3,
+        "approveRate": 1,
+        "small_n": true
+      },
+      {
+        "bucket": 0.95,
+        "executed": 21,
+        "rejected": 0,
+        "n": 21,
+        "approveRate": 1,
+        "small_n": false
+      },
+      {
+        "bucket": 0.97,
+        "executed": 3,
+        "rejected": 3,
+        "n": 6,
+        "approveRate": 0.5,
+        "small_n": true
+      },
+      {
+        "bucket": 0.98,
+        "executed": 7,
+        "rejected": 0,
+        "n": 7,
+        "approveRate": 1,
+        "small_n": true
+      }
+    ],
+    "calendar": [
+      {
+        "bucket": 0.75,
+        "executed": 1,
+        "rejected": 0,
+        "n": 1,
+        "approveRate": 1,
+        "small_n": true
+      },
+      {
+        "bucket": 0.85,
+        "executed": 2,
+        "rejected": 0,
+        "n": 2,
+        "approveRate": 1,
+        "small_n": true
+      },
+      {
+        "bucket": 0.87,
+        "executed": 0,
+        "rejected": 1,
+        "n": 1,
+        "approveRate": 0,
+        "small_n": true
+      },
+      {
+        "bucket": 0.9,
+        "executed": 4,
+        "rejected": 0,
+        "n": 4,
+        "approveRate": 1,
+        "small_n": true
+      },
+      {
+        "bucket": 0.92,
+        "executed": 1,
+        "rejected": 0,
+        "n": 1,
+        "approveRate": 1,
+        "small_n": true
+      },
+      {
+        "bucket": 0.95,
+        "executed": 0,
+        "rejected": 1,
+        "n": 1,
+        "approveRate": 0,
+        "small_n": true
+      }
+    ]
+  },
+  "decided_at_coverage": {
+    "with": 0,
+    "without": 345
+  },
+  "existence_coverage": {
+    "with": 0,
+    "without": 345
+  }
+}

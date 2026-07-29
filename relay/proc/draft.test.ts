@@ -1,0 +1,284 @@
+import { describe, it, expect } from "vitest";
+import { buildPersonaResolver, draftActions, type LlmCaller } from "./draft.js";
+import { buildDraftRequest } from "./draft-prompt.js";
+import type { DraftedAction } from "./draft-prompt.js";
+import type { InboundMessage, Persona } from "../core/types.js";
+
+function msg(over: Partial<InboundMessage> = {}): InboundMessage {
+  return {
+    id: "slack:C1:1.0",
+    platform: "slack",
+    senderHandle: "UMICHAEL",
+    timestampMs: 1781000000000,
+    text: "what supply should we spec for rev5?",
+    source: "slack:C1",
+    isDirectMessage: true,
+    mentionsUser: true,
+    isReplyInUserThread: false,
+    recipientsIncludeUser: false,
+    threadAnsweredByUserAfter: false,
+    ...over,
+  };
+}
+
+const michael: Persona = {
+  key: "michael-dobosz",
+  displayName: "Michael Dobosz",
+  relationship: "embedded co-lead",
+  handles: { slack: "UMICHAEL", gmail: "michael@taiv.tv" },
+  language: "en",
+  register: "casual",
+  toneNotes: "terse, dry humor",
+  context: "rev5 planning",
+};
+
+describe("buildDraftRequest (pure prompt)", () => {
+  it("includes persona, messages, and the tool name", () => {
+    const req = buildDraftRequest({ persona: michael, messages: [msg()], knownPersonaKeys: ["michael-dobosz"] });
+    expect(req.system).toContain("personal secretary");
+    expect(req.userText).toContain("Michael Dobosz");
+    expect(req.userText).toContain("what supply should we spec");
+    expect(req.userText).toContain("michael-dobosz"); // known persona keys hint
+    expect(req.toolName).toBe("emit_action_items");
+    expect((req.toolInputSchema as { required: string[] }).required).toContain("actions");
+  });
+
+  it("flags a new contact when persona is null", () => {
+    const req = buildDraftRequest({ persona: null, messages: [msg()], knownPersonaKeys: [] });
+    expect(req.userText).toContain("new contact");
+  });
+
+  it("surfaces attachments in the message block", () => {
+    const req = buildDraftRequest({
+      persona: michael,
+      messages: [msg({ text: "", attachments: [{ id: "F1", kind: "image", name: "spec.png" }] })],
+      knownPersonaKeys: [],
+    });
+    expect(req.userText).toContain("image:spec.png");
+  });
+
+  it("renders threadContext as background (do-not-re-answer), separate from the new message", () => {
+    const req = buildDraftRequest({
+      persona: michael,
+      messages: [msg({ text: "rev5?", threadContext: "我: 在路上\nMichael: rev5?" })],
+      knownPersonaKeys: [],
+    });
+    expect(req.userText).toContain("recent conversation for context");
+    expect(req.userText).toContain("do NOT re-answer");
+    expect(req.userText).toContain("在路上"); // the prior turn is present as context
+  });
+});
+
+describe("draftActions orchestrator", () => {
+  const resolver = buildPersonaResolver([michael]);
+  const deps = (llm: LlmCaller) => ({
+    llm,
+    resolvePersona: resolver.resolve,
+    knownPersonaKeys: resolver.keys,
+    now: () => "2026-06-14T12:00:00Z",
+  });
+
+  it("vision: decodes image attachments and passes their paths to the LLM req", async () => {
+    let seen: string[] | undefined;
+    const llm: LlmCaller = async (req) => {
+      seen = req.imagePaths;
+      return [{ action_type: "reply", reason: "saw the spec", confidence: 0.8, draft: "got it", headline: "x", summary: "y" } as DraftedAction];
+    };
+    const withImage = msg({
+      attachments: [{ id: "222", kind: "image", name: "wechat-image local_id=222" }],
+    });
+    const resolveImages = async () => ["/decoded/ccf.png"];
+    await draftActions([withImage], { ...deps(llm), resolveImages });
+    expect(seen).toEqual(["/decoded/ccf.png"]);
+  });
+
+  it("vision: a failing decode is skipped — draft still proceeds text-only", async () => {
+    let seen: string[] | undefined = ["sentinel"];
+    const llm: LlmCaller = async (req) => {
+      seen = req.imagePaths;
+      return [{ action_type: "task", reason: "track", confidence: 0.8, params: { title: "t" }, headline: "x", summary: "y" } as DraftedAction];
+    };
+    const withImage = msg({ attachments: [{ id: "9", kind: "image", name: "img" }] });
+    const resolveImages = async () => { throw new Error("decrypt failed"); };
+    const r = await draftActions([withImage], { ...deps(llm), resolveImages });
+    expect(seen).toBeUndefined(); // no imagePaths set → text-only
+    expect(r.actions).toHaveLength(1); // draft still produced
+  });
+
+  it("turns a valid suggested reply into an ActionItem with id + context", async () => {
+    const llm: LlmCaller = async () => [
+      {
+        action_type: "reply",
+        target: { platform: "slack", personaKey: "michael-dobosz" },
+        reason: "answer the supply question",
+        confidence: 0.95,
+        draft: "25-30W is fine",
+      } as DraftedAction,
+    ];
+    const r = await draftActions([msg()], deps(llm));
+    expect(r.actions).toHaveLength(1);
+    const a = r.actions[0]!;
+    expect(a.action_type).toBe("reply");
+    expect(a.status).toBe("suggested");
+    expect(a.id).toBeTruthy();
+    expect(a.source_message_id).toBe("slack:C1:1.0");
+    expect(a.context?.original_message).toContain("what supply");
+    expect(a.context?.sender_handle).toBe("UMICHAEL");
+  });
+
+  it("a Gmail reply carries the mailbox + thread + Re: subject so the executor can draft it", async () => {
+    const llm: LlmCaller = async () => [
+      { action_type: "reply", reason: "ack", confidence: 0.7, draft: "Thanks!", headline: "x", summary: "y" },
+    ];
+    const gmailMsg = msg({
+      id: "gmail:abc123",
+      platform: "gmail",
+      source: "gmail:leo@taiv.tv",
+      senderHandle: "alfredo@renesas.com",
+      threadId: "T-xyz",
+      subject: "xEv proposal",
+      messageId: "<orig@renesas.com>",
+    });
+    const r = await draftActions([gmailMsg], deps(llm));
+    expect(r.actions).toHaveLength(1);
+    expect(r.actions[0]!.params.mailbox).toBe("leo@taiv.tv");
+    expect(r.actions[0]!.params.thread_id).toBe("T-xyz");
+    expect(r.actions[0]!.params.subject).toBe("Re: xEv proposal");
+    expect(r.actions[0]!.params.in_reply_to).toBe("<orig@renesas.com>");
+  });
+
+  it("does not double-prefix Re: on an already-Re: subject", async () => {
+    const llm: LlmCaller = async () => [
+      { action_type: "reply", reason: "ack", confidence: 0.7, draft: "ok", headline: "x", summary: "y" },
+    ];
+    const r = await draftActions(
+      [msg({ platform: "gmail", source: "gmail:leo@taiv.tv", subject: "Re: already a reply" })],
+      deps(llm),
+    );
+    expect(r.actions[0]!.params.subject).toBe("Re: already a reply");
+  });
+
+  it("backfills a task's params.title from headline so it isn't blocked on Needs info", async () => {
+    const llm: LlmCaller = async () => [
+      // model put the title only in headline, leaving params.title empty
+      { action_type: "task", reason: "coordinate the pickup", confidence: 0.7, headline: "与金总定上车地铁站", summary: "s" },
+    ];
+    const r = await draftActions([msg()], deps(llm));
+    expect(r.actions).toHaveLength(1);
+    expect(r.actions[0]!.params.title).toBe("与金总定上车地铁站");
+  });
+
+  it("groups a sender's multiple messages into ONE analysis", async () => {
+    const calls: number[] = [];
+    const llm: LlmCaller = async (req) => {
+      calls.push(req.userText.length);
+      return [{ action_type: "task", reason: "track", confidence: 0.9, params: { title: "x" } } as DraftedAction];
+    };
+    await draftActions(
+      [msg({ id: "m1", text: "first" }), msg({ id: "m2", text: "second" })],
+      deps(llm),
+    );
+    // one sender → one LLM call covering both messages
+    expect(calls).toHaveLength(1);
+  });
+
+  it("drops a malformed suggestion (bad action_type) without sinking the batch", async () => {
+    const llm: LlmCaller = async () => [
+      { action_type: "explode" as never, reason: "x", confidence: 0.9 },
+      { action_type: "task", reason: "ok", confidence: 0.9, params: { title: "real" } } as DraftedAction,
+    ];
+    const r = await draftActions([msg()], deps(llm));
+    expect(r.actions).toHaveLength(1);
+    expect(r.actions[0]!.action_type).toBe("task");
+    expect(r.dropped).toHaveLength(1);
+  });
+
+  it("isolates a per-sender LLM error and continues other senders", async () => {
+    const llm: LlmCaller = async (req) => {
+      if (req.userText.includes("UMICHAEL") || req.userText.includes("Michael")) {
+        throw new Error("rate limited");
+      }
+      return [{ action_type: "task", reason: "ok", confidence: 0.9, params: { title: "t" } } as DraftedAction];
+    };
+    const r = await draftActions(
+      [msg({ senderHandle: "UMICHAEL" }), msg({ senderHandle: "UOTHER", id: "slack:C2:2.0", text: "hi" })],
+      deps(llm),
+    );
+    expect(r.errors).toHaveLength(1);
+    expect(r.errors[0]!.sender).toBe("UMICHAEL");
+    expect(r.actions).toHaveLength(1); // the other sender still produced one
+  });
+
+  it("empty LLM output → no actions, no errors", async () => {
+    const llm: LlmCaller = async () => [];
+    const r = await draftActions([msg()], deps(llm));
+    expect(r.actions).toEqual([]);
+    expect(r.errors).toEqual([]);
+  });
+
+  it("preserves sender order in output even when LLM calls finish out of order", async () => {
+    // Concurrency is bounded but must not reorder output: earlier senders'
+    // calls resolve LAST here, yet the result stays in first-seen order.
+    const order = ["S1", "S2", "S3"];
+    const llm: LlmCaller = async (req) => {
+      const idx = order.findIndex((s) => req.userText.includes(`from ${s}`));
+      await new Promise((r) => setTimeout(r, (order.length - idx) * 5)); // reversed delays
+      return [
+        { action_type: "task", reason: "ok", confidence: 0.9, params: { title: order[idx] } } as DraftedAction,
+      ];
+    };
+    const candidates = order.map((s, i) => msg({ senderHandle: s, id: `slack:C:${i}.0`, text: `from ${s}` }));
+    const r = await draftActions(candidates, deps(llm));
+    expect(r.actions.map((a) => a.params.title)).toEqual(["S1", "S2", "S3"]);
+  });
+
+  it("forces a reply's target to the source platform + sender (ignores the model's target)", async () => {
+    // Slack message in, but the model wrongly says gmail → must be corrected to slack.
+    const llm: LlmCaller = async () => [
+      { action_type: "reply", target: { platform: "gmail", personaKey: "someone-else" }, reason: "x", confidence: 0.7, draft: "hi" } as DraftedAction,
+    ];
+    const r = await draftActions([msg({ platform: "slack", senderHandle: "UMICHAEL" })], deps(llm));
+    expect(r.actions).toHaveLength(1);
+    expect(r.actions[0]!.target?.platform).toBe("slack"); // source platform
+    expect(r.actions[0]!.target?.personaKey).toBe("michael-dobosz"); // the sender
+  });
+
+  it("drops relay/forward (cross-platform forwarding disabled)", async () => {
+    const llm: LlmCaller = async () => [
+      { action_type: "relay", target: { platform: "slack", personaKey: "zech" }, reason: "fwd", confidence: 0.8, draft: "fyi" } as DraftedAction,
+      { action_type: "forward", reason: "fwd2", confidence: 0.8, draft: "fyi2" } as DraftedAction,
+      { action_type: "task", reason: "keep", confidence: 0.9, params: { title: "t" } } as DraftedAction,
+    ];
+    const r = await draftActions([msg()], deps(llm));
+    expect(r.actions).toHaveLength(1); // only the task survives
+    expect(r.actions[0]!.action_type).toBe("task");
+    expect(r.dropped[0]!.errors.join(" ")).toMatch(/relay\/forward disabled/);
+  });
+
+  it("reply with null recipient still becomes an item (needs-info, not dropped)", async () => {
+    const llm: LlmCaller = async () => [
+      { action_type: "reply", target: { platform: "slack", personaKey: null }, reason: "x", confidence: 0.7, draft: "hi" } as DraftedAction,
+    ];
+    const r = await draftActions([msg()], deps(llm));
+    expect(r.actions).toHaveLength(1); // validateActionItem accepts it; missingInfo flags later
+  });
+});
+
+describe("buildPersonaResolver", () => {
+  it("indexes every handle → persona, case-insensitive", () => {
+    const { resolve, keys } = buildPersonaResolver([michael]);
+    expect(resolve("UMICHAEL")?.key).toBe("michael-dobosz");
+    expect(resolve("michael@taiv.tv")?.key).toBe("michael-dobosz");
+    expect(resolve("UMICHAEL".toLowerCase())?.key).toBe("michael-dobosz");
+    expect(resolve("unknown")).toBeNull();
+    expect(keys).toEqual(["michael-dobosz"]);
+  });
+
+  it("falls back to display name when no handle matches (WeChat senderHandle = name)", () => {
+    // WeChat InboundMessage.senderHandle is the display name, but the persona
+    // handle is the wxid — handle lookup misses, name fallback resolves it.
+    const { resolve } = buildPersonaResolver([michael]);
+    expect(resolve("Michael Dobosz")?.key).toBe("michael-dobosz");
+    expect(resolve("michael dobosz")?.key).toBe("michael-dobosz"); // case-insensitive
+  });
+});

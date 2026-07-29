@@ -1,0 +1,328 @@
+<!DOCTYPE html><html class="antialiased" lang="en" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Secretary - Connections</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&amp;family=IBM+Plex+Sans+SC:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "surface-variant": "#d9e3f7",
+                        "surface-container-highest": "#d9e3f7",
+                        "outline-variant": "#bccac0",
+                        "secondary": "#4648d4",
+                        "primary-fixed": "#85f8c4",
+                        "on-surface-variant": "#3d4a42",
+                        "on-error": "#ffffff",
+                        "background": "#f7f7f8", /* Overridden per prompt canvas color */
+                        "tertiary-fixed-dim": "#45e17c",
+                        "surface-container-high": "#dee9fd",
+                        "on-background": "#121c2a",
+                        "inverse-primary": "#68dba9",
+                        "secondary-fixed": "#e1e0ff",
+                        "secondary-fixed-dim": "#c0c1ff",
+                        "on-primary-container": "#f5fff7",
+                        "outline": "#6d7a72",
+                        "on-secondary-fixed-variant": "#2f2ebe",
+                        "on-surface": "#121c2a",
+                        "on-error-container": "#93000a",
+                        "primary": "#2563EB", /* Overridden per prompt Primary Blue */
+                        "secondary-container": "#6063ee",
+                        "on-primary": "#ffffff",
+                        "error-container": "#FEF2F2", /* Overridden per prompt soft red */
+                        "error": "#EF4444", /* Tailwind red-500 */
+                        "tertiary": "#006b32",
+                        "primary-container": "#00855d",
+                        "on-tertiary-container": "#f7fff3",
+                        "surface-container": "#e6eeff",
+                        "tertiary-fixed": "#66ff95",
+                        "surface-tint": "#006c4a",
+                        "on-secondary": "#ffffff",
+                        "primary-fixed-dim": "#68dba9",
+                        "surface-container-lowest": "#ffffff",
+                        "on-tertiary-fixed": "#00210b",
+                        "on-primary-fixed-variant": "#005137",
+                        "on-primary-fixed": "#002114",
+                        "surface": "#ffffff", /* Base surface */
+                        "tertiary-container": "#008741",
+                        "on-secondary-fixed": "#07006c",
+                        "on-tertiary-fixed-variant": "#005225",
+                        "surface-bright": "#ffffff",
+                        "inverse-surface": "#273140",
+                        "surface-dim": "#d0daef",
+                        "on-secondary-container": "#fffbff",
+                        "surface-container-low": "#eff3ff",
+                        "inverse-on-surface": "#ebf1ff",
+                        "on-tertiary": "#ffffff",
+                        "success": "#10B981" /* Adding success green for dots */
+                    },
+                    borderRadius: {
+                        DEFAULT: "6px", /* Overridden per prompt */
+                        "lg": "6px",
+                        "xl": "6px",
+                        "full": "9999px"
+                    },
+                    spacing: {
+                        "sm": "0.5rem",
+                        "xl": "2rem",
+                        "gutter": "1rem",
+                        "xs": "0.25rem",
+                        "margin": "1.5rem",
+                        "lg": "1.5rem",
+                        "md": "1rem"
+                    },
+                    fontFamily: {
+                        "sans": ["IBM Plex Sans", "IBM Plex Sans SC", "sans-serif"],
+                        "headline": ["IBM Plex Sans", "IBM Plex Sans SC", "sans-serif"],
+                        "body-medium": ["IBM Plex Sans", "IBM Plex Sans SC", "sans-serif"],
+                        "label-sm": ["IBM Plex Sans", "IBM Plex Sans SC", "sans-serif"],
+                        "display": ["IBM Plex Sans", "IBM Plex Sans SC", "sans-serif"],
+                        "label-xs": ["IBM Plex Sans", "IBM Plex Sans SC", "sans-serif"],
+                        "body-base": ["IBM Plex Sans", "IBM Plex Sans SC", "sans-serif"]
+                    },
+                    fontSize: {
+                        "headline": ["22px", { lineHeight: "1.3", fontWeight: "600" }], /* Page title */
+                        "section-heading": ["15px", { lineHeight: "1.4", fontWeight: "600" }],
+                        "body-medium": ["13.5px", { lineHeight: "1.5", fontWeight: "400" }],
+                        "label-sm": ["12px", { lineHeight: "1.4", fontWeight: "500" }],
+                        "display": ["24px", { lineHeight: "32px", letterSpacing: "-0.02em", fontWeight: "600" }],
+                        "label-xs": ["11px", { lineHeight: "14px", letterSpacing: "0.05em", fontWeight: "600" }],
+                        "body-base": ["13.5px", { lineHeight: "1.5", fontWeight: "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body { font-family: 'IBM Plex Sans', 'IBM Plex Sans SC', sans-serif; background-color: #F7F7F8; color: #121c2a; margin: 0; padding: 0; }
+        .border-hairline { border-width: 0.5px; border-color: #E5E7EB; }
+        .border-t-hairline { border-top-width: 0.5px; border-color: #E5E7EB; }
+        .border-b-hairline { border-bottom-width: 0.5px; border-color: #E5E7EB; }
+        .border-r-hairline { border-right-width: 0.5px; border-color: #E5E7EB; }
+        
+        /* Spinner Animation */
+        @keyframes spin-slow {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        .animate-spin-slow {
+            animation: spin-slow 2s linear infinite;
+        }
+    </style>
+</head>
+<body class="bg-background min-h-screen flex">
+<!-- TopAppBar for Mobile (Hidden on md and up) -->
+<header class="md:hidden fixed top-0 left-0 right-0 h-14 bg-surface-container-lowest border-b-hairline flex items-center justify-between px-md z-50 transition-all duration-200">
+<div class="font-headline text-headline text-on-surface lowercase font-bold tracking-tight">secretary</div>
+<div class="flex items-center gap-4 text-on-surface-variant">
+<span class="material-symbols-outlined" data-icon="settings" data-weight="outline">settings</span>
+<span class="material-symbols-outlined" data-icon="help_outline" data-weight="outline">help_outline</span>
+<img alt="User profile" class="w-8 h-8 rounded-full border-hairline" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA3hzRPMW7xlEluCAtkdtQsKMHosEY2LKJkLBMjCwfFFWHyFcODAKVQxBLak2aEtKi4GtHiGOcGjIglTd_Be7q3kua3mw1F7WhWBHvJ1m9ne6uDtKgxqCGsRYmJ9a9u2_ERN2erErx2i1G_Q0Ofz5zcdANo9s3-_zeV-SL0Zf4tNbMX1bdKQf2eEn2srw8TfB3lmob7jMC0z0CBbGxGY2T6OcpelU5ZLJ-YXZG7ZbWxzuRchlaSQcWABfuwAsWa1KxCLpUXl0g65FY">
+</div>
+</header>
+<!-- SideNavBar (Web only) -->
+<nav class="hidden md:flex flex-col items-center w-[56px] h-screen fixed left-0 top-0 bg-white border-r-hairline z-40"><div class="mb-8 mt-4 flex flex-col items-center">
+  <div class="w-10 h-10 bg-transparent flex items-center justify-center rounded-[6px] font-headline text-[18px] lowercase font-bold tracking-tighter text-[#1A1D21]">s.</div>
+</div>
+<div class="flex flex-col gap-4 w-full items-center"><a class="w-10 h-10 flex items-center justify-center rounded transition-colors duration-150 text-[#64748B] hover:text-[#1A1D21]" href="#" title="Queue"><span class="material-symbols-outlined text-[20px]">inbox</span></a><a class="w-10 h-10 flex items-center justify-center rounded transition-colors duration-150 text-[#64748B] hover:text-[#1A1D21]" href="#" title="People"><span class="material-symbols-outlined text-[20px]">group</span></a><a class="w-full flex items-center justify-center relative" href="#" title="Connections"><div class="absolute left-0 top-0 bottom-0 w-[2px] bg-[#2563EB]"></div><div class="w-10 h-10 flex items-center justify-center rounded bg-[#2563EB]/10 text-[#2563EB]"><span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">hub</span></div></a></div></nav>
+<!-- BottomNavBar (Mobile only) -->
+<nav class="md:hidden fixed bottom-0 left-0 right-0 h-[64px] bg-surface-container-lowest border-t-hairline flex items-center justify-around z-50 px-2 pb-safe"><a class="flex flex-col items-center gap-1 text-on-surface-variant w-16 py-1" href="#"><span class="material-symbols-outlined text-[20px]">inbox</span><span class="text-[10px] font-medium leading-none">Queue</span></a><a class="flex flex-col items-center gap-1 text-on-surface-variant w-16 py-1" href="#"><span class="material-symbols-outlined text-[20px]">group</span><span class="text-[10px] font-medium leading-none">People</span></a><a class="flex flex-col items-center gap-1 text-[#2563EB] w-16 py-1 relative" href="#"><div class="absolute -top-[1px] left-1/4 right-1/4 h-1 bg-[#2563EB] rounded-b-full"></div><span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">hub</span><span class="text-[10px] font-medium leading-none">Connections</span></a></nav>
+<!-- Main Canvas -->
+<main class="flex-1 md:ml-[56px] pt-14 md:pt-0 pb-20 md:pb-12 flex justify-center">
+<!-- Single Centered Column (~720px) -->
+<div class="w-full max-w-[720px] px-4 md:px-8 pt-8 md:pt-12 flex flex-col gap-8">
+<!-- Page Header -->
+<header>
+<h1 class="font-headline text-headline text-on-surface m-0">Connections</h1>
+<p class="font-body-medium text-body-medium text-on-surface-variant mt-1">Manage data sources and communication channels.</p>
+</header>
+<!-- 1. Connected Sources -->
+<section class="flex flex-col gap-4">
+<h2 class="font-headline text-[15px] font-semibold text-on-surface m-0 uppercase tracking-wider text-label-xs text-on-surface-variant">Active Sources</h2>
+<div class="flex flex-col gap-3">
+<!-- Slack Card -->
+<div class="bg-surface border-hairline rounded p-4 flex flex-col gap-2 relative group">
+<div class="flex items-start justify-between">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 flex items-center justify-center bg-gray-50 rounded border-hairline shrink-0">
+<svg class="w-4 h-4 text-gray-700" fill="currentColor" viewBox="0 0 24 24"><path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.688 8.834a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312zM15.165 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zM15.165 17.688a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z"></path></svg>
+</div>
+<div class="flex flex-col">
+<div class="flex items-center gap-2">
+<span class="font-body-medium text-body-medium text-on-surface font-medium">Slack <span class="text-on-surface-variant font-normal">· Taiv workspace</span></span>
+<div class="w-1.5 h-1.5 rounded-full bg-success"></div>
+</div>
+<span class="font-label-sm text-label-sm text-on-surface-variant">@LeoZheng</span>
+</div>
+</div>
+<button class="font-body-medium text-[13px] text-on-surface-variant hover:text-on-surface px-3 py-1 rounded bg-transparent border border-transparent hover:border-hairline hover:bg-gray-50 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100">Reconnect</button>
+</div>
+<div class="flex flex-wrap items-center gap-2 mt-1 pl-11">
+<span class="bg-surface-container-low text-on-surface-variant font-label-sm text-[11px] px-2 py-0.5 rounded border border-surface-variant">real-time · Socket Mode</span>
+<span class="font-label-sm text-label-xs text-outline">Last event: 2 min ago</span>
+<span class="font-label-sm text-label-xs text-outline ml-auto">Scope: read · draft</span>
+</div>
+</div>
+<!-- Gmail Card -->
+<div class="bg-surface border-hairline rounded p-4 flex flex-col gap-2 relative group">
+<div class="flex items-start justify-between">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 flex items-center justify-center bg-gray-50 rounded border-hairline shrink-0">
+<svg class="w-4 h-4 text-gray-700" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+</div>
+<div class="flex flex-col">
+<div class="flex items-center gap-2">
+<span class="font-body-medium text-body-medium text-on-surface font-medium">Gmail <span class="text-on-surface-variant font-normal">· leo@taiv.tv</span></span>
+<div class="w-1.5 h-1.5 rounded-full bg-success"></div>
+</div>
+<span class="font-label-sm text-label-sm text-on-surface-variant">delta check every 2 min</span>
+</div>
+</div>
+<button class="font-body-medium text-[13px] text-on-surface-variant hover:text-on-surface px-3 py-1 rounded bg-transparent border border-transparent hover:border-hairline hover:bg-gray-50 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100">Reconnect</button>
+</div>
+<div class="flex flex-wrap items-center gap-2 mt-1 pl-11">
+<span class="font-label-sm text-label-xs text-outline italic">sending is draft-only by design — you press Send in Gmail</span>
+<span class="font-label-sm text-label-xs text-outline ml-auto">Scope: read · draft</span>
+</div>
+</div>
+<!-- WeChat Card (Manual) -->
+<div class="bg-surface border-hairline rounded p-4 flex flex-col gap-2">
+<div class="flex items-start justify-between">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 flex items-center justify-center bg-gray-50 rounded border-hairline shrink-0">
+<svg class="w-4 h-4 text-gray-700" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.03 2 11c0 2.83 1.45 5.37 3.73 7.03-.34 1.34-1.22 2.8-1.26 2.87-.04.08 0 .18.06.23.07.05.15.06.23.02 1.32-.58 2.62-1.37 3.52-1.95A10.66 10.66 0 0012 20c5.52 0 10-4.03 10-9s-4.48-9-10-9z"></path></svg>
+</div>
+<div class="flex flex-col">
+<div class="flex items-center gap-2">
+<span class="font-body-medium text-body-medium text-on-surface font-medium">WeChat</span>
+<span class="bg-gray-100 text-gray-500 font-label-sm text-[10px] px-1.5 py-0.5 rounded leading-none">manual</span>
+</div>
+<span class="font-label-sm text-label-sm text-on-surface-variant">read/send handled manually for now</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Google Calendar Card -->
+<div class="bg-surface border-hairline rounded p-4 flex flex-col gap-2">
+<div class="flex items-start justify-between">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 flex items-center justify-center bg-gray-50 rounded border-hairline shrink-0">
+<svg class="w-4 h-4 text-gray-700" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect height="18" rx="2" ry="2" width="18" x="3" y="4"></rect><line x1="16" x2="16" y1="2" y2="6"></line><line x1="8" x2="8" y1="2" y2="6"></line><line x1="3" x2="21" y1="10" y2="10"></line></svg>
+</div>
+<div class="flex flex-col">
+<div class="flex items-center gap-2">
+<span class="font-body-medium text-body-medium text-on-surface font-medium">Google Calendar</span>
+<div class="w-1.5 h-1.5 rounded-full bg-success"></div>
+</div>
+<span class="font-label-sm text-label-sm text-on-surface-variant">connected</span>
+</div>
+</div>
+</div>
+<div class="flex flex-wrap items-center gap-2 mt-1 pl-11">
+<span class="font-label-sm text-label-xs text-outline ml-auto">Scope: read-only</span>
+</div>
+</div>
+<!-- ERROR CARD -->
+<div class="bg-error-container border border-error/30 rounded p-4 flex flex-col gap-2">
+<div class="flex items-start justify-between">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 flex items-center justify-center bg-white/50 rounded border border-error/20 shrink-0 text-error">
+<span class="material-symbols-outlined text-[18px]">warning</span>
+</div>
+<div class="flex flex-col">
+<div class="flex items-center gap-2">
+<span class="font-body-medium text-body-medium text-error font-medium">GitHub <span class="opacity-80 font-normal">· Personal</span></span>
+</div>
+<span class="font-label-sm text-label-sm text-error/80">token expired — cursor frozen, nothing lost</span>
+</div>
+</div>
+<button class="font-body-medium text-[13px] text-white bg-primary hover:bg-primary/90 px-3 py-1 rounded transition-colors border border-transparent">Reconnect</button>
+</div>
+</div>
+<!-- IN-FLIGHT CARD -->
+<div class="bg-surface border-hairline rounded p-4 flex flex-col gap-2">
+<div class="flex items-start justify-between">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 flex items-center justify-center bg-gray-50 rounded border-hairline shrink-0">
+<span class="material-symbols-outlined text-[18px] text-primary animate-spin-slow">sync</span>
+</div>
+<div class="flex flex-col">
+<div class="flex items-center gap-2">
+<span class="font-body-medium text-body-medium text-on-surface font-medium">Notion</span>
+</div>
+<span class="font-label-sm text-label-sm text-on-surface-variant italic">authorization window opened... awaiting callback</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Empty Slot: Gmail -->
+<button class="w-full bg-transparent border border-dashed border-gray-300 rounded p-4 flex items-center justify-center gap-2 hover:bg-gray-50 hover:border-gray-400 transition-colors cursor-pointer group">
+<span class="material-symbols-outlined text-[18px] text-primary group-hover:scale-110 transition-transform">add</span>
+<span class="font-body-medium text-body-medium text-primary font-medium">Connect another Gmail</span>
+</button>
+<!-- Empty Slot: Slack -->
+<button class="w-full bg-transparent border border-dashed border-gray-300 rounded p-4 flex items-center justify-center gap-2 hover:bg-gray-50 hover:border-gray-400 transition-colors cursor-pointer group">
+<span class="material-symbols-outlined text-[18px] text-primary group-hover:scale-110 transition-transform">add</span>
+<span class="font-body-medium text-body-medium text-primary font-medium">Connect workspace</span>
+</button>
+</div>
+</section>
+<!-- 2. Architecture Rules (Read-only info card) -->
+<section class="mt-4">
+<div class="bg-surface-container-lowest border-hairline rounded p-5">
+<h3 class="font-headline text-[13.5px] font-semibold text-on-surface mb-3 flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px] text-on-surface-variant">architecture</span>
+                        Architecture Rules
+                    </h3>
+<ul class="flex flex-col gap-2 font-body-medium text-body-medium text-on-surface-variant m-0 p-0 list-none">
+<li class="flex items-start gap-2">
+<span class="text-gray-400 mt-[3px] text-[10px]">■</span>
+<span class="">Nothing is ever sent without your approval.</span>
+</li>
+<li class="flex items-start gap-2">
+<span class="text-gray-400 mt-[3px] text-[10px]">■</span>
+<span class="">Behavior rules are fixed by design — there are no toggles.</span>
+</li>
+<li class="flex items-start gap-2">
+<span class="text-gray-400 mt-[3px] text-[10px]">■</span>
+<span class="">Detection is event-based; analysis runs only when something arrives.</span>
+</li>
+</ul>
+</div>
+</section>
+<!-- 3. Danger Zone -->
+<section class="mt-8 mb-12">
+<h2 class="font-headline text-[15px] font-semibold text-error m-0 mb-4">Danger Zone</h2>
+<div class="border-t-hairline border-x-hairline rounded overflow-hidden">
+<div class="flex items-center justify-between p-4 bg-surface border-b-hairline">
+<span class="font-body-medium text-body-medium text-on-surface">Slack · Taiv workspace</span>
+<button class="font-body-medium text-[13px] text-error hover:bg-error-container px-3 py-1 rounded transition-colors">Disconnect</button>
+</div>
+<div class="flex items-center justify-between p-4 bg-surface border-b-hairline">
+<span class="font-body-medium text-body-medium text-on-surface">Gmail · leo@taiv.tv</span>
+<button class="font-body-medium text-[13px] text-error hover:bg-error-container px-3 py-1 rounded transition-colors">Disconnect</button>
+</div>
+<div class="flex items-center justify-between p-4 bg-surface border-b-hairline">
+<span class="font-body-medium text-body-medium text-on-surface">Google Calendar</span>
+<button class="font-body-medium text-[13px] text-error hover:bg-error-container px-3 py-1 rounded transition-colors">Disconnect</button>
+</div>
+<div class="flex items-center justify-between p-4 bg-surface border-b-hairline">
+<span class="font-body-medium text-body-medium text-on-surface">GitHub · Personal</span>
+<button class="font-body-medium text-[13px] text-error hover:bg-error-container px-3 py-1 rounded transition-colors">Disconnect</button>
+</div>
+</div>
+</section>
+</div>
+</main>
+
+
+
+
+
+
+</body></html>

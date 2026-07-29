@@ -1,0 +1,357 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Queue - Secretary Cockpit</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&amp;family=IBM+Plex+Sans+SC:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "on-tertiary": "#ffffff",
+                        "inverse-on-surface": "#ebf1ff",
+                        "surface-container-low": "#eff3ff",
+                        "inverse-surface": "#273140",
+                        "surface-container-highest": "#d9e3f7",
+                        "on-primary-fixed": "#002114",
+                        "on-surface": "#1A1D21", /* Adjusted for slate text */
+                        "on-background": "#1A1D21", /* Adjusted */
+                        "on-secondary-fixed-variant": "#2f2ebe",
+                        "secondary-fixed": "#e1e0ff",
+                        "surface-tint": "#006c4a",
+                        "on-secondary-container": "#fffbff",
+                        "on-secondary-fixed": "#07006c",
+                        "on-error-container": "#93000a",
+                        "tertiary-fixed": "#66ff95",
+                        "surface-container-high": "#dee9fd",
+                        "surface-bright": "#f9f9ff",
+                        "on-tertiary-fixed-variant": "#005225",
+                        "surface-container-lowest": "#ffffff",
+                        "on-primary-fixed-variant": "#005137",
+                        "on-primary": "#ffffff",
+                        "primary-container": "#00855d",
+                        "error-container": "#ffdad6",
+                        "secondary": "#4648d4",
+                        "secondary-container": "#6063ee",
+                        "on-error": "#ffffff",
+                        "outline-variant": "#bccac0",
+                        "on-primary-container": "#f5fff7",
+                        "tertiary": "#006b32",
+                        "surface-dim": "#d0daef",
+                        "tertiary-container": "#008741",
+                        "secondary-fixed-dim": "#c0c1ff",
+                        "outline": "#E5E7EB", /* Hairline border */
+                        "primary": "#2563EB", /* Accent */
+                        "surface-container": "#e6eeff",
+                        "error": "#ef4444", /* Soft red */
+                        "on-surface-variant": "#64748b",
+                        "on-tertiary-fixed": "#00210b",
+                        "surface": "#ffffff", /* Cards */
+                        "primary-fixed": "#85f8c4",
+                        "on-tertiary-container": "#f7fff3",
+                        "primary-fixed-dim": "#68dba9",
+                        "inverse-primary": "#68dba9",
+                        "background": "#F7F7F8", /* Canvas */
+                        "surface-variant": "#F1F2F4", /* Task cluster band */
+                        "tertiary-fixed-dim": "#45e17c",
+                        "on-secondary": "#ffffff"
+                    },
+                    borderRadius: {
+                        "DEFAULT": "6px", /* Cards */
+                        "lg": "6px",
+                        "xl": "11px", /* Status pills */
+                        "full": "9999px",
+                        "sm": "4px" /* Chips */
+                    },
+                    spacing: {
+                        "sm": "0.5rem",
+                        "lg": "1.5rem",
+                        "xs": "0.25rem",
+                        "margin": "1.5rem",
+                        "xl": "2rem",
+                        "gutter": "1rem",
+                        "md": "1rem"
+                    },
+                    fontFamily: {
+                        "display": ["'IBM Plex Sans'", "sans-serif"],
+                        "label-xs": ["'IBM Plex Sans'", "sans-serif"],
+                        "headline": ["'IBM Plex Sans'", "sans-serif"],
+                        "label-sm": ["'IBM Plex Sans'", "sans-serif"],
+                        "body-medium": ["'IBM Plex Sans'", "sans-serif"],
+                        "body-base": ["'IBM Plex Sans'", "sans-serif"],
+                        "chinese": ["'IBM Plex Sans SC'", "sans-serif"]
+                    },
+                    fontSize: {
+                        "display": ["24px", { lineHeight: "32px", letterSpacing: "-0.02em", fontWeight: "600" }],
+                        "label-xs": ["11px", { lineHeight: "14px", letterSpacing: "0.05em", fontWeight: "600" }],
+                        "headline": ["18px", { lineHeight: "28px", letterSpacing: "-0.01em", fontWeight: "500" }],
+                        "label-sm": ["12px", { lineHeight: "16px", letterSpacing: "0.02em", fontWeight: "500" }],
+                        "body-medium": ["14px", { lineHeight: "20px", fontWeight: "500" }],
+                        "body-base": ["14px", { lineHeight: "20px", fontWeight: "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body { font-family: 'IBM Plex Sans', sans-serif; }
+        .font-sc { font-family: 'IBM Plex Sans SC', sans-serif; }
+        .hairline-border { border: 1px solid #E5E7EB; }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-background text-on-surface h-screen flex overflow-hidden">
+<!-- Shell: Left Rail -->
+<nav class="w-[56px] h-full bg-white border-r border-outline flex flex-col items-center py-md z-10 flex-shrink-0"><div class="w-10 h-10 bg-surface-variant rounded flex items-center justify-center mb-xl">
+    <span class="text-on-surface font-bold text-[20px] font-display">s.</span>
+</div>
+<div class="flex flex-col gap-lg flex-1 w-full items-center"><button class="w-10 h-10 flex items-center justify-center text-primary bg-primary/10 border-l-2 border-primary">
+        <span class="material-symbols-outlined text-[20px]">inbox</span>
+    </button>
+    <button class="w-10 h-10 flex items-center justify-center text-on-surface-variant hover:text-on-surface transition-colors">
+        <span class="material-symbols-outlined text-[20px]">group</span>
+    </button>
+    <button class="w-10 h-10 flex items-center justify-center text-on-surface-variant hover:text-on-surface transition-colors">
+        <span class="material-symbols-outlined text-[20px]">hub</span>
+    </button></div>
+<div class="mt-auto">
+    <div class="w-8 h-8 rounded-full bg-surface-variant overflow-hidden"></div>
+</div></nav>
+<!-- Main Content Area -->
+<div class="flex-1 flex flex-col min-w-0">
+<!-- Top Bar -->
+<header class="h-[60px] bg-surface hairline-border border-b flex items-center px-lg flex-shrink-0">
+<h1 class="text-headline font-headline">8 pending across 3 tasks</h1>
+</header>
+<!-- Master-Detail Layout -->
+<div class="flex-1 flex overflow-hidden">
+<!-- LEFT: Action Flow (Master) -->
+<div class="w-[380px] flex-shrink-0 border-r hairline-border border-outline bg-background overflow-y-auto hide-scrollbar flex flex-col">
+<!-- Task Cluster 1 (Expanded) -->
+<div class="w-full">
+<div class="bg-surface-variant py-sm px-md flex items-center justify-between sticky top-0 z-10">
+<div class="flex items-center gap-sm">
+<span class="material-symbols-outlined text-on-surface-variant text-[18px]">expand_more</span>
+<span class="text-body-medium font-body-medium">Chicago field-testing trip</span>
+</div>
+<div class="flex items-center">
+<div class="flex -space-x-2">
+<div class="w-5 h-5 rounded-full bg-slate-300 border border-surface-variant z-20"></div>
+<div class="w-5 h-5 rounded-full bg-blue-300 border border-surface-variant z-10"></div>
+</div>
+<span class="text-label-sm font-label-sm text-on-surface-variant ml-2">3/5</span>
+</div>
+</div>
+<div class="p-md flex flex-col gap-sm">
+<!-- NEEDS-INFO Card -->
+<div class="bg-surface hairline-border border-outline rounded p-md cursor-pointer border-l-[3px] border-l-amber-500 hover:bg-slate-50 transition-colors">
+<div class="flex justify-between items-start mb-sm">
+<div class="flex items-center gap-xs">
+<span class="material-symbols-outlined text-[16px] text-amber-500">help</span>
+<span class="text-label-xs font-label-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-xl uppercase tracking-wide">Needs Info</span>
+</div>
+<span class="text-label-sm font-label-sm text-on-surface-variant">10m ago</span>
+</div>
+<p class="text-body-medium font-body-medium text-on-surface mb-2">Confirm dinner reservation for team of 4 at Alinea.</p>
+<div class="inline-flex items-center gap-1 bg-surface-variant rounded-sm px-2 py-1">
+<span class="text-label-xs font-label-xs text-on-surface-variant">meeting time?</span>
+</div>
+</div>
+<!-- AWAITING-MANUAL Card (WeChat) -->
+<div class="bg-surface hairline-border border-outline rounded p-md cursor-pointer border-l-[3px] border-l-emerald-500 hover:bg-slate-50 transition-colors">
+<div class="flex justify-between items-start mb-sm">
+<div class="flex items-center gap-xs">
+<span class="material-symbols-outlined text-[16px] text-emerald-500">chat</span>
+<span class="text-label-xs font-label-xs text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-xl uppercase tracking-wide">Awaiting Manual</span>
+</div>
+<span class="text-label-sm font-label-sm text-on-surface-variant">1h ago</span>
+</div>
+<p class="text-body-medium font-body-medium text-on-surface mb-3">Send logistics update to vendor group.</p>
+<div class="flex gap-2">
+<button class="flex-1 text-label-sm font-label-sm bg-surface hairline-border border-outline py-1 rounded text-on-surface hover:bg-surface-variant transition-colors">Copy</button>
+<button class="flex-1 text-label-sm font-label-sm bg-surface hairline-border border-outline py-1 rounded text-on-surface hover:bg-surface-variant transition-colors">Mark sent</button>
+</div>
+</div>
+<!-- SELECTED Card (Active State) -->
+<div class="bg-blue-50 hairline-border border-primary rounded p-md relative shadow-[inset_4px_0_0_0_#2563EB]">
+<div class="flex justify-between items-start mb-sm">
+<div class="flex items-center gap-xs">
+<span class="material-symbols-outlined text-[16px] text-primary">send</span>
+<span class="text-label-xs font-label-xs text-primary bg-white px-2 py-0.5 rounded-xl uppercase tracking-wide">Ready</span>
+</div>
+<span class="text-label-sm font-label-sm text-on-surface-variant">2h ago</span>
+</div>
+<p class="text-body-medium font-body-medium text-on-surface">Draft response to Sarah regarding delayed flight.</p>
+</div>
+<!-- BRIEF Card -->
+<div class="bg-surface hairline-border border-outline rounded p-md cursor-pointer border-l-[3px] border-l-slate-400 hover:bg-slate-50 transition-colors">
+<div class="flex justify-between items-start mb-sm">
+<div class="flex items-center gap-xs">
+<span class="material-symbols-outlined text-[16px] text-slate-500">info</span>
+<span class="text-label-xs font-label-xs text-slate-600 bg-slate-100 px-2 py-0.5 rounded-xl uppercase tracking-wide">Brief</span>
+</div>
+<span class="text-label-sm font-label-sm text-on-surface-variant">3h ago</span>
+</div>
+<p class="text-body-medium font-body-medium text-on-surface mb-3">Weather alert for Chicago: Expected snow tomorrow.</p>
+<button class="w-full text-label-sm font-label-sm bg-surface hairline-border border-outline py-1.5 rounded text-on-surface hover:bg-surface-variant transition-colors">Acknowledge &amp; archive</button>
+</div>
+</div>
+</div>
+<!-- Task Cluster 2 (Collapsed) -->
+<div class="w-full mt-2">
+<div class="bg-surface-variant py-sm px-md flex items-center justify-between cursor-pointer hover:bg-slate-200 transition-colors">
+<div class="flex items-center gap-sm">
+<span class="material-symbols-outlined text-on-surface-variant text-[18px]">chevron_right</span>
+<span class="text-body-medium font-body-medium">Q3 Board Deck Prep</span>
+</div>
+<div class="flex items-center">
+<span class="text-label-sm font-label-sm text-on-surface-variant">1/1</span>
+</div>
+</div>
+</div>
+<!-- Task Cluster 3 (Error State Example) -->
+<div class="w-full mt-2 mb-lg">
+<div class="bg-surface-variant py-sm px-md flex items-center justify-between">
+<div class="flex items-center gap-sm">
+<span class="material-symbols-outlined text-on-surface-variant text-[18px]">expand_more</span>
+<span class="text-body-medium font-body-medium">Vendor Invoices</span>
+</div>
+</div>
+<div class="p-md">
+<!-- SEND-FAILURE Card -->
+<div class="bg-surface hairline-border border-outline rounded cursor-pointer overflow-hidden border-l-[3px] border-l-red-500 hover:bg-slate-50 transition-colors">
+<div class="bg-red-50 px-md py-xs border-b border-red-100 flex items-center gap-xs">
+<span class="material-symbols-outlined text-[14px] text-error">error</span>
+<span class="text-label-xs font-label-xs text-error uppercase tracking-wide">Send Failure</span>
+</div>
+<div class="p-md">
+<p class="text-body-medium font-body-medium text-on-surface mb-3">API timeout when syncing invoice #4421 to accounting.</p>
+<button class="w-full text-label-sm font-label-sm bg-surface hairline-border border-outline py-1.5 rounded text-on-surface hover:bg-surface-variant transition-colors flex items-center justify-center gap-1">
+<span class="material-symbols-outlined text-[14px]">refresh</span> Retry
+                                </button>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- RIGHT: Visual Anchor (Selected Detail) -->
+<div class="flex-1 bg-background p-lg overflow-y-auto flex justify-center">
+<!-- Main Detail Card -->
+<div class="bg-surface hairline-border border-outline rounded w-full max-w-[800px] h-fit flex flex-col">
+<!-- Top Section: Context & Message -->
+<div class="p-lg">
+<!-- Routing Line -->
+<div class="flex items-center gap-2 mb-md text-on-surface-variant">
+<div class="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-label-xs">S</div>
+<span class="material-symbols-outlined text-[16px]">arrow_forward</span>
+<span class="material-symbols-outlined text-[16px]">mail</span>
+<span class="material-symbols-outlined text-[16px]">arrow_forward</span>
+<div class="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center text-primary text-label-xs">AI</div>
+</div>
+<h2 class="text-display font-display mb-md">Draft response to Sarah regarding delayed flight</h2>
+<!-- Original Message Inset -->
+<div class="bg-background rounded p-md hairline-border border-outline mb-lg border-l-4 border-l-slate-300">
+<div class="flex justify-between items-center mb-xs">
+<span class="text-label-sm font-label-sm font-bold text-on-surface">Sarah Jenkins</span>
+<span class="text-label-sm font-label-sm text-on-surface-variant">Today, 9:42 AM</span>
+</div>
+<p class="text-body-base font-body-base text-on-surface">Hi team, my flight UA102 is delayed by 3 hours. Will miss the 2 PM site walk. Can someone cover or reschedule? Also, is the hotel flexible with late check-in?</p>
+</div>
+<!-- Reasoning & Evidence -->
+<div class="mb-lg">
+<h3 class="text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wider mb-sm">Reasoning</h3>
+<p class="text-body-medium font-body-medium text-on-surface mb-sm">Sarah will miss the site walk. Rescheduling is impossible due to vendor availability. Proceeding without her and securing late check-in at the Marriott.</p>
+<div class="flex gap-2 flex-wrap">
+<div class="bg-surface-variant rounded-sm px-2 py-1 text-label-xs font-label-xs text-on-surface-variant flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">flight</span> UA102 Status
+                                </div>
+<div class="bg-surface-variant rounded-sm px-2 py-1 text-label-xs font-label-xs text-on-surface-variant flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">event</span> Site Walk 2PM
+                                </div>
+</div>
+</div>
+<!-- Draft Bubble -->
+<div class="bg-blue-50/50 rounded-lg p-md hairline-border border-blue-100 relative">
+<div class="absolute top-2 right-2 bg-white hairline-border border-outline rounded-sm px-2 py-0.5 flex items-center gap-1 shadow-sm">
+<span class="text-[10px] font-bold text-primary">EN</span>
+<span class="text-[10px] text-outline">|</span>
+<span class="text-[10px] font-chinese text-on-surface-variant font-sc">中文</span>
+</div>
+<p class="text-body-base font-body-base text-on-surface pr-16">Hi Sarah,<br><br>Understood about UA102. We will proceed with the site walk at 2 PM as scheduled since the vendors cannot reschedule. I have already contacted the Marriott to guarantee your late check-in tonight.<br><br>Safe travels,<br>Secretary Desk</p>
+</div>
+</div>
+<!-- Actions Row -->
+<div class="px-lg py-md bg-surface-variant border-y hairline-border border-outline flex items-center justify-between">
+<div class="flex gap-md">
+<button class="bg-primary text-white text-body-medium font-body-medium px-4 py-2 rounded hover:bg-blue-700 transition-colors flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px]">send</span> Approve &amp; Send
+                            </button>
+<button class="bg-surface text-on-surface text-body-medium font-body-medium px-4 py-2 rounded hairline-border border-outline hover:bg-slate-50 transition-colors">
+                                Edit
+                            </button>
+</div>
+<button class="text-on-surface-variant text-body-medium font-body-medium hover:text-on-surface transition-colors">
+                            Skip
+                        </button>
+</div>
+<!-- Task Drill-down -->
+<div class="p-lg bg-background rounded-b">
+<h3 class="text-label-sm font-label-sm text-on-surface-variant uppercase tracking-wider mb-md">Task Context: Chicago field-testing trip</h3>
+<div class="flex gap-xl">
+<!-- Checklist & Attribution -->
+<div class="flex-1">
+<h4 class="text-body-medium font-body-medium mb-sm text-on-surface">Sub-actions</h4>
+<ul class="flex flex-col gap-sm">
+<li class="flex items-center gap-sm">
+<div class="w-4 h-4 rounded-full border border-primary flex items-center justify-center bg-primary text-white"><span class="material-symbols-outlined text-[12px]">check</span></div>
+<span class="text-body-base font-body-base text-on-surface-variant line-through">Contact Marriott for late check-in</span>
+<span class="ml-auto text-label-xs font-label-xs bg-blue-100 text-primary px-1.5 py-0.5 rounded">AI</span>
+</li>
+<li class="flex items-center gap-sm">
+<div class="w-4 h-4 rounded-full border border-outline bg-surface"></div>
+<span class="text-body-base font-body-base text-on-surface">Inform site walk vendors of absence</span>
+<span class="ml-auto text-label-xs font-label-xs bg-slate-200 text-on-surface-variant px-1.5 py-0.5 rounded">Me</span>
+</li>
+</ul>
+</div>
+<!-- Context Shelf -->
+<div class="w-[200px] border-l hairline-border border-outline pl-md">
+<h4 class="text-body-medium font-body-medium mb-sm text-on-surface flex items-center justify-between">
+                                    Entities
+                                    <span class="material-symbols-outlined text-[16px] text-on-surface-variant cursor-pointer">expand_less</span>
+</h4>
+<div class="flex flex-col gap-2">
+<div class="bg-surface hairline-border border-outline rounded p-2 flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px] text-slate-500">flight</span>
+<div class="flex flex-col">
+<span class="text-label-xs font-label-xs text-on-surface">UA102</span>
+<span class="text-[10px] text-on-surface-variant">Delayed (3h)</span>
+</div>
+</div>
+<div class="bg-surface hairline-border border-outline rounded p-2 flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px] text-slate-500">hotel</span>
+<div class="flex flex-col">
+<span class="text-label-xs font-label-xs text-on-surface">Marriott DT</span>
+<span class="text-[10px] text-on-surface-variant">Confirmed</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+
+
+
+
+
+</body></html>

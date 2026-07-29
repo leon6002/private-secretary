@@ -1,0 +1,49 @@
+key: jordan-example
+display_name: Jordan Rivera
+identity:
+  role: Backend Team Lead (fabricated example persona)
+  org: Example Corp
+  relationship: Peer who owns the API surface. THIS FILE IS A FABRICATED SAMPLE —
+    it exists to show the v3 schema. Replace with your own via /persona-bootstrap.
+relationship_meta:
+  power: peer
+  decision_authority: true
+  temperature: neutral
+handles:
+  slack: U0EXAMPLE1
+  gmail: jordan@example.com
+  wechat: null
+communication:
+  language: en
+  register: casual
+  tone_notes: Short messages, prefers bullet points, asks for numbers not adjectives.
+  timezone: America/New_York
+  response_rhythm: Replies within a few hours during business days.
+work:
+  skills:
+    - API design and versioning
+    - Postgres performance
+  owns:
+    - The public REST API and its deprecation policy
+  projects:
+    - Billing API v2 migration — OPEN
+open_threads: Billing API v2 cutover date still unset.
+commitments:
+  - who: them
+    what: Send the v2 migration checklist
+    status: open
+  - who: me
+    what: Review the deprecation timeline
+    status: open
+behavior:
+  reliability: High — follows up without being chased.
+  bad_news_style: States it directly, with a proposed mitigation.
+  pet_peeves:
+    - Vague estimates
+provenance:
+  commitments: inferred
+  behavior.reliability: inferred
+evidence:
+  commitments: "FABRICATED EXAMPLE — no real evidence; see specs/persona-v3.md for the
+    real evidence contract (no evidence = leave the field empty)."
+  behavior.reliability: "FABRICATED EXAMPLE."

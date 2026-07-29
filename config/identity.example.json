@@ -1,0 +1,16 @@
+{
+  "_comment": "Copy to config/identity.json and fill in YOUR accounts. This file is the only place the engine learns whose messages it is reading. config/identity.json is gitignored — never commit it.",
+
+  "primaryEmail": "you@yourcompany.com",
+
+  "_slackAccounts": "One entry per Slack workspace. `account` is the macOS Keychain account name you stored that workspace's xoxp- user token under (service: taiv-secretary-slack). The FIRST entry is the primary workspace.",
+  "slackAccounts": [
+    { "account": "you@yourcompany.com", "label": "slack:direct" }
+  ],
+
+  "_mailboxes": "Every Gmail mailbox to poll. Each needs its own Google OAuth bundle in Keychain (service: taiv-secretary-token-google, account: the address).",
+  "mailboxes": ["you@yourcompany.com"],
+
+  "_calendarMailbox": "Which Google Calendar new events get booked on.",
+  "calendarMailbox": "you@yourcompany.com"
+}

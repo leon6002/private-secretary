@@ -1,0 +1,38 @@
+node_modules/
+state/
+state-demo/
+# Frozen eval corpus = a copy of the real shadow log (real chat content).
+# The aggregate baseline reports in eval/*.json|md ARE committed — they hold
+# only counts, no message text.
+eval/replay-corpus/
+.gstack/
+*.log
+.DS_Store
+
+# Sensitive — local-only, NEVER commit (financing/equity/gov/internal-member intel,
+# the Leo decision profile, and personal To-Do data). Per Leo, 2026-06-20.
+projects/
+todo-export/todo_export.*
+todo-export/todo_index.json
+
+# Secret — .codex MCP config holds a live API key; never commit.
+.codex/
+# Vendored third-party agent skills (not this project's source).
+.agents/
+# Scratch WeChat exploration scripts (throwaway, run with tsx).
+wx-*.mts
+smoke-wx.mts
+
+# Per-user identity: whose accounts this instance reads. NEVER commit.
+config/identity.json
+
+# Personas are dossiers on real people — never commit them.
+personas/*.yaml
+personas/_staged/
+!personas/_example/
+
+# Owner-specific business facts injected into prompts. NEVER commit.
+config/business-context.md
+
+# Owner voice profile: learned from real DMs. NEVER commit.
+config/owner-voice.md
