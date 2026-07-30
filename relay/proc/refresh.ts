@@ -17,6 +17,7 @@ import {
   type ActionItem,
 } from "../core/action-item.js";
 import type { Persona, Platform } from "../core/types.js";
+import { clusterKey } from "../core/unit-key.js";
 import { buildRefreshRequest } from "./refresh-prompt.js";
 import type { LlmCaller } from "./draft.js";
 
@@ -48,15 +49,6 @@ export interface RefreshResult {
   newActions: ActionItem[];
 }
 
-// platform::sender — same shape as scan-loop's clusterKey so the commit's
-// supersede stays coherent.
-export function convKey(a: ActionItem): string | null {
-  const sender = a.context?.sender_handle;
-  if (!sender) return null;
-  const platform = a.source_message_id.split(":")[0] ?? "";
-  return `${platform}::${sender}`;
-}
-
 function platformOf(card: ActionItem): Platform | undefined {
   const prefix = card.source_message_id.split(":")[0];
   if (prefix === "slack" || prefix === "gmail" || prefix === "wechat") return prefix;
@@ -77,7 +69,7 @@ export async function refreshOpenTasks(
   // Group open cards by conversation; the newest card represents it.
   const byConv = new Map<string, ActionItem>();
   for (const c of openCards) {
-    const k = convKey(c);
+    const k = clusterKey(c);
     if (!k) continue;
     const cur = byConv.get(k);
     if (!cur || c.created_at > cur.created_at) byConv.set(k, c);
@@ -137,7 +129,7 @@ export async function refreshOpenTasks(
         // Prefer the LLM's fresh project link; fall back to the rep card's.
         ...(s.project_id ?? rep.project_id ? { project_id: s.project_id ?? rep.project_id } : {}),
         status: "suggested" as const,
-        // Keep the rep's source id so convKey + task grouping stay coherent.
+        // Keep the rep's source id so clusterKey + task grouping stay coherent.
         source_message_id: rep.source_message_id,
         context: ctx,
         ...(rep.task_id ? { task_id: rep.task_id } : {}),

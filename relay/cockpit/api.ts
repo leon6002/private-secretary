@@ -30,6 +30,7 @@ import {
   type ExecutionReceipt,
 } from "../core/action-item.js";
 import { groupByTask, type TaskCluster } from "../core/tasks.js";
+import { unitKey } from "../core/unit-key.js";
 import { computeGate, type GateResult } from "../core/metrics.js";
 import { canAutoExecute } from "../core/executors.js";
 import { provenanceFor, evidenceFor } from "../core/persona-v3.js";
@@ -172,14 +173,16 @@ export class CockpitApi {
     const TIER_ORDER: Record<string, number> = { A: 0, B: 1, C: 2, D: 3 };
     const clusters = clustersRaw
       .map((c) => {
-        const key = c.task_id ?? (c.actions[0] ? `__ungrouped_${c.actions[0].id}` : undefined);
+        // The plan/override key + the unit key handed to the frontend (so it
+        // never re-derives it). Stable across supersede — core/unit-key.ts.
+        const key = c.task_id ?? (c.actions[0] ? unitKey(c.actions[0]) : undefined);
         const plan = key ? plans[key] : undefined;
         const ov = key ? overrides[key] : undefined;
         // A manual drag wins over the computed tier; keep the AI rank/why/entities.
         const effPlan = ov
           ? { ...(plan ?? { rank: 999, why: "" }), tier: ov, tierManual: true }
           : plan;
-        return { ...c, plan: effPlan };
+        return { ...c, unit_key: key, plan: effPlan };
       })
       .sort((a, b) => {
         const ta = a.plan ? TIER_ORDER[a.plan.tier] ?? 8 : 9;
@@ -188,7 +191,7 @@ export class CockpitApi {
         return (a.plan?.rank ?? 999) - (b.plan?.rank ?? 999);
       });
     const pendingTaskIds = new Set(
-      suggested.map((a) => a.task_id ?? `__ungrouped_${a.id}`),
+      suggested.map((a) => unitKey(a)),
     );
 
     return {
@@ -515,7 +518,8 @@ export class CockpitApi {
   }
 
   // Manual tier override from a drag in the Today list. tier null clears it (back
-  // to the AI ranking). Keyed by the task unit key (task_id / __ungrouped_<id>).
+  // to the AI ranking). Keyed by the task unit key (task_id / stable
+  // __ungrouped_<hash> — survives supersede, core/unit-key.ts).
   setTier(key: string, tier: "A" | "B" | "C" | "D" | null): { key: string; tier: string | null } {
     return this.withLock((state) => {
       const ov = state.planOverrides ?? (state.planOverrides = {});

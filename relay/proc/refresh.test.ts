@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { refreshOpenTasks, convKey, _resetRefreshTtl, type RefreshDeps } from "./refresh.js";
+import { refreshOpenTasks, _resetRefreshTtl, type RefreshDeps } from "./refresh.js";
+import { clusterKey } from "../core/unit-key.js";
 import type { ActionItem } from "../core/action-item.js";
 import type { DraftedAction } from "./draft-prompt.js";
 import { buildRefreshRequest } from "./refresh-prompt.js";
@@ -53,7 +54,7 @@ describe("refreshOpenTasks", () => {
     const a = r.newActions[0]!;
     expect(a.action_type).toBe("calendar");
     expect(a.task_id).toBe("task_zf"); // inherited → stays in the same cluster
-    expect(convKey(a)).toBe("wechat::张工"); // same conversation → supersedes the old card
+    expect(clusterKey(a)).toBe("wechat::张工"); // same conversation → supersedes the old card
     expect(a.params.title).toBe("实车测试 @安亭");
     expect(a.id).not.toBe("m1"); // fresh id
   });

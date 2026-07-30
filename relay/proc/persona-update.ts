@@ -9,7 +9,7 @@ import type { ActionItem } from "../core/action-item.js";
 import type { Persona } from "../core/types.js";
 import type { Commitment } from "../core/persona-v3.js";
 import { personaPath, readPersonaV3File, writePersonaFile } from "../io/persona-store.js";
-import { convKey } from "./refresh.js";
+import { clusterKey } from "../core/unit-key.js";
 import {
   buildPersonaUpdateRequest,
   parseExtractedCommitments,
@@ -111,7 +111,7 @@ export async function updatePersonaCommitments(
 }
 
 // Same conversation grouping key the rest of the daemon uses.
-export { convKey };
+export { clusterKey };
 
 // Test seam.
 export function _resetPersonaUpdateTtl(): void {

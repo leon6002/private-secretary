@@ -38,9 +38,11 @@ function selectableIds() {
     .map(({ action }) => action.id);
 }
 
-// A task cluster's unit key — must match the backend (plan.ts unitKey / api).
+// A task cluster's unit key — computed by the backend (api getState attaches
+// `unit_key`; core/unit-key.ts keeps it stable across supersede). The old
+// id-based derivation stays only as a fallback for stale cached state.
 function taskKey(c) {
-  return c.task_id || (c.actions[0] ? `__ungrouped_${c.actions[0].id}` : "");
+  return c.unit_key || c.task_id || (c.actions[0] ? `__ungrouped_${c.actions[0].id}` : "");
 }
 // Live task clusters (those with a suggested/approved member).
 function liveClusters() {

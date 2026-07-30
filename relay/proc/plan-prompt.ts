@@ -4,7 +4,8 @@
 // Reuses the JsonCaller shape (system + userText + toolInputSchema → object).
 
 export interface PlanUnit {
-  key: string; // task_id, or "__ungrouped_<actionId>" for a standalone card
+  key: string; // task_id, or a stable "__ungrouped_<hash>" for a standalone card
+               // (conversation-derived — survives supersede; core/unit-key.ts)
   title: string;
   project?: string;
   subActions: string[]; // member-card headlines — what finishing it involves
