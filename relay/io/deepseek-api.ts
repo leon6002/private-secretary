@@ -26,10 +26,11 @@ export const DEEPSEEK_KEY_SERVICE = "taiv-secretary-deepseek";
 // Per-user, from config/identity.json.
 export const DEEPSEEK_KEY_ACCOUNT = loadIdentity().primaryEmail;
 
-// The drafting model. "deepseek-chat" is the current V3 chat alias; newer
-// model ids (e.g. a "V4 Flash") must be adoptable WITHOUT a code change, so
-// the env var wins (read at client construction, not module load).
-export const DEFAULT_DEEPSEEK_MODEL = "deepseek-chat";
+// The drafting model. Default is deepseek-v4-pro (per the owner's deployment,
+// 2026-07-30 — the old deepseek-chat alias is deprecated). Any newer model id
+// must be adoptable WITHOUT a code change, so the env var wins (read at client
+// construction, not module load).
+export const DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-pro";
 
 export class DeepseekApiError extends Error {
   constructor(public httpStatus: number, public body: unknown) {
