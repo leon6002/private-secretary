@@ -22,6 +22,7 @@ import { loadPersonas } from "../relay/io/personas.js";
 import { buildPersonaResolver, type DraftDeps } from "../relay/proc/draft.js";
 import { createAnthropicLlmCaller } from "../relay/proc/llm-anthropic.js";
 import { createClaudeCliLlmCaller } from "../relay/proc/llm-claude-cli.js";
+import { createDeepseekLlmCaller } from "../relay/proc/llm-deepseek.js";
 import { describeIdentity } from "../relay/io/identity.js";
 
 interface Args {
@@ -71,12 +72,18 @@ async function buildDraft(args: Args): Promise<DraftDeps | undefined> {
     return undefined;
   }
   // Default to the SUBSCRIPTION path (`claude -p`) like the daemon does — this
-  // project's normal mode needs no API key at all. Only `--llm api` reaches for
-  // one. The old code always tried the API first, so a correctly-set-up machine
-  // was told "No Anthropic API key … scan-only", which reads as a broken install.
+  // project's normal mode needs no API key at all. Only `--llm api`/`--llm
+  // deepseek` reach for one. The old code always tried the API first, so a
+  // correctly-set-up machine was told "No Anthropic API key … scan-only",
+  // which reads as a broken install.
   const mode = process.argv.includes("--llm") ? process.argv[process.argv.indexOf("--llm") + 1] : "cli";
   try {
-    const llm = mode === "api" ? await createAnthropicLlmCaller() : createClaudeCliLlmCaller({});
+    const llm =
+      mode === "api"
+        ? await createAnthropicLlmCaller()
+        : mode === "deepseek"
+          ? await createDeepseekLlmCaller()
+          : createClaudeCliLlmCaller({});
     const { resolve: resolvePersona, keys } = buildPersonaResolver(
       loadPersonas(args.personaDir),
     );
@@ -85,7 +92,11 @@ async function buildDraft(args: Args): Promise<DraftDeps | undefined> {
   } catch (e) {
     console.log(
       `[secretary] drafting DISABLED — ${(e as Error).message.split("\n")[0]}. Running scan-only.` +
-        (mode === "cli" ? " (needs the `claude` CLI logged in: run `claude -p \"say OK\"`)" : ""),
+        (mode === "cli"
+          ? " (needs the `claude` CLI logged in: run `claude -p \"say OK\"`)"
+          : mode === "deepseek"
+            ? " (needs DEEPSEEK_API_KEY env, or Keychain: security add-generic-password -U -s taiv-secretary-deepseek -a <email> -w 'sk-...')"
+            : ""),
     );
     return undefined;
   }

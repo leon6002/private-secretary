@@ -12,6 +12,7 @@
 //                                                    access_token, expiry, scope)
 //   taiv-secretary-notion        account=<email>   — Notion integration token (deferred)
 //   taiv-secretary-jira          account=<email>   — Atlassian API token (deferred)
+//   taiv-secretary-deepseek      account=<email>   — DeepSeek API key (--llm deepseek)
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
