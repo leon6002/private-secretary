@@ -23,6 +23,7 @@ import { loadProjects, loadLeoProfile } from "../relay/io/projects.js";
 import { renderProjectCatalog } from "../relay/core/project.js";
 import { createAnthropicLlmCaller, createAnthropicJsonCaller } from "../relay/proc/llm-anthropic.js";
 import { createClaudeCliLlmCaller, createClaudeCliJsonCaller } from "../relay/proc/llm-claude-cli.js";
+import { createDeepseekLlmCaller, createDeepseekJsonCaller } from "../relay/proc/llm-deepseek.js";
 import type { ConsolidateDeps } from "../relay/proc/consolidate.js";
 import type { RefreshDeps } from "../relay/proc/refresh.js";
 import type { PlanDeps } from "../relay/proc/plan.js";
@@ -81,8 +82,9 @@ const intervals: Record<Source, number> = {
 };
 const maxDraft = num("--max-draft", 20);
 // Drafting backend: "cli" (Claude Code subscription via `claude -p`, no API
-// spend — the current default, temporarily standing in for the API) or "api"
-// (the Anthropic API path). Override with --llm api.
+// spend — the current default, temporarily standing in for the API), "api"
+// (the Anthropic API path), or "deepseek" (DeepSeek chat-completions, key from
+// DEEPSEEK_API_KEY env or Keychain). Override with --llm <mode>.
 const llmMode = str("--llm", "cli");
 const draftModel = str("--draft-model", "opus");
 const visionEnabled = process.argv.includes("--vision");
@@ -146,7 +148,9 @@ async function buildDraft(): Promise<DraftDeps | undefined> {
     const llm =
       llmMode === "api"
         ? await createAnthropicLlmCaller()
-        : createClaudeCliLlmCaller({ model: draftModel });
+        : llmMode === "deepseek"
+          ? await createDeepseekLlmCaller()
+          : createClaudeCliLlmCaller({ model: draftModel });
     const personas = loadPersonas(personaDir);
     const { resolve: resolvePersona, keys } = buildPersonaResolver(personas);
     // 3-layer RAG: project layer + Leo's decision profile, with his own durable
@@ -340,7 +344,11 @@ async function buildRefresh(): Promise<RefreshDeps | undefined> {
   if (!refreshEnabled) return undefined;
   try {
     const llm =
-      llmMode === "api" ? await createAnthropicLlmCaller() : createClaudeCliLlmCaller({ model: draftModel });
+      llmMode === "api"
+        ? await createAnthropicLlmCaller()
+        : llmMode === "deepseek"
+          ? await createDeepseekLlmCaller()
+          : createClaudeCliLlmCaller({ model: draftModel });
     const { resolve: resolvePersona } = buildPersonaResolver(loadPersonas(personaDir));
     const projectCatalog = renderProjectCatalog(loadProjects(projectsDir));
     console.log(`[notify] task refresh enabled via ${llmMode} (TTL ${refreshTtlMin}min)`);
@@ -355,7 +363,11 @@ async function buildConsolidate(): Promise<ConsolidateDeps | undefined> {
   if (!consolidateEnabled) return undefined;
   try {
     const json =
-      llmMode === "api" ? await createAnthropicJsonCaller() : createClaudeCliJsonCaller({ model: draftModel });
+      llmMode === "api"
+        ? await createAnthropicJsonCaller()
+        : llmMode === "deepseek"
+          ? await createDeepseekJsonCaller()
+          : createClaudeCliJsonCaller({ model: draftModel });
     console.log(`[notify] task consolidation enabled via ${llmMode}`);
     return { json };
   } catch (e) {
@@ -368,7 +380,11 @@ async function buildPlan(): Promise<PlanDeps | undefined> {
   if (process.argv.includes("--no-plan")) return undefined;
   try {
     const json =
-      llmMode === "api" ? await createAnthropicJsonCaller() : createClaudeCliJsonCaller({ model: draftModel });
+      llmMode === "api"
+        ? await createAnthropicJsonCaller()
+        : llmMode === "deepseek"
+          ? await createDeepseekJsonCaller()
+          : createClaudeCliJsonCaller({ model: draftModel });
     console.log(`[notify] daily plan (ranking) enabled via ${llmMode}`);
     return { json };
   } catch (e) {
@@ -381,7 +397,11 @@ async function buildPersonaUpdate(): Promise<PersonaUpdateDeps | undefined> {
   if (process.argv.includes("--no-persona-update")) return undefined;
   try {
     const json =
-      llmMode === "api" ? await createAnthropicJsonCaller() : createClaudeCliJsonCaller({ model: draftModel });
+      llmMode === "api"
+        ? await createAnthropicJsonCaller()
+        : llmMode === "deepseek"
+          ? await createDeepseekJsonCaller()
+          : createClaudeCliJsonCaller({ model: draftModel });
     const { resolve: resolvePersona } = buildPersonaResolver(loadPersonas(personaDir));
     console.log(`[notify] persona commitments update enabled via ${llmMode}`);
     return { json, resolvePersona, fetchThread, personaDir };
