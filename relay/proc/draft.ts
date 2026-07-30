@@ -70,6 +70,14 @@ export interface DraftResult {
   // suggestions, for observability.
   errors: Array<{ sender: string; error: string }>;
   dropped: Array<{ sender: string; errors: string[] }>;
+  // Senders whose LLM call SUCCEEDED but returned zero suggested actions.
+  // This is the silent-empty case: the cursor has advanced, so if the model
+  // flaked (DeepSeek intermittently answers off-schema), the message is
+  // permanently skipped — the scan-loop surfaces these handles in
+  // sourceErrors so the miss is visible. Senders with errors are NOT here
+  // (they're in `errors`), nor senders whose suggestions were all dropped
+  // by validation (those are in `dropped` — the model DID answer).
+  empty: string[];
 }
 
 // Per-sender LLM calls run concurrently up to this cap. Bounded so a big
@@ -111,6 +119,9 @@ function groupBySender(messages: InboundMessage[]): Map<string, InboundMessage[]
 
 // Build the offline detail-pane snapshot (T2) from the sender's batch:
 // the message text(s), sender handle, permalink + attachments if any.
+// Provenance fields (sender_handle, sent_at) follow the same pick as
+// source_message_id — the NEWEST message in the batch — so the cockpit's
+// "which platform · who · when" line always points at the latest trigger.
 function contextFor(batch: InboundMessage[]): ActionContext {
   const latest = batch[batch.length - 1]!;
   const combined = batch.map((m) => m.text).filter(Boolean).join("\n---\n");
@@ -118,6 +129,7 @@ function contextFor(batch: InboundMessage[]): ActionContext {
   return {
     original_message: combined,
     sender_handle: latest.senderHandle,
+    sent_at: new Date(latest.timestampMs).toISOString(),
     ...(attachments.length > 0 ? { attachments } : {}),
     // Persist the Gmail threadId so the Stage-2 refresh can re-read the thread
     // (the card's source_message_id is the message id, not the thread id).
@@ -136,6 +148,7 @@ export async function draftActions(
   const actions: ActionItem[] = [];
   const errors: DraftResult["errors"] = [];
   const dropped: DraftResult["dropped"] = [];
+  const empty: string[] = [];
 
   // One self-contained unit of work per sender. Returned shape is folded
   // back into actions/errors/dropped in sender order below, so concurrency
@@ -143,7 +156,7 @@ export async function draftActions(
   const draftOne = async (
     sender: string,
     batch: InboundMessage[],
-  ): Promise<{ sender: string; actions: ActionItem[]; error?: string; senderErrors: string[] }> => {
+  ): Promise<{ sender: string; actions: ActionItem[]; error?: string; senderErrors: string[]; empty: boolean }> => {
     const persona = deps.resolvePersona(sender);
     // 3-layer RAG: pick the project(s) this sender/message touches, render their
     // goal/state/open-gaps. Empty when no project deps or no match (persona-only).
@@ -218,7 +231,7 @@ export async function draftActions(
     try {
       suggested = await deps.llm(req);
     } catch (e) {
-      return { sender, actions: [], error: (e as Error).message ?? String(e), senderErrors: [] };
+      return { sender, actions: [], error: (e as Error).message ?? String(e), senderErrors: [], empty: false };
     }
     const ctx = contextFor(batch);
     const latest = batch[batch.length - 1]!;
@@ -291,7 +304,7 @@ export async function draftActions(
         created_at: result.item.created_at || now(),
       });
     }
-    return { sender, actions: senderActions, senderErrors };
+    return { sender, actions: senderActions, senderErrors, empty: suggested.length === 0 };
   };
 
   const perSender = await mapWithConcurrency(
@@ -306,9 +319,10 @@ export async function draftActions(
     if (r.error !== undefined) errors.push({ sender: r.sender, error: r.error });
     actions.push(...r.actions);
     if (r.senderErrors.length > 0) dropped.push({ sender: r.sender, errors: r.senderErrors });
+    if (r.empty) empty.push(r.sender);
   }
 
-  return { actions, errors, dropped };
+  return { actions, errors, dropped, empty };
 }
 
 // Build a resolvePersona function from a persona list. Indexes every

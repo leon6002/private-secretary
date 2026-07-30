@@ -368,6 +368,34 @@ function msgBlock(a, sender) {
   return "";
 }
 
+// Provenance line: "<platform> · <sender> · <MM-DD HH:mm>" — which channel,
+// who, when. Time prefers context.sent_at (persisted at draft time); legacy
+// cards predate that field, so fall back to the Slack ts embedded in
+// source_message_id ("slack:<chan>:<ts.ts>"). Blank when neither exists —
+// never guess.
+function provenanceLine(a) {
+  const platform = a.target?.platform || (a.source_message_id || "").split(":")[0] || "";
+  const who = a.sender_name || a.context?.sender_handle || "";
+  let d = null;
+  const iso = a.context?.sent_at;
+  if (iso) {
+    const parsed = new Date(iso);
+    if (!isNaN(parsed)) d = parsed;
+  }
+  if (!d && typeof a.source_message_id === "string") {
+    const m = a.source_message_id.match(/^slack:[^:]+:(\d+(?:\.\d+)?)$/);
+    if (m) d = new Date(parseFloat(m[1]) * 1000);
+  }
+  let when = "";
+  if (d) {
+    const p = (n) => String(n).padStart(2, "0");
+    when = `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  const parts = [platform, who, when].filter(Boolean);
+  if (!parts.length) return "";
+  return `<div class="text-label-sm text-on-surface-variant mb-md">${escapeHtml(parts.join(" · "))}</div>`;
+}
+
 // The project this card advances (set by the daemon: project_id + resolved
 // project_name). A "MISC" / unset card shows a muted chip — it's not tied to a
 // tracked project.
@@ -436,6 +464,7 @@ function renderDetail(a) {
         </div>
         ${projectBadge(a)}
         <h2 class="text-display mb-md ${isChinese(title) ? "font-chinese" : ""}">${escapeHtml(title)}</h2>
+        ${provenanceLine(a)}
         ${msgBlock(a, sender)}
         ${(a.next_actions && a.next_actions.length) ? `
           <div class="mb-lg bg-blue-50/40 border border-blue-100 rounded-lg p-md">

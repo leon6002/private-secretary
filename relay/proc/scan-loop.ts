@@ -557,10 +557,14 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
   // held, so the cockpit stays responsive even through a long or hung draft.
   let draftedActions: ActionItem[] = [];
   let llmDraftError: string | undefined;
+  // Senders whose draft call succeeded but produced ZERO cards — the silent
+  // skip (cursor already advanced). Surfaced as llm:draft-empty in phase 3.
+  let draftEmpty: string[] = [];
   if (opts.draft && draftInput.length > 0) {
     try {
       const r = await draftActions(draftInput, opts.draft);
       draftedActions = r.actions;
+      draftEmpty = r.empty;
       if (r.errors.length > 0) {
         llmDraftError = r.errors.map((e) => `${e.sender}: ${e.error}`).join("; ");
       }
@@ -583,7 +587,7 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
   const willWrite = shouldWriteShadowRecord(draftedActions, shadowInput);
   let shadowWritten = false;
   let draftedCount = 0;
-  if (!opts.dryRun && (draftedActions.length > 0 || llmDraftError !== undefined || willWrite)) {
+  if (!opts.dryRun && (draftedActions.length > 0 || llmDraftError !== undefined || draftEmpty.length > 0 || willWrite)) {
     const committed = await commitUnderLock((fresh) => {
       if (draftedActions.length > 0) {
         // Don't re-surface an already-BOOKED meeting: drop a fresh suggested
@@ -643,6 +647,18 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
         fresh.sourceErrors["llm:draft"] = { message: llmDraftError, at: new Date(startedAtMs).toISOString() };
       } else {
         delete fresh.sourceErrors["llm:draft"];
+      }
+      // Silent-empty drafts (LLM answered, zero cards) are the invisible
+      // failure: the cursor advanced, so the message is gone unless someone
+      // notices. Surface the handles in the cockpit error strip; the raw
+      // model responses are in llm-draft-raw.jsonl next to the state file.
+      if (draftEmpty.length > 0) {
+        fresh.sourceErrors["llm:draft-empty"] = {
+          message: `${draftEmpty.length} sender(s) triggered but drafted 0 cards: ${draftEmpty.join(", ")} — raw responses in llm-draft-raw.jsonl`,
+          at: new Date(startedAtMs).toISOString(),
+        };
+      } else {
+        delete fresh.sourceErrors["llm:draft-empty"];
       }
       if (willWrite) {
         appendShadowRecord(

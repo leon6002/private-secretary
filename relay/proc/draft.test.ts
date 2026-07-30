@@ -259,6 +259,57 @@ describe("draftActions orchestrator", () => {
     expect(r.errors).toEqual([]);
   });
 
+  it("empty: lists senders whose LLM call succeeded but suggested zero actions", async () => {
+    const llm: LlmCaller = async (req) => {
+      if (req.userText.includes("UEMPTY")) return []; // the silent skip
+      return [{ action_type: "task", reason: "ok", confidence: 0.9, params: { title: "t" } } as DraftedAction];
+    };
+    const r = await draftActions(
+      [
+        msg({ senderHandle: "UEMPTY", id: "slack:C1:1.0", text: "from UEMPTY" }),
+        msg({ senderHandle: "UGOOD", id: "slack:C2:2.0", text: "from UGOOD" }),
+      ],
+      deps(llm),
+    );
+    expect(r.empty).toEqual(["UEMPTY"]);
+    expect(r.actions).toHaveLength(1);
+  });
+
+  it("empty: errored senders and validation-dropped senders are NOT 'empty'", async () => {
+    const llm: LlmCaller = async (req) => {
+      if (req.userText.includes("UFAIL")) throw new Error("boom");
+      // UDROP's only suggestion fails validation (bad action_type) → dropped,
+      // not empty: the model DID answer, the answer was malformed.
+      return [{ action_type: "explode" as never, reason: "x", confidence: 0.9 }];
+    };
+    const r = await draftActions(
+      [
+        msg({ senderHandle: "UFAIL", id: "slack:C1:1.0", text: "from UFAIL" }),
+        msg({ senderHandle: "UDROP", id: "slack:C2:2.0", text: "from UDROP" }),
+      ],
+      deps(llm),
+    );
+    expect(r.empty).toEqual([]);
+    expect(r.errors).toHaveLength(1);
+    expect(r.dropped).toHaveLength(1);
+  });
+
+  it("context.sent_at is the newest batch message's timestamp (same pick as source_message_id)", async () => {
+    const llm: LlmCaller = async () => [
+      { action_type: "task", reason: "ok", confidence: 0.9, params: { title: "t" } } as DraftedAction,
+    ];
+    const r = await draftActions(
+      [
+        msg({ id: "m1", text: "first", timestampMs: 1781000000000 }),
+        msg({ id: "m2", text: "second", timestampMs: 1781000300000 }),
+      ],
+      deps(llm),
+    );
+    expect(r.actions).toHaveLength(1);
+    expect(r.actions[0]!.source_message_id).toBe("m2");
+    expect(r.actions[0]!.context?.sent_at).toBe(new Date(1781000300000).toISOString());
+  });
+
   it("preserves sender order in output even when LLM calls finish out of order", async () => {
     // Concurrency is bounded but must not reorder output: earlier senders'
     // calls resolve LAST here, yet the result stays in first-seen order.

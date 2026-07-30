@@ -8,9 +8,13 @@
 // a JSON-only instruction that embeds the target schema, and parse the
 // response defensively. draft.ts validates each action against the ActionItem
 // schema downstream, so a stray field here is non-fatal; an unparseable blob
-// yields [] (drafting) or a thrown error (generic JSON caller).
+// yields [] (drafting) or a thrown error (generic JSON caller). Because a []
+// drafting response is otherwise a silent, permanent skip (the cursor already
+// advanced), the drafting caller optionally records those raw responses to an
+// NDJSON log (opts.rawLogPath → relay/io/llm-raw-log.ts).
 
 import { createDeepseekClient, type DeepseekClient } from "../io/deepseek-api.js";
+import { appendRawLlmRecord } from "../io/llm-raw-log.js";
 import type { DraftedAction } from "./draft-prompt.js";
 import type { LlmCaller } from "./draft.js";
 import type { JsonLlmCaller } from "./llm-claude-cli.js";
@@ -70,13 +74,35 @@ function jsonOutputRule(schema: Record<string, unknown>, rootKey?: string): stri
 
 // Wrap a DeepseekClient as an LlmCaller: ask for {"actions":[...]}, parse
 // defensively. Exported so tests can inject a fake client (no network).
-export function deepseekLlmCaller(client: DeepseekClient): LlmCaller {
+//
+// opts.rawLogPath: when set, a response that yields no usable actions appends
+// the raw model content to that NDJSON log — empty-actions (parsed, but no
+// actions array / an empty one) vs parse-failure (no JSON object at all).
+// A silent empty draft is otherwise invisible AND permanent (the source
+// cursor has already advanced past the message), so this is the only
+// evidence trail for prompt tuning. Absent = no logging.
+export function deepseekLlmCaller(
+  client: DeepseekClient,
+  opts?: { rawLogPath?: string },
+): LlmCaller {
   return async (req) => {
     const content = await client.chatJson({
       system: req.system + jsonOutputRule(req.toolInputSchema, "actions"),
       userText: req.userText,
     });
-    return parseDeepseekActions(content);
+    const actions = parseDeepseekActions(content);
+    if (actions.length === 0 && opts?.rawLogPath) {
+      // Distinguish "model said nothing to do" from "model went off-format":
+      // the fixes are different (prompt content vs output discipline).
+      const parsed = extractJsonObject(content);
+      appendRawLlmRecord(opts.rawLogPath, {
+        at: new Date().toISOString(),
+        kind: parsed === null ? "parse-failure" : "empty-actions",
+        model: client.model,
+        raw: content,
+      });
+    }
+    return actions;
   };
 }
 
@@ -94,9 +120,12 @@ export function deepseekJsonCaller(client: DeepseekClient): JsonLlmCaller {
 
 // Convenience: build ready callers from Keychain/env credentials.
 // Throw DeepseekKeyMissingError if no key is configured — the entrypoints
-// (run-secretary, run-notify) catch it and run scan-only.
-export async function createDeepseekLlmCaller(): Promise<LlmCaller> {
-  return deepseekLlmCaller(await createDeepseekClient());
+// (run-secretary, run-notify) catch it and run scan-only. `opts.rawLogPath`
+// is forwarded to the draft caller (raw-response capture on silent empties).
+export async function createDeepseekLlmCaller(
+  opts?: { rawLogPath?: string },
+): Promise<LlmCaller> {
+  return deepseekLlmCaller(await createDeepseekClient(), opts);
 }
 
 export async function createDeepseekJsonCaller(): Promise<JsonLlmCaller> {

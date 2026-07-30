@@ -1,4 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   deepseekJsonCaller,
   deepseekLlmCaller,
@@ -100,6 +103,57 @@ describe("deepseekLlmCaller", () => {
     expect(seen[0]!.system).toContain('"actions"');
     expect(seen[0]!.system).toContain("you are a test");
     expect(seen[0]!.userText).toBe("do the thing");
+  });
+});
+
+describe("deepseekLlmCaller raw-response logging", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "deepseek-raw-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const logPath = () => join(dir, "llm-draft-raw.jsonl");
+  // Fake client WITH a model field — the log record carries it.
+  const modelledClient = (content: string): DeepseekClient =>
+    ({ ...fakeClient(content).client, model: "deepseek-v4-pro" }) as DeepseekClient;
+
+  it("empty-actions: a parsed-but-actionless response writes a record and still returns []", async () => {
+    const caller = deepseekLlmCaller(modelledClient('{"note":"nothing to do"}'), { rawLogPath: logPath() });
+    expect(await caller(draftReq)).toEqual([]);
+    const line = JSON.parse(readFileSync(logPath(), "utf8").trim());
+    expect(line.kind).toBe("empty-actions");
+    expect(line.model).toBe("deepseek-v4-pro");
+    expect(line.raw).toBe('{"note":"nothing to do"}');
+    expect(typeof line.at).toBe("string");
+  });
+
+  it("empty-actions: an explicit empty actions array is logged too (the silent skip)", async () => {
+    const caller = deepseekLlmCaller(modelledClient('{"actions":[]}'), { rawLogPath: logPath() });
+    expect(await caller(draftReq)).toEqual([]);
+    expect(JSON.parse(readFileSync(logPath(), "utf8").trim()).kind).toBe("empty-actions");
+  });
+
+  it("parse-failure: unparseable output writes a record and still returns []", async () => {
+    const caller = deepseekLlmCaller(modelledClient("sorry, I can't do that"), { rawLogPath: logPath() });
+    expect(await caller(draftReq)).toEqual([]);
+    expect(JSON.parse(readFileSync(logPath(), "utf8").trim()).kind).toBe("parse-failure");
+  });
+
+  it("no rawLogPath → no file, no logging", async () => {
+    const caller = deepseekLlmCaller(modelledClient("not json"), {});
+    expect(await caller(draftReq)).toEqual([]);
+    expect(existsSync(logPath())).toBe(false);
+  });
+
+  it("a response WITH actions writes nothing", async () => {
+    const caller = deepseekLlmCaller(
+      modelledClient('{"actions":[{"action_type":"task","reason":"r","confidence":0.8}]}'),
+      { rawLogPath: logPath() },
+    );
+    expect(await caller(draftReq)).toHaveLength(1);
+    expect(existsSync(logPath())).toBe(false);
   });
 });
 

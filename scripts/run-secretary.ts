@@ -14,7 +14,7 @@
 // under launchd KeepAlive.
 
 import { mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Scheduler, DEFAULT_SCAN_INTERVAL_MS } from "../relay/proc/scheduler.js";
 import { runScanTick } from "../relay/proc/scan-loop.js";
 import { notify } from "../relay/proc/notify.js";
@@ -82,7 +82,11 @@ async function buildDraft(args: Args): Promise<DraftDeps | undefined> {
       mode === "api"
         ? await createAnthropicLlmCaller()
         : mode === "deepseek"
-          ? await createDeepseekLlmCaller()
+          // rawLogPath: capture the raw response whenever a draft comes back
+          // empty/unparseable — the silent-skip evidence trail.
+          ? await createDeepseekLlmCaller({
+              rawLogPath: join(dirname(args.statePath), "llm-draft-raw.jsonl"),
+            })
           : createClaudeCliLlmCaller({});
     const { resolve: resolvePersona, keys } = buildPersonaResolver(
       loadPersonas(args.personaDir),
