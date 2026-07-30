@@ -50,8 +50,16 @@ describe("rankTasks", () => {
     expect(await rankTasks([card("a")], {}, jsonStub([]))).toEqual({});
   });
 
-  it("unitKey uses task_id or __ungrouped_<id>", () => {
+  it("unitKey: task_id wins; standalone key is stable per conversation, id-based without a sender", () => {
     expect(unitKey(card("a", { task_id: "t9" }))).toBe("t9");
+    // No sender_handle → the id-based fallback (unchanged behavior).
     expect(unitKey(card("a"))).toBe("__ungrouped_a");
+    // With a sender the key derives from the conversation, not the action id,
+    // so a supersede (fresh id, same sender) keeps the same unit key.
+    const withSender = { context: { sender_handle: "张工" } };
+    const k1 = unitKey(card("a", withSender));
+    const k2 = unitKey(card("b", withSender));
+    expect(k1).toMatch(/^__ungrouped_[0-9a-f]+$/);
+    expect(k1).toBe(k2);
   });
 });

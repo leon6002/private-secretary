@@ -31,7 +31,8 @@ import type { InboundMessage } from "../core/types.js";
 import type { ActionItem } from "../core/action-item.js";
 import { draftActions, type DraftDeps } from "./draft.js";
 import { consolidateTasks, type ConsolidateDeps } from "./consolidate.js";
-import { refreshOpenTasks, convKey, type RefreshDeps } from "./refresh.js";
+import { refreshOpenTasks, type RefreshDeps } from "./refresh.js";
+import { clusterKey, inheritSupersededTaskIds } from "../core/unit-key.js";
 import { rankTasks, type PlanDeps } from "./plan.js";
 import { updatePersonaCommitments, type PersonaUpdateDeps } from "./persona-update.js";
 import { scanSlackDirect } from "../sources/slack-direct.js";
@@ -211,16 +212,6 @@ const CONSOLIDATE_IDLE_MS = 30 * 60 * 1000;
 // this idle window (ranking is global + costs an LLM call).
 let lastPlanMs = 0;
 const PLAN_IDLE_MS = 30 * 60 * 1000;
-
-// Clustering key for cross-tick supersede: platform (from the source_message_id
-// prefix) + sender handle. Null when there's no sender to cluster on (never
-// supersedes those). Two cards with the same key are the same conversation.
-function clusterKey(a: ActionItem): string | null {
-  const sender = a.context?.sender_handle;
-  if (!sender) return null;
-  const platform = a.source_message_id.split(":")[0] ?? "";
-  return `${platform}::${sender}`;
-}
 
 // ─── one tick ───────────────────────────────────────────────────────
 
@@ -641,7 +632,12 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
           const doomed = new Set(superseded.map((a) => a.id));
           fresh.actions = fresh.actions.filter((a) => !doomed.has(a.id));
         }
-        fresh.actions.push(...toCommit);
+        // P1 durable identity: a replacement card INHERITS the superseded
+        // card's task_id (copy, never mint) so the plan + cockpit cluster
+        // stay attached to the task across the supersede. Computed from the
+        // superseded list regardless of whether the drop committed — the
+        // cards are doomed next tick anyway, and a copied id is idempotent.
+        fresh.actions.push(...inheritSupersededTaskIds(toCommit, superseded));
       }
       if (llmDraftError !== undefined) {
         fresh.sourceErrors["llm:draft"] = { message: llmDraftError, at: new Date(startedAtMs).toISOString() };
@@ -728,12 +724,17 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
           await commitUnderLock((fresh) => {
             // Drop the stale still-suggested card(s) in each refreshed
             // conversation; user-touched cards (not "suggested") are kept.
-            fresh.actions = fresh.actions.filter((a) => {
-              if (a.status !== "suggested") return true;
-              const k = convKey(a);
-              return !(k && keys.has(k));
+            const dropped = fresh.actions.filter((a) => {
+              if (a.status !== "suggested") return false;
+              const k = clusterKey(a);
+              return !!(k && keys.has(k));
             });
-            fresh.actions.push(...newActions);
+            const doomed = new Set(dropped.map((a) => a.id));
+            fresh.actions = fresh.actions.filter((a) => !doomed.has(a.id));
+            // P1: the refresh already carries the rep's task_id, but inherit
+            // from ANY dropped card too — the rep may have been ungrouped
+            // while a sibling in the same conversation held the task_id.
+            fresh.actions.push(...inheritSupersededTaskIds(newActions, dropped));
             delete fresh.sourceErrors["llm:refresh"];
           });
         }

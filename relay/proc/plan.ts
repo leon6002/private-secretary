@@ -1,10 +1,12 @@
 // Daily-plan (ranking) pass (specs/daily-todo.md). Groups the open cards into
-// task units (same keying the cockpit uses: task_id, or "__ungrouped_<id>" for a
-// standalone card), asks the LLM to rank them A→D with a "why now" + entities,
+// task units (same keying the cockpit uses: task_id, or a stable
+// "__ungrouped_<hash>" for a standalone card — see core/unit-key.ts), asks
+// the LLM to rank them A→D with a "why now" + entities,
 // and returns a TaskPlanMap to store in loop-state. Pure-core split: the LLM
 // ranks, this module just groups + validates + stamps.
 
 import type { ActionItem } from "../core/action-item.js";
+import { unitKey as coreUnitKey } from "../core/unit-key.js";
 import type { TaskRegistry, TaskPlanMap } from "../core/tasks.js";
 import { buildPlanRequest, parseRankings, type PlanRequest, type PlanUnit } from "./plan-prompt.js";
 
@@ -17,8 +19,10 @@ export interface PlanDeps {
 }
 
 // The cockpit + plan share this unit key so a plan attaches to its cluster.
+// Stable across supersede (core/unit-key.ts) so a replacement card keeps its
+// plan + tier overrides.
 export function unitKey(a: ActionItem): string {
-  return a.task_id ?? `__ungrouped_${a.id}`;
+  return coreUnitKey(a);
 }
 
 export async function rankTasks(

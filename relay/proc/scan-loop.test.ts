@@ -598,6 +598,51 @@ describe("runScanTick", () => {
     expect(loadState(statePath).actions.some((a) => a.id === firstId)).toBe(false);
   });
 
+  // MANDATORY REGRESSION — P1 durable task identity. Before P1, a supersede
+  // dropped the old card's task_id (the fresh draft has none until the
+  // consolidate pass runs), detaching the plan + cockpit cluster from the
+  // task. The replacement must INHERIT (copy, never mint) the task_id.
+  it("supersede-inherits-task_id: a fresh draft for the same sender keeps the superseded card's task_id", async () => {
+    const SESS = (ts: string, unread: number, text: string) =>
+      `最近 1 个会话:\n\n[${ts}] 金小奇 芯联集成 (${unread}条未读)\n  文本: ${text}`;
+    const llm = vi.fn(async () => [
+      {
+        action_type: "reply" as const,
+        target: { platform: "wechat" as const, personaKey: null },
+        reason: "answer",
+        confidence: 0.5,
+        draft: "好的",
+      },
+    ]);
+    const draft = { llm, resolvePersona: () => null, knownPersonaKeys: [], now: () => "2026-06-14T12:00:00Z" };
+    const tick = (ts: string, unread: number, text: string, hist: string) =>
+      runScanTick({
+        statePath, sources: ["wechat"], wechatFetchContacts: async () => "",
+        wechatFetchSessions: async () => SESS(ts, unread, text),
+        wechatFetchHistory: async () => hist,
+        draft,
+      });
+
+    await tick("06-14 21:39", 1, "那很好啊", "[2026-06-14 21:39] 金小奇 芯联集成: 那很好啊");
+    const firstId = loadState(statePath).actions[0]!.id;
+
+    // Simulate the consolidate pass having grouped the card under a task.
+    const st = loadState(statePath);
+    st.actions[0]!.task_id = "task_jinxiaoqi";
+    st.tasks["task_jinxiaoqi"] = { title: "芯联对接", created_at: "2026-06-14T12:00:00Z" };
+    writeFileSync(statePath, JSON.stringify(st));
+
+    await tick(
+      "06-14 21:45", 2, "还有个问题",
+      "[2026-06-14 21:39] 金小奇 芯联集成: 那很好啊\n[2026-06-14 21:45] 金小奇 芯联集成: 还有个问题",
+    );
+
+    const after = loadState(statePath).actions;
+    expect(after).toHaveLength(1); // superseded, not appended
+    expect(after[0]!.id).not.toBe(firstId); // it IS the fresh card
+    expect(after[0]!.task_id).toBe("task_jinxiaoqi"); // …carrying the SAME task
+  });
+
   it("no draft dep: scan-only, zero drafted, no queue rows", async () => {
     const slack = slackStub([{ id: "C1", is_im: true }], {
       C1: [{ ts: "100.0", user: "U2", text: `hi <@${SELF_SLACK}>` }],
