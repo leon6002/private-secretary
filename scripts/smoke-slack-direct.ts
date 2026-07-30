@@ -1,9 +1,11 @@
 #!/usr/bin/env -S npx tsx
 // Smoke test for the Direct-API Slack adapter. Run against real Slack
-// using the xoxp- token in Keychain (taiv-secretary-slack / leo@taiv.tv).
+// using the xoxp- token in Keychain (taiv-secretary-slack, account = the
+// primary email in config/identity.json).
 //
 // Pass criteria:
-//   1. auth.test returns user_id matching the persona expectation (UPHG4T8R1)
+//   1. auth.test returns a non-empty user_id (token works — whose account
+//      it is comes from identity.json, not a hard-coded expectation)
 //   2. listAllConversations returns at least 1 IM + 1 channel
 //   3. One conversationsHistory call against a known channel returns
 //      messages with proper shape
@@ -31,7 +33,7 @@ async function main(): Promise<void> {
   const auth = await client.authTest();
   check(
     "auth.test",
-    auth.user_id === "UPHG4T8R1",
+    auth.user_id !== undefined && auth.user_id !== "",
     `user_id=${auth.user_id} team=${auth.team}`,
   );
 
