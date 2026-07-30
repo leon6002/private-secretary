@@ -268,6 +268,7 @@ function renderTaskDetail(c) {
           <span class="flex items-center gap-1 text-label-xs text-on-surface-variant ml-auto" title="AI last updated this card"><span class="material-symbols-outlined text-[14px]">update</span>Updated ${escapeHtml(timeAgo(clusterRecency(c)))}</span>
         </div>
         <h1 class="text-display text-on-surface mb-2 ${isChinese(title) ? "font-chinese" : ""}">${escapeHtml(title)}</h1>
+        ${provenanceLine(primary)}
         ${plan?.why ? `<p class="text-body-lg font-medium ${plan.tier === "A" ? "text-red-600" : "text-on-surface-variant"} ${isChinese(plan.why) ? "font-chinese" : ""}">${escapeHtml(plan.why)}</p>` : ""}
       </header>
 
