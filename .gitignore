@@ -39,4 +39,5 @@ config/owner-voice.md
 
 # Kimi CLI local workspace: review notes, chat records, intermediate materials.
 # Local only — NEVER commit.
+.kimi-code/
 .kimi/
