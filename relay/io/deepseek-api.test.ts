@@ -92,12 +92,12 @@ describe("DeepseekClient.chatJson", () => {
     ]);
   });
 
-  it("defaults the model to deepseek-chat", async () => {
+  it("defaults the model to deepseek-v4-pro", async () => {
     delete process.env.SECRETARY_DEEPSEEK_MODEL;
     const { fetchFn, calls } = fakeFetch(() => okContent("{}"));
     const c = new DeepseekClient({ apiKey: "k", fetchFn });
     await c.chatJson({ system: "s", userText: "u" });
-    expect(calls[0]!.body.model).toBe("deepseek-chat");
+    expect(calls[0]!.body.model).toBe("deepseek-v4-pro");
   });
 
   it("honours the SECRETARY_DEEPSEEK_MODEL env override", async () => {
