@@ -4,7 +4,7 @@
 //
 // Routes:
 //   GET  /                       → index.html (CSRF token injected)
-//   GET  /app.css, /app.js       → static assets
+//   GET  /app.css, /js/**        → static assets (.js/.css only, contained in public/)
 //   GET  /api/state              → CockpitState (queue, counts, gate, errors)
 //   GET  /api/personas           → persona[] for the People screen
 //   POST /api/actions/:id/approve   → approve + execute
@@ -20,7 +20,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, extname, join, resolve, sep } from "node:path";
 import {
   CockpitApi,
   CockpitBadStateError,
@@ -145,9 +145,23 @@ export function createCockpitServer(opts: CockpitServerOptions): {
       res.end(html);
       return;
     }
-    if (method === "GET" && (path === "/app.css" || path === "/app.js")) {
-      const ext = path.endsWith(".css") ? ".css" : ".js";
-      const body = readFileSync(join(PUBLIC_DIR, path.slice(1)), "utf8");
+    // Static assets: the stylesheet plus the ES modules under /js/. The path
+    // is resolved against PUBLIC_DIR and must stay inside it (../ traversal is
+    // rejected), and only .js/.css are ever served — no HTML, no TS sources.
+    if (method === "GET" && (path === "/app.css" || path.startsWith("/js/"))) {
+      const file = resolve(PUBLIC_DIR, "." + path);
+      const ext = extname(file);
+      if ((ext !== ".js" && ext !== ".css") || !file.startsWith(PUBLIC_DIR + sep)) {
+        sendJson(res, 404, { error: `no route: ${method} ${path}` });
+        return;
+      }
+      let body: string;
+      try {
+        body = readFileSync(file, "utf8");
+      } catch {
+        sendJson(res, 404, { error: `no route: ${method} ${path}` });
+        return;
+      }
       // no-store so a plain reload always picks up edits (local dev tool;
       // there's no CDN to benefit from caching anyway).
       res.writeHead(200, { "Content-Type": CONTENT_TYPES[ext]!, "Cache-Control": "no-store" });
