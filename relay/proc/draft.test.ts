@@ -67,6 +67,39 @@ describe("buildDraftRequest (pure prompt)", () => {
     expect(req.userText).toContain("do NOT re-answer");
     expect(req.userText).toContain("在路上"); // the prior turn is present as context
   });
+
+  it("renders each message's own timestamp in its header line", () => {
+    const req = buildDraftRequest({ persona: michael, messages: [msg()], knownPersonaKeys: [] });
+    expect(req.userText).toContain("(slack, id=slack:C1:1.0, at=2026-06-09T10:13:20.000Z)");
+  });
+
+  it("prepends a CURRENT TIME anchor line when now is provided (ISO + local)", () => {
+    const req = buildDraftRequest({
+      persona: michael,
+      messages: [msg()],
+      knownPersonaKeys: [],
+      now: "2026-07-30T10:52:13.456Z",
+      nowLocal: "2026-07-30 18:52 (UTC+08:00)",
+    });
+    expect(req.userText).toContain(
+      "CURRENT TIME: 2026-07-30T10:52:13.456Z (UTC) = local 2026-07-30 18:52 (UTC+08:00)",
+    );
+    expect(req.userText).toContain("Resolve relative dates");
+    // the anchor comes first — before the persona block
+    expect(req.userText.indexOf("CURRENT TIME")).toBeLessThan(req.userText.indexOf("SENDER PERSONA"));
+  });
+
+  it("omits the CURRENT TIME line entirely when now is absent (no 'undefined')", () => {
+    const req = buildDraftRequest({ persona: michael, messages: [msg()], knownPersonaKeys: [] });
+    expect(req.userText).not.toContain("CURRENT TIME");
+    expect(req.userText).not.toContain("undefined");
+  });
+
+  it("anchors calendar dates to the message timestamp + CURRENT TIME, never the model's calendar", () => {
+    const req = buildDraftRequest({ persona: michael, messages: [msg()], knownPersonaKeys: [] });
+    expect(req.system).toContain("timestamp + the CURRENT TIME anchor");
+    expect(req.system).toContain("leave start/end unset");
+  });
 });
 
 describe("draftActions orchestrator", () => {
@@ -166,6 +199,16 @@ describe("draftActions orchestrator", () => {
     const r = await draftActions([msg()], deps(llm));
     expect(r.actions).toHaveLength(1);
     expect(r.actions[0]!.params.title).toBe("与金总定上车地铁站");
+  });
+
+  it("threads deps.now into the request as the CURRENT TIME anchor (ISO + local)", async () => {
+    let seenUserText = "";
+    const llm: LlmCaller = async (req) => {
+      seenUserText = req.userText;
+      return [];
+    };
+    await draftActions([msg()], deps(llm)); // deps.now = 2026-06-14T12:00:00Z
+    expect(seenUserText).toMatch(/CURRENT TIME: 2026-06-14T12:00:00Z \(UTC\) = local \d{4}-\d{2}-\d{2} \d{2}:\d{2} \(UTC[+-]\d{2}:\d{2}\)/);
   });
 
   it("groups a sender's multiple messages into ONE analysis", async () => {

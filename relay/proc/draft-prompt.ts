@@ -165,7 +165,10 @@ forward — not one vague reply, and not disconnected cards. Concretely:
   Do NOT downgrade a dated meeting to just a task/reply. Set start/end from the
   date with a best-effort block from any rough cue: 上午/morning → 09:00–11:00,
   下午/afternoon → 14:00–16:00, 晚上/evening → 19:00–20:00, else a 1h block at a
-  sensible default. When the exact time/place is NOT yet fixed, say so in the
+  sensible default. The DATE part of start/end comes from the message's own
+  timestamp + the CURRENT TIME anchor — never from your own knowledge of the
+  calendar. If the date cannot be determined, leave start/end unset (the card is
+  flagged Needs info) rather than guess. When the exact time/place is NOT yet fixed, say so in the
   description ("具体时间/地点待定，临近确认") and put the confirm step in next_actions —
   that's ONE calendar card, not a separate reply+ignore. Fill location + a Google
   Maps link only when a place is actually known; never invent an address. The
@@ -285,7 +288,9 @@ function describeMessage(m: InboundMessage, i: number): string {
         .map((l) => `    ${l}`)
         .join("\n")
     : "";
-  return `  [${i + 1}] (${m.platform}, id=${m.id})\n  ${m.text}${attach}${ctx}`;
+  // Carry the message's own timestamp in the header — relative dates in the
+  // text ("明晚9点") resolve against THIS, not the model's stale calendar.
+  return `  [${i + 1}] (${m.platform}, id=${m.id}, at=${new Date(m.timestampMs).toISOString()})\n  ${m.text}${attach}${ctx}`;
 }
 
 // Build the request for one sender's batch. Optional 3-layer-RAG context:
@@ -313,9 +318,19 @@ export function buildDraftRequest(opts: {
   projectContext?: string;
   projectCatalog?: string;
   relatedContext?: string;
+  // The model's clock anchor: `now` = current time as ISO UTC, `nowLocal` =
+  // the same instant in the machine's local timezone (Leo's senders share it).
+  // WHY: without an anchor the model resolves relative dates ("晚上9点",
+  // "next Friday") from its own stale calendar — a live run booked a
+  // 2026-07-30 message onto 2025-01-23. Both absent = no CURRENT TIME line.
+  now?: string;
+  nowLocal?: string;
 }): DraftRequest {
   const personaBlock = describePersona(opts.persona);
   const msgBlock = opts.messages.map(describeMessage).join("\n\n");
+  const timeLine = opts.now
+    ? `CURRENT TIME: ${opts.now} (UTC)${opts.nowLocal ? ` = local ${opts.nowLocal}` : ""} — the sender's local timezone is the local one unless thread context says otherwise. Resolve relative dates (明天/今晚/next Friday) against the per-message timestamps below, in the sender's local date.\n\n`
+    : "";
   const recipientHint =
     opts.knownPersonaKeys.length > 0
       ? `\n\nKNOWN PERSONA KEYS (for target.personaKey — exact match only): ${opts.knownPersonaKeys.join(", ")}`
@@ -341,7 +356,7 @@ export function buildDraftRequest(opts: {
     opts.projectCatalog && opts.projectCatalog.trim()
       ? `\n\nPROJECT CATALOG — set project_id to the BEST-FITTING id below by topic/domain (the message need not name it); "MISC" only if none genuinely fit:\n${opts.projectCatalog.trim()}`
       : "";
-  const userText = `${personaBlock}${projectBlock}${catalogBlock}${relatedBlock}\n\nNEW MESSAGES FROM THIS SENDER:\n${msgBlock}${recipientHint}\n\nDecide the action items and call ${TOOL_NAME}.`;
+  const userText = `${timeLine}${personaBlock}${projectBlock}${catalogBlock}${relatedBlock}\n\nNEW MESSAGES FROM THIS SENDER:\n${msgBlock}${recipientHint}\n\nDecide the action items and call ${TOOL_NAME}.`;
   // Leo profile conditions HOW to decide (priorities, delegation, decision style,
   // hard rules) so the action is the one LEO would take.
   const system = opts.leoProfile && opts.leoProfile.trim()

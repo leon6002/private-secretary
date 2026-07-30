@@ -177,6 +177,18 @@ export async function draftActions(
     // assigned by meaning, even when keyword-matching surfaced no focused context.
     const projectCatalog =
       deps.projects && deps.projects.length > 0 ? renderProjectCatalog(deps.projects) : undefined;
+    // Time anchor for the prompt: the model gets BOTH the UTC ISO instant and
+    // the machine-local rendering (Leo's senders share his timezone), so
+    // relative dates resolve against evidence instead of the model's stale
+    // calendar (live incident: a 2026-07-30 message was booked onto 2025-01-23).
+    const nowIso = now();
+    const d = new Date(nowIso);
+    const pad2 = (n: number): string => String(n).padStart(2, "0");
+    const offMin = -d.getTimezoneOffset();
+    const nowLocal =
+      `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ` +
+      `${pad2(d.getHours())}:${pad2(d.getMinutes())} ` +
+      `(UTC${offMin >= 0 ? "+" : "-"}${pad2(Math.floor(Math.abs(offMin) / 60))}:${pad2(Math.abs(offMin) % 60)})`;
     const req = buildDraftRequest({
       persona,
       messages: batch,
@@ -185,6 +197,8 @@ export async function draftActions(
       projectContext,
       projectCatalog,
       relatedContext,
+      now: nowIso,
+      nowLocal,
     });
     // Decode this batch's image attachments to local paths so the model can
     // SEE them (vision mode). A failed decode is skipped, not fatal — the draft
