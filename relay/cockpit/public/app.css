@@ -36,8 +36,8 @@ body { margin: 0; }
 .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
 /* Approve slide-out (animateApprove adds .removing). */
-.row { transition: opacity .2s ease, transform .2s ease; }
-.row.removing { opacity: 0; transform: translateX(14px); }
+.task-card { transition: opacity .2s ease, transform .2s ease; }
+.task-card.removing { opacity: 0; transform: translateX(14px); }
 
 /* Toast. */
 .toast {

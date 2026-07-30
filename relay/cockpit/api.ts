@@ -514,9 +514,6 @@ export class CockpitApi {
     });
   }
 
-  // Mark an awaiting-manual item (Gmail draft the user sent, or a WeChat
-  // paste) as done — writes the receipt + executed. The receipt ref comes
-  // from the UI (a Gmail message link or "manual").
   // Manual tier override from a drag in the Today list. tier null clears it (back
   // to the AI ranking). Keyed by the task unit key (task_id / __ungrouped_<id>).
   setTier(key: string, tier: "A" | "B" | "C" | "D" | null): { key: string; tier: string | null } {
@@ -543,6 +540,9 @@ export class CockpitApi {
     });
   }
 
+  // Mark an awaiting-manual item (Gmail draft the user sent, or a WeChat
+  // paste) as done — writes the receipt + executed. The receipt ref comes
+  // from the UI (a Gmail message link or "manual").
   markSent(id: string, ref: string = "manual"): ActionItem {
     return this.withLock((state) => {
       const action = this.findOrThrow(state, id);
