@@ -291,7 +291,7 @@ describe("edit / skip / restore / markSent", () => {
 });
 
 describe("flushAutoExecute", () => {
-  it("auto-executes task/ignore ≥0.9, leaves reply/relay alone", async () => {
+  it("auto-executes ignore ≥0.9, leaves task and reply/relay alone", async () => {
     seed([
       action({ id: "ig", action_type: "ignore", draft: undefined, target: {}, confidence: 0.98, params: { category: "newsletter" } }),
       action({ id: "tk", action_type: "task", draft: undefined, target: {}, confidence: 0.95, params: { title: "todo" } }),
@@ -303,9 +303,11 @@ describe("flushAutoExecute", () => {
     };
     const api = mkApi(localExecutor);
     const n = await api.flushAutoExecute();
-    expect(n).toBe(2);
+    expect(n).toBe(1);
     const state = loadState(statePath);
     expect(state.actions.find((a) => a.id === "ig")!.status).toBe("executed");
+    // task stays put: somebody's request is never auto-completed (2026-07-31).
+    expect(state.actions.find((a) => a.id === "tk")!.status).toBe("suggested");
     expect(state.actions.find((a) => a.id === "rep")!.status).toBe("suggested");
   });
 });

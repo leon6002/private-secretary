@@ -34,11 +34,13 @@ describe("canAutoExecute (V1 hard rules)", () => {
     }
   });
 
-  it("high-confidence ignore/task may auto-execute", () => {
+  it("high-confidence ignore may auto-execute; task never does", () => {
     expect(canAutoExecute(item())).toBe(true);
+    // task used to auto-execute ≥0.9 until 2026-07-31: a task is somebody's
+    // request — auto-completing it marks undone work as done. ignore-only now.
     expect(
       canAutoExecute(item({ action_type: "task", params: { title: "do it" } })),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("below the threshold: no auto-execute", () => {
