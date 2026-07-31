@@ -703,6 +703,127 @@ describe("runScanTick", () => {
     expect(after[0]!.task_id).toBe("task_jinxiaoqi"); // …carrying the SAME task
   });
 
+  // Supersede exemption (fix/supersede-keep-calendar): a suggested calendar
+  // with a concrete params.start is a COMMITMENT, not an evolving draft — a
+  // same-sender redraft must not kill it. Task/reply cards still supersede.
+  it("supersede-keep-calendar: a suggested calendar WITH start survives a same-sender redraft; the same sender's task card still supersedes", async () => {
+    writeFileSync(statePath, JSON.stringify({
+      version: 2, marks: {}, outcomes: [], sourceErrors: {}, tasks: {},
+      actions: [
+        {
+          id: "cal1", source_message_id: "wechat:cal1", action_type: "calendar",
+          target: {}, reason: "明天10点见客户", confidence: 0.8,
+          params: { title: "见客户", start: "2026-06-15T10:00:00+08:00", end: "2026-06-15T11:00:00+08:00" },
+          status: "suggested", created_at: "2026-06-14T12:00:00Z",
+          context: { sender_handle: "金小奇 芯联集成" },
+        },
+        {
+          id: "task1", source_message_id: "wechat:task1", action_type: "task",
+          target: {}, reason: "follow up", confidence: 0.6,
+          params: { title: "回传资料" },
+          status: "suggested", created_at: "2026-06-14T12:00:00Z",
+          context: { sender_handle: "金小奇 芯联集成" },
+        },
+      ],
+    }));
+    const llm = vi.fn(async () => [
+      {
+        action_type: "reply" as const,
+        target: { platform: "wechat" as const, personaKey: null },
+        reason: "answer",
+        confidence: 0.5,
+        draft: "好的",
+      },
+    ]);
+    const r = await runScanTick({
+      statePath, sources: ["wechat"], wechatFetchContacts: async () => "",
+      wechatFetchSessions: async () => "最近 1 个会话:\n\n[06-14 21:45] 金小奇 芯联集成 (1条未读)\n  文本: 还有个问题",
+      wechatFetchHistory: async () => "[2026-06-14 21:45] 金小奇 芯联集成: 还有个问题",
+      draft: { llm, resolvePersona: () => null, knownPersonaKeys: [], now: () => "2026-06-14T12:00:00Z" },
+    });
+    expect(r.drafted).toBe(1);
+
+    const after = loadState(statePath).actions;
+    // The committed-meeting card survived the redraft; the task card did not.
+    expect(after.some((a) => a.id === "cal1")).toBe(true);
+    expect(after.some((a) => a.id === "task1")).toBe(false); // task still supersedes
+    expect(after.some((a) => a.action_type === "reply")).toBe(true); // fresh card appended
+    expect(after).toHaveLength(2);
+
+    // The exempt calendar is NOT labelled "superseded" (it wasn't superseded);
+    // the dropped task card is.
+    const recs = readLabels(readFileSync(labelsPathFor(statePath), "utf8"));
+    const superseded = recs.filter((x) => x.decision === "superseded").map((x) => x.action_id);
+    expect(superseded).toContain("task1");
+    expect(superseded).not.toContain("cal1");
+  });
+
+  it("supersede-keep-calendar: a suggested calendar WITHOUT start still supersedes", async () => {
+    writeFileSync(statePath, JSON.stringify({
+      version: 2, marks: {}, outcomes: [], sourceErrors: {}, tasks: {},
+      actions: [{
+        id: "cal1", source_message_id: "wechat:cal1", action_type: "calendar",
+        target: {}, reason: "maybe meet next week", confidence: 0.5,
+        params: { title: "见客户" }, // no start — half-baked, missing-info anyway
+        status: "suggested", created_at: "2026-06-14T12:00:00Z",
+        context: { sender_handle: "金小奇 芯联集成" },
+      }],
+    }));
+    const llm = vi.fn(async () => [
+      {
+        action_type: "reply" as const,
+        target: { platform: "wechat" as const, personaKey: null },
+        reason: "answer",
+        confidence: 0.5,
+        draft: "好的",
+      },
+    ]);
+    await runScanTick({
+      statePath, sources: ["wechat"], wechatFetchContacts: async () => "",
+      wechatFetchSessions: async () => "最近 1 个会话:\n\n[06-14 21:45] 金小奇 芯联集成 (1条未读)\n  文本: 还有个问题",
+      wechatFetchHistory: async () => "[2026-06-14 21:45] 金小奇 芯联集成: 还有个问题",
+      draft: { llm, resolvePersona: () => null, knownPersonaKeys: [], now: () => "2026-06-14T12:00:00Z" },
+    });
+
+    const after = loadState(statePath).actions;
+    expect(after.some((a) => a.id === "cal1")).toBe(false); // superseded
+    expect(after).toHaveLength(1);
+    expect(after[0]!.action_type).toBe("reply");
+  });
+
+  it("supersede-keep-calendar: phase-5 refresh also keeps a suggested calendar WITH start (time change → both cards coexist)", async () => {
+    writeFileSync(statePath, JSON.stringify({
+      version: 2, marks: {}, outcomes: [], sourceErrors: {}, tasks: {},
+      actions: [{
+        id: "cal1", source_message_id: "wechat:cal1", action_type: "calendar",
+        target: {}, reason: "周三九点半实车测试", confidence: 0.8,
+        params: { title: "实车测试 @安亭", start: "2026-06-24T09:30:00+08:00", end: "2026-06-24T11:00:00+08:00" },
+        status: "suggested", created_at: "2026-06-23T00:00:00Z",
+        context: { sender_handle: "张工" },
+      }],
+    }));
+    const refresh = {
+      // The thread moved the meeting to 14:00 — the refresh emits the NEW time.
+      llm: async () => [{
+        action_type: "calendar" as const, reason: "时间改到下午两点", confidence: 0.8,
+        params: { title: "实车测试 @安亭", start: "2026-06-24T14:00:00+08:00", end: "2026-06-24T15:30:00+08:00" },
+        headline: "实车测试 周三 14:00", summary: "时间已改", next_actions: [],
+      }],
+      resolvePersona: () => null,
+      fetchThread: async () => "me: 时间定了告诉我\n张工: 改到下午两点",
+      now: () => "2026-06-23T12:00:00Z",
+      ttlMs: 0, // the module-level TTL map persists across tests in this file
+    };
+    await runScanTick({ statePath, sources: [], refresh });
+    const saved = loadState(statePath);
+    // The documented trade-off: the old-time card survives alongside the new
+    // one — the user picks the right one and skips the other.
+    expect(saved.actions.find((a) => a.id === "cal1")).toBeDefined();
+    const cals = saved.actions.filter((a) => a.action_type === "calendar");
+    expect(cals).toHaveLength(2);
+    expect(cals.map((c) => c.params.start)).toContain("2026-06-24T14:00:00+08:00");
+  });
+
   it("no draft dep: scan-only, zero drafted, no queue rows", async () => {
     const slack = slackStub([{ id: "C1", is_im: true }], {
       C1: [{ ts: "100.0", user: "U2", text: `hi <@${SELF_SLACK}>` }],

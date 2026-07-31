@@ -162,6 +162,25 @@ export function missingInfo(a: ActionItem): string[] {
   return missing;
 }
 
+// Supersede exemption (fix/supersede-keep-calendar). Cross-tick supersede kills
+// ALL still-suggested same-sender cards when a fresh draft lands — right for
+// task/reply (one chatty contact = one evolving card, no floods), but a sender
+// switching TOPICS would silently drop a pending meeting ("明天10点见客户"
+// killed by a later unrelated message). A suggested CALENDAR card with a
+// concrete start time is a commitment, not an evolving draft — exempt it.
+// A calendar WITHOUT params.start still supersedes: it's half-baked and
+// missing-info anyway. Trade-off: if the meeting time CHANGES in the thread,
+// the old-time card now survives alongside the new one — the user picks the
+// right one and skips the other. Acceptable: human decides, skip is cheap,
+// and it beats silently losing the event.
+export function isSupersedeExempt(a: ActionItem): boolean {
+  return (
+    a.action_type === "calendar" &&
+    typeof a.params?.start === "string" &&
+    a.params.start !== ""
+  );
+}
+
 export type ValidationResult =
   | { ok: true; item: ActionItem }
   | { ok: false; errors: string[] };

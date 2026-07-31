@@ -29,6 +29,7 @@ import { acquireLock, loadState, releaseLock, saveState, type LoopState } from "
 import { appendLabels, buildLabel, labelsPathFor } from "../io/labels.js";
 import type { InboundMessage } from "../core/types.js";
 import type { ActionItem } from "../core/action-item.js";
+import { isSupersedeExempt } from "../core/action-item.js";
 import { draftActions, type DraftDeps } from "./draft.js";
 import { consolidateTasks, type ConsolidateDeps } from "./consolidate.js";
 import { refreshOpenTasks, type RefreshDeps } from "./refresh.js";
@@ -629,10 +630,16 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
         });
         // Cross-tick clustering: a fresh SUGGESTED card for a sender supersedes
         // the prior still-suggested card(s) for that sender — one chatty contact
-        // yields one evolving card, not a flood.
+        // yields one evolving card, not a flood. EXEMPTION (see
+        // isSupersedeExempt in core/action-item.ts): a suggested calendar with
+        // a concrete params.start is a commitment, not an evolving draft — it
+        // stays in the queue AND gets no "superseded" label. If the meeting
+        // time changes in the thread, the old-time card survives alongside the
+        // new one; the user picks the right one and skips the other.
         const freshKeys = new Set(toCommit.map(clusterKey).filter((k): k is string => !!k));
         const superseded = fresh.actions.filter((a) => {
           if (a.status !== "suggested") return false;
+          if (isSupersedeExempt(a)) return false;
           const k = clusterKey(a);
           return !!(k && freshKeys.has(k));
         });
@@ -760,8 +767,12 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
           await commitUnderLock((fresh) => {
             // Drop the stale still-suggested card(s) in each refreshed
             // conversation; user-touched cards (not "suggested") are kept.
+            // Same exemption as phase 3: a suggested calendar with a concrete
+            // params.start is a commitment and survives the refresh supersede
+            // (the refreshed cards land alongside it; the user skips one).
             const dropped = fresh.actions.filter((a) => {
               if (a.status !== "suggested") return false;
+              if (isSupersedeExempt(a)) return false;
               const k = clusterKey(a);
               return !!(k && keys.has(k));
             });
