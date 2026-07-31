@@ -3,8 +3,13 @@
 // baseline (T8) enforced via security.ts on every request.
 //
 // Routes:
-//   GET  /                       → index.html (CSRF token injected)
-//   GET  /app.css, /js/**        → static assets (.js/.css only, contained in public/)
+//   GET  /                       → web/dist/index.html, the React app (CSRF token
+//                                  injected; build-hint page when dist is missing)
+//   GET  /index.html             → same as /
+//   GET  /assets/**              → vite build output (hashed, immutable cache;
+//                                  whitelisted extensions, contained in web/dist)
+//   GET  /app.css, /js/**        → legacy vanilla SPA assets (.js/.css only,
+//                                  contained in public/; removed in S6)
 //   GET  /api/state              → CockpitState (queue, counts, gate, errors)
 //   GET  /api/personas           → persona[] for the People screen
 //   GET  /api/activity?tail=&kind= → activity-log tail (F3, read-only)
@@ -42,10 +47,17 @@ import { ACTIVITY_KINDS, type ActivityKind } from "../io/activity-log.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "public");
+// The React app's build output (`npm run cockpit:build`). Served for "/" and
+// "/assets/**"; the legacy public/ tree above keeps only its old routes until
+// the migration finishes (S6).
+const DEFAULT_WEB_DIST_DIR = join(__dirname, "web", "dist");
 
 export interface CockpitServerOptions extends CockpitApiOptions {
   port?: number; // default 4317
   host?: string; // default 127.0.0.1 — do NOT change to 0.0.0.0
+  // Overrides the web/dist location — tests point this at a temp fixture so
+  // they never depend on a real build. Defaults to DEFAULT_WEB_DIST_DIR.
+  webDistDir?: string;
 }
 
 export interface RunningCockpit {
@@ -61,6 +73,30 @@ const CONTENT_TYPES: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
 };
+
+// Extensions servable from web/dist/assets — vite's hashed build output plus
+// the static kinds the app references. Anything else (TS sources, configs…)
+// is a 404 even if the file exists.
+const ASSET_CONTENT_TYPES: Record<string, string> = {
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".woff2": "font/woff2",
+  ".ico": "image/x-icon",
+};
+
+// Served at "/" when the React app hasn't been built yet (fresh clone, or
+// cockpit started before `npm run cockpit:build`). HTTP 200 with instructions,
+// not an error — the API routes work regardless.
+const BUILD_HINT_HTML = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8" /><title>secretary</title></head>
+<body style="font-family: ui-monospace, monospace; padding: 2rem; color: #1A1D21;">
+<p>Cockpit web app is not built yet.</p>
+<p>Run <code>npm run cockpit:build</code>, then reload this page.</p>
+</body></html>`;
 
 async function readBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
@@ -100,6 +136,9 @@ export function createCockpitServer(opts: CockpitServerOptions): {
   const csrfToken = loadOrMintCsrfToken(dirname(opts.statePath));
   const host = opts.host ?? "127.0.0.1";
   const port = opts.port ?? 4317;
+  // resolve() up front so the /assets containment check below compares
+  // absolute, normalized paths.
+  const webDistDir = resolve(opts.webDistDir ?? DEFAULT_WEB_DIST_DIR);
 
   const server = createServer((req, res) => {
     void handle(req, res).catch((e) => {
@@ -138,18 +177,54 @@ export function createCockpitServer(opts: CockpitServerOptions): {
     }
 
     // ── static + index ──────────────────────────────────────────
+    // The React app: web/dist/index.html with the CSRF token injected (same
+    // mechanism as the legacy SPA — src/lib/api.ts reads the meta). no-store:
+    // the token must never come from a cache. Missing dist → build hint.
+    // replaceAll: a stray literal placeholder (e.g. in an HTML comment) must
+    // never leave the <meta> itself uninjected.
     if (method === "GET" && (path === "/" || path === "/index.html")) {
-      const html = readFileSync(join(PUBLIC_DIR, "index.html"), "utf8").replace(
-        "__CSRF_TOKEN__",
-        csrfToken,
-      );
+      let html: string;
+      try {
+        html = readFileSync(join(webDistDir, "index.html"), "utf8").replaceAll(
+          "__CSRF_TOKEN__",
+          csrfToken,
+        );
+      } catch {
+        html = BUILD_HINT_HTML;
+      }
       res.writeHead(200, { "Content-Type": CONTENT_TYPES[".html"], "Cache-Control": "no-store" });
       res.end(html);
       return;
     }
-    // Static assets: the stylesheet plus the ES modules under /js/. The path
-    // is resolved against PUBLIC_DIR and must stay inside it (../ traversal is
-    // rejected), and only .js/.css are ever served — no HTML, no TS sources.
+    // Vite build output. Filenames carry a content hash, so immutable caching
+    // is safe (index.html above stays no-store and points at the new hashes
+    // after each build). The resolved path must stay inside webDistDir (../
+    // traversal rejected) and the extension must be whitelisted.
+    if (method === "GET" && path.startsWith("/assets/")) {
+      const file = resolve(webDistDir, "." + path);
+      const contentType = ASSET_CONTENT_TYPES[extname(file)];
+      if (!contentType || !file.startsWith(webDistDir + sep)) {
+        sendJson(res, 404, { error: `no route: ${method} ${path}` });
+        return;
+      }
+      let body: Buffer;
+      try {
+        body = readFileSync(file); // binary-safe: .png/.woff2/.ico are servable
+      } catch {
+        sendJson(res, 404, { error: `no route: ${method} ${path}` });
+        return;
+      }
+      res.writeHead(200, {
+        "Content-Type": contentType,
+        "Cache-Control": "public, max-age=31536000, immutable",
+      });
+      res.end(body);
+      return;
+    }
+    // Legacy vanilla SPA assets (public/), kept until the React migration
+    // finishes (S6). The path is resolved against PUBLIC_DIR and must stay
+    // inside it (../ traversal is rejected), and only .js/.css are ever
+    // served — no HTML, no TS sources.
     if (method === "GET" && (path === "/app.css" || path.startsWith("/js/"))) {
       const file = resolve(PUBLIC_DIR, "." + path);
       const ext = extname(file);

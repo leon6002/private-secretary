@@ -11,6 +11,7 @@ import { appendActivity, activityPathFor } from "../io/activity-log.js";
 let dir: string;
 let statePath: string;
 let personaDir: string;
+let webDistDir: string;
 let cockpit: RunningCockpit;
 
 function action(over: Partial<ActionItem> = {}): ActionItem {
@@ -40,11 +41,25 @@ beforeEach(async () => {
   statePath = join(dir, "loop-state.json");
   personaDir = join(dir, "personas");
   mkdirSync(personaDir, { recursive: true });
+  // A stand-in for the vite build output (relay/cockpit/web/dist) so these
+  // tests never depend on a real `npm run cockpit:build`. index.html carries
+  // the same __CSRF_TOKEN__ placeholder the real one does.
+  webDistDir = join(dir, "web-dist");
+  mkdirSync(join(webDistDir, "assets"), { recursive: true });
+  writeFileSync(
+    join(webDistDir, "index.html"),
+    '<!DOCTYPE html><html><head><meta name="csrf-token" content="__CSRF_TOKEN__" /></head>' +
+      '<body><div id="root"></div><script type="module" src="/assets/index-abc123.js"></script></body></html>',
+  );
+  writeFileSync(join(webDistDir, "assets", "index-abc123.js"), 'console.log("fixture");\n');
+  // A .ts file inside assets: exists on disk but must NOT be served
+  // (extension whitelist).
+  writeFileSync(join(webDistDir, "assets", "source-leak.ts"), "export {};\n");
   writeFileSync(
     statePath,
     JSON.stringify({ version: 2, marks: {}, actions: [action()], outcomes: [], sourceErrors: {}, tasks: {} }),
   );
-  cockpit = await startCockpit({ statePath, personaDir, executor: sendingExecutor, port: 0 });
+  cockpit = await startCockpit({ statePath, personaDir, executor: sendingExecutor, port: 0, webDistDir });
 });
 
 afterEach(async () => {
@@ -57,13 +72,64 @@ function url(path: string): string {
 }
 
 describe("cockpit HTTP server", () => {
-  it("GET / serves the SPA with the CSRF token injected", async () => {
+  it("GET / serves the built React app with the CSRF token injected", async () => {
     const r = await fetch(url("/"));
     expect(r.status).toBe(200);
+    expect(r.headers.get("cache-control")).toBe("no-store");
     const html = await r.text();
     expect(html).toContain(cockpit.csrfToken);
     expect(html).not.toContain("__CSRF_TOKEN__");
-    expect(html).toContain('data-screen="queue"'); // SPA shell: the nav rail is served
+    expect(html).toContain('<div id="root">'); // the React mount point from web/dist
+  });
+
+  it("GET / without a built web/dist serves the build-hint page (200)", async () => {
+    const alt = await startCockpit({
+      statePath,
+      personaDir,
+      executor: sendingExecutor,
+      port: 0,
+      webDistDir: join(dir, "no-such-dist"),
+    });
+    try {
+      const r = await fetch(`${alt.url}/`);
+      expect(r.status).toBe(200);
+      const html = await r.text();
+      expect(html).toContain("npm run cockpit:build");
+    } finally {
+      await alt.close();
+    }
+  });
+
+  it("GET /assets/* serves hashed build output with immutable caching", async () => {
+    const r = await fetch(url("/assets/index-abc123.js"));
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-type")).toMatch(/text\/javascript/);
+    expect(r.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect(await r.text()).toContain("fixture");
+  });
+
+  it("GET /assets rejects non-whitelisted extensions even when the file exists", async () => {
+    const r = await fetch(url("/assets/source-leak.ts"));
+    expect(r.status).toBe(404);
+  });
+
+  it("GET /assets traversal is rejected", async () => {
+    // fetch() normalizes dot segments away client-side, so send the raw path.
+    const http = await import("node:http");
+    for (const path of ["/assets/../server.ts", "/assets/%2e%2e/%2e%2e/server.ts"]) {
+      const status = await new Promise<number>((resolve, reject) => {
+        const req = http.request(
+          { host: "127.0.0.1", port: cockpit.port, path, method: "GET" },
+          (res) => {
+            res.resume();
+            resolve(res.statusCode ?? 0);
+          },
+        );
+        req.on("error", reject);
+        req.end();
+      });
+      expect(status).toBe(404);
+    }
   });
 
   it("GET /app.css and /js/* serve static assets", async () => {

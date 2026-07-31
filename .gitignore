@@ -1,4 +1,6 @@
 node_modules/
+# Cockpit React app build output (npm run cockpit:build).
+relay/cockpit/web/dist/
 state/
 state-demo/
 # Frozen eval corpus = a copy of the real shadow log (real chat content).

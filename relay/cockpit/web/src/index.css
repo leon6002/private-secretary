@@ -1,0 +1,37 @@
+/* Design tokens as CSS variables — the single place the light/dark palettes
+   live. tailwind.config.js maps the semantic color names (surface, outline,
+   on-surface…) onto these variables, so components use plain classes and a
+   theme switch is just toggling .dark on <html> (see src/lib/theme.tsx).
+
+   Light values match the legacy vanilla SPA (DESIGN.md); dark values are new
+   with this migration (decision: dark theme, 2026-07-31). */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #f7f7f8;
+  --surface: #ffffff;
+  --surface-variant: #f1f2f4;
+  --outline: #e5e7eb;
+  --on-surface: #1a1d21;
+  --on-surface-variant: #64748b;
+  --primary: #2563eb;
+  --error: #ef4444;
+}
+
+.dark {
+  --background: #0f1115;
+  --surface: #171a21;
+  --surface-variant: #1e222b;
+  --outline: #262b36;
+  --on-surface: #e6e8ec;
+  --on-surface-variant: #9aa3b2;
+  --primary: #3b82f6;
+  --error: #f87171;
+}
+
+body {
+  @apply bg-background text-on-surface font-sans;
+}
