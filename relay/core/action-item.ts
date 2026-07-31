@@ -308,18 +308,25 @@ export function markDone(a: ActionItem): ActionItem {
   return { ...a, status: "executed" };
 }
 
-// Phase 2 (T6): un-approve / un-skip back to suggested, so the cockpit's
-// [Restore to queue] / undo works (design 8A). Only legal BEFORE a side effect:
-// an item that already has an execution_receipt was sent/created — restoring it
-// would risk a double-send, so it stays terminal. executed is always terminal.
+// Phase 2 (T6): un-approve / un-skip / un-do back to suggested, so the
+// cockpit's [Restore] works from both the skipped list and the completed
+// list. Only legal when NO real external side effect happened:
+//   · receipt.kind "sent" / "calendar_event" → the message went out / the
+//     event was created. It can never be un-sent, so restoring would lie and
+//     risks a double-send on re-approval — the item stays terminal.
+//   · receipt.kind "local" (auto-ticked / manually-done task·ignore) or no
+//     receipt at all → nothing left the machine, so undo is safe.
+// An executed item is therefore restorable ONLY in the local/no-receipt case;
+// an executed item with a real side effect stays terminal forever.
 export function restoreAction(a: ActionItem): ActionItem {
-  if (a.status !== "rejected" && a.status !== "approved")
+  if (a.status !== "rejected" && a.status !== "approved" && a.status !== "executed")
     throw new InvalidActionTransition("restore", a.status);
-  if (hasReceipt(a))
+  const receipt = a.params?.execution_receipt as ExecutionReceipt | undefined;
+  if (receipt && receipt.kind !== "local")
     throw new InvalidActionTransition(
       "restore",
       a.status,
-      "already has an execution receipt (side effect happened) — cannot restore",
+      `already has a ${receipt.kind} receipt (real side effect happened) — cannot restore`,
     );
   return { ...a, status: "suggested" };
 }

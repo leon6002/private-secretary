@@ -155,7 +155,11 @@ export class CockpitApi {
     const awaitingManual = state.actions.filter(
       (a) => a.status === "approved" && requiresManualExecution(a),
     );
-    const done = state.actions.filter((a) => a.status === "executed");
+    // Executed actions accumulate forever; the drawer's completed view only
+    // needs the recent tail, so cap the payload (it ships on every 15s poll).
+    // Kept chronological (oldest→newest); the frontend reverses for display.
+    const DONE_LIMIT = 200;
+    const done = state.actions.filter((a) => a.status === "executed").slice(-DONE_LIMIT);
     const skipped = state.actions.filter((a) => a.status === "rejected");
 
     // Clusters cover the live queue (suggested + approved-not-yet-done).

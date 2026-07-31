@@ -83,6 +83,19 @@ describe("getState", () => {
     expect(s.suggested[0]!.missing_info).toEqual([]);
   });
 
+  // The executed list grows forever; getState caps the drawer's done payload
+  // at the 200 most recent so the 15s poll doesn't ship unbounded history.
+  it("done is capped at the 200 most recent executed actions", () => {
+    seed(
+      Array.from({ length: 205 }, (_, i) => action({ id: `d${i}`, status: "executed" })),
+    );
+    const api = mkApi(sendingExecutor);
+    const s = api.getState();
+    expect(s.done).toHaveLength(200);
+    expect(s.done[0]!.id).toBe("d5"); // oldest 5 dropped, order preserved
+    expect(s.done[199]!.id).toBe("d204");
+  });
+
   // Regression: the Queue master list renders from clusters[].actions, not the
   // flat `suggested` array. Each cluster action MUST carry missing_info or the
   // UI crashes ("Cannot read properties of undefined (reading 'missing_info')").

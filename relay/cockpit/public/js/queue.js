@@ -489,22 +489,56 @@ function renderDetail(a) {
     </div>`;
 }
 
+// Completed + skipped history drawer. Two sections inside one collapsed
+// <details>: 已完成 (executed — auto-handled, newest first, capped) and
+// 已跳过 (rejected, uncapped as before). An empty section is omitted. Restore
+// is offered only when undo is safe — core restoreAction allows it for local
+// receipts (auto-done task/ignore) and no-receipt rows, never for a real
+// sent/calendar_event side effect; the same /restore endpoint serves both
+// sections.
 function renderDrawer() {
   const s = App.state;
   if (!s.done.length && !s.skipped.length) return "";
   const rowTitle = (a) => a.headline || (a.params && a.params.title) || a.summary || a.reason || a.action_type;
-  const rows = s.skipped.map((a) => {
+  const fmtWhen = (iso) => {
+    const d = iso ? new Date(iso) : null;
+    if (!d || isNaN(d)) return "";
+    const p = (n) => String(n).padStart(2, "0");
+    return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  const row = (a, tail) => {
     const t = rowTitle(a);
     return `<div class="flex items-center gap-2 py-1.5 text-label-sm">
        <span class="text-on-surface-variant uppercase tracking-wide text-[10px] flex-shrink-0">${escapeHtml(a.action_type)}</span>
        <span class="text-on-surface-variant truncate flex-1 ${isChinese(t) ? "font-chinese" : ""}" title="${escapeHtml(t)}">${escapeHtml(t)}</span>
-       <button class="text-primary hover:underline restore flex-shrink-0" data-restore="${escapeHtml(a.id)}">Restore</button>
+       ${tail}
      </div>`;
+  };
+  const restoreBtn = (a) =>
+    `<button class="text-primary hover:underline restore flex-shrink-0" data-restore="${escapeHtml(a.id)}">Restore</button>`;
+  const section = (label, inner) =>
+    `<div class="mt-sm"><div class="text-label-sm text-on-surface-variant uppercase tracking-wide mb-1">${label}</div>${inner}</div>`;
+
+  const DONE_CAP = 50;
+  const doneShown = s.done.slice(-DONE_CAP).reverse(); // newest first
+  const doneRows = doneShown.map((a) => {
+    const receipt = a.params && a.params.execution_receipt;
+    const restorable = !receipt || receipt.kind === "local";
+    const when = fmtWhen(receipt && receipt.at);
+    return row(a, `${when ? `<span class="text-on-surface-variant flex-shrink-0">${escapeHtml(when)}</span>` : ""}${restorable ? restoreBtn(a) : ""}`);
   }).join("");
+  const doneMore = s.done.length > DONE_CAP
+    ? `<div class="py-1.5 text-label-sm text-on-surface-variant">…and ${s.done.length - DONE_CAP} more</div>`
+    : "";
+  const skippedRows = s.skipped.map((a) => row(a, restoreBtn(a))).join("");
+
+  const sections = [];
+  if (s.done.length) sections.push(section("已完成", doneRows + doneMore));
+  if (s.skipped.length) sections.push(section("已跳过", skippedRows));
   return `
     <details class="mt-lg border-t border-outline pt-sm">
-      <summary class="text-label-sm text-on-surface-variant cursor-pointer select-none">Auto-handled (${s.done.length}) · Skipped (${s.skipped.length})</summary>
-      <div class="mt-sm">${rows}</div>
+      <summary class="text-label-sm text-on-surface-variant cursor-pointer select-none">已完成 (${s.done.length}) · 已跳过 (${s.skipped.length})</summary>
+      ${sections.join("")}
     </details>`;
 }
 

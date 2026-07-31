@@ -159,7 +159,7 @@ describe("restoreAction (T6 undo)", () => {
     expect(restoreAction(appr).status).toBe("suggested");
   });
 
-  it("refuses to restore an item that already has an execution receipt (no double-send)", () => {
+  it("refuses to restore an item with a real side effect — sent receipt (no double-send)", () => {
     const sent = withReceipt(approveAction(item()), {
       kind: "sent",
       ref: "link",
@@ -168,10 +168,31 @@ describe("restoreAction (T6 undo)", () => {
     expect(() => restoreAction(sent)).toThrow(InvalidActionTransition);
   });
 
-  it("refuses to restore a suggested or executed item", () => {
+  it("refuses to restore an item with a real side effect — calendar_event receipt", () => {
+    const booked = withReceipt(markExecuted(item({ action_type: "calendar", status: "approved" })), {
+      kind: "calendar_event",
+      ref: "evt-1",
+      at: "2026-06-12T00:00:00Z",
+    });
+    expect(() => restoreAction(booked)).toThrow(InvalidActionTransition);
+  });
+
+  it("restores an executed item with a LOCAL receipt (auto-done task/ignore — no side effect)", () => {
+    const done = withReceipt(markExecuted(approveAction(item({ action_type: "task", params: { title: "t" }, draft: undefined }))), {
+      kind: "local",
+      ref: "manual-done",
+      at: "2026-06-12T00:00:00Z",
+    });
+    expect(restoreAction(done).status).toBe("suggested");
+  });
+
+  it("refuses to restore a suggested item", () => {
     expect(() => restoreAction(item({ status: "suggested" }))).toThrow();
+  });
+
+  it("restores a legacy executed item with NO receipt (nothing left the machine)", () => {
     const exec = markExecuted(approveAction(item()));
-    expect(() => restoreAction(exec)).toThrow();
+    expect(restoreAction(exec).status).toBe("suggested");
   });
 });
 
