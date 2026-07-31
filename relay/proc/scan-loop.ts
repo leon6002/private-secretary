@@ -219,9 +219,12 @@ const PLAN_IDLE_MS = 30 * 60 * 1000;
 // Error-only ticks repeat verbatim every poll while a source is down (a dead
 // WeChat MCP logs the same ERR line every 10s — ~8k/day of pure noise that
 // would bury the signal). Suppress exact repeats: the FIRST occurrence and
-// every CHANGE (error appears, message changes, error clears) is logged.
-// Module-level so it persists across ticks within a daemon process.
-let lastErrorTickSig: string | null = null;
+// every CHANGE (error appears, message changes) is logged.
+// Keyed PER errored-source-set: alternating single-source ticks (wechat ERR,
+// gmail ERR, wechat ERR…) each differ from their immediate predecessor, so a
+// single "last sig" slot lets them all through. Module-level so it persists
+// across ticks within a daemon process.
+const lastErrorTickSigByScope = new Map<string, string>();
 
 // ─── one tick ───────────────────────────────────────────────────────
 
@@ -936,7 +939,13 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
       promoFiltered,
       llmDraftError ?? null,
     ]);
-    if (hasActivity || tickSig !== lastErrorTickSig) {
+    // Repeat suppression applies only to error-only ticks, scoped by WHICH
+    // sources are failing (see the map's comment).
+    const scope = hasError
+      ? [...erroredSources, ...(llmDraftError !== undefined ? ["llm:draft"] : [])].sort().join(",")
+      : "";
+    const isRepeat = !hasActivity && lastErrorTickSigByScope.get(scope) === tickSig;
+    if (!isRepeat) {
       const parts = perSource.map(
         (s) => `${s.source} ${s.inboundCount} in/${s.triggered} trig${s.error ? " ERR" : ""}`,
       );
@@ -961,8 +970,8 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
           : {}),
         ...(llmDraftError !== undefined ? { llmDraftError } : {}),
       });
+      if (!hasActivity) lastErrorTickSigByScope.set(scope, tickSig);
     }
-    lastErrorTickSig = hasActivity ? null : tickSig;
   }
 
   return {

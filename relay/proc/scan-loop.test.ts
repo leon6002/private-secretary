@@ -262,6 +262,36 @@ describe("runScanTick", () => {
     expect(recs[1]!.summary).toContain("ERR");
   });
 
+  it("activity log: alternating failing sources don't defeat repeat suppression", async () => {
+    // wechat ERR, gmail ERR, wechat ERR… — each tick differs from its
+    // immediate neighbour, so a single last-sig slot lets the flood through
+    // (seen in production: alternating ERR lines every few minutes).
+    const failingSlack = {
+      authTest: vi.fn(async () => ({ user_id: SELF_SLACK, team: "T", user: "leo", team_id: "T1", url: "", is_enterprise_install: false })),
+      listAllConversations: vi.fn(async () => { throw new Error("slack down"); }),
+    } as unknown as SlackClient;
+    const failingGmail = {
+      getProfile: vi.fn(async () => { throw new Error("gmail down"); }),
+    } as unknown as GmailClient;
+    const activityPath = join(dir, "activity-log.jsonl");
+    const tick = (source: "slack" | "gmail") =>
+      runScanTick({
+        statePath,
+        sources: [source],
+        slackClient: failingSlack,
+        gmailClients: { "leo@taiv.tv": failingGmail },
+      });
+
+    await tick("slack"); // logs (first slack error)
+    await tick("gmail"); // logs (first gmail error)
+    await tick("slack"); // repeat of the first → suppressed
+    await tick("gmail"); // repeat of the second → suppressed
+    const recs = readActivity(readFileSync(activityPath, "utf8"));
+    expect(recs).toHaveLength(2);
+    expect(recs[0]!.summary).toContain("slack:direct");
+    expect(recs[1]!.summary).toContain("gmail:direct");
+  });
+
   it("does NOT write a shadow record when nothing was seen + nothing was filtered", async () => {
     const slack = slackStub([], {});
     const gmail = gmailStub({ historyId: "1" }, [], {});
