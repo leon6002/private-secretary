@@ -2,7 +2,7 @@
 
 Decided in /plan-design-review 2026-06-11. The DESIGN SYSTEM PREAMBLE below is
 pasted VERBATIM at the top of every Stitch prompt (and later, every implemented
-screen reads from these tokens). One source of truth; the four screens must
+screen reads from these tokens). One source of truth; the five screens must
 look like one product.
 
 ## Design system preamble (paste into every prompt)

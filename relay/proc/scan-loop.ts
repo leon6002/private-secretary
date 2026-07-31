@@ -216,6 +216,13 @@ const CONSOLIDATE_IDLE_MS = 30 * 60 * 1000;
 let lastPlanMs = 0;
 const PLAN_IDLE_MS = 30 * 60 * 1000;
 
+// Error-only ticks repeat verbatim every poll while a source is down (a dead
+// WeChat MCP logs the same ERR line every 10s — ~8k/day of pure noise that
+// would bury the signal). Suppress exact repeats: the FIRST occurrence and
+// every CHANGE (error appears, message changes, error clears) is logged.
+// Module-level so it persists across ticks within a daemon process.
+let lastErrorTickSig: string | null = null;
+
 // ─── one tick ───────────────────────────────────────────────────────
 
 // Acquire the state lock, retrying briefly. Used for the phase-3 re-acquire:
@@ -912,33 +919,50 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
 
   // ── tick summary (activity log). One line per tick that DID something —
   // fully-idle ticks are skipped on purpose: a 10s WeChat poll would
-  // otherwise bury the signal under ~8k noise lines a day.
+  // otherwise bury the signal under ~8k noise lines a day. The same flood
+  // logic applies to a down source: an error-only tick whose signature is
+  // identical to the previous one is a repeat, not news.
   const totalInbound = perSource.reduce((s, p) => s + p.inboundCount, 0);
   const totalTriggered = perSource.reduce((s, p) => s + p.triggered, 0);
   const erroredSources = perSource.filter((s) => s.error).map((s) => s.source);
-  if (
-    totalInbound > 0 ||
-    draftedCount > 0 ||
-    draftSkipped > 0 ||
-    promoFiltered > 0 ||
-    erroredSources.length > 0 ||
-    llmDraftError !== undefined
-  ) {
-    const parts = perSource.map(
-      (s) => `${s.source} ${s.inboundCount} in/${s.triggered} trig${s.error ? " ERR" : ""}`,
-    );
-    let summary = `${parts.join("; ") || "no sources"} → drafted ${draftedCount}`;
-    if (draftSkipped > 0) summary += `, ${draftSkipped} skipped (cap)`;
-    if (promoFiltered > 0) summary += `, ${promoFiltered} promo filtered`;
-    if (llmDraftError !== undefined) summary += `, llm ERR`;
-    logActivity("tick", summary, {
-      durationMs: Date.now() - startedAtMs,
-      drafted: draftedCount,
+  const hasActivity =
+    totalInbound > 0 || draftedCount > 0 || draftSkipped > 0 || promoFiltered > 0;
+  const hasError = erroredSources.length > 0 || llmDraftError !== undefined;
+  if (hasActivity || hasError) {
+    const tickSig = JSON.stringify([
+      perSource.map((s) => [s.source, s.inboundCount, s.triggered, s.error ?? null]),
+      draftedCount,
       draftSkipped,
       promoFiltered,
-      ...(erroredSources.length > 0 ? { erroredSources } : {}),
-      ...(llmDraftError !== undefined ? { llmDraftError } : {}),
-    });
+      llmDraftError ?? null,
+    ]);
+    if (hasActivity || tickSig !== lastErrorTickSig) {
+      const parts = perSource.map(
+        (s) => `${s.source} ${s.inboundCount} in/${s.triggered} trig${s.error ? " ERR" : ""}`,
+      );
+      let summary = `${parts.join("; ") || "no sources"} → drafted ${draftedCount}`;
+      if (draftSkipped > 0) summary += `, ${draftSkipped} skipped (cap)`;
+      if (promoFiltered > 0) summary += `, ${promoFiltered} promo filtered`;
+      if (llmDraftError !== undefined) summary += `, llm ERR`;
+      logActivity("tick", summary, {
+        durationMs: Date.now() - startedAtMs,
+        drafted: draftedCount,
+        draftSkipped,
+        promoFiltered,
+        // Full error text per failing source (truncated) — "ERR" alone would
+        // send you right back to guessing, which is what this log exists to kill.
+        ...(erroredSources.length > 0
+          ? {
+              erroredSources,
+              errors: Object.fromEntries(
+                perSource.filter((s) => s.error).map((s) => [s.source, s.error!.slice(0, 200)]),
+              ),
+            }
+          : {}),
+        ...(llmDraftError !== undefined ? { llmDraftError } : {}),
+      });
+    }
+    lastErrorTickSig = hasActivity ? null : tickSig;
   }
 
   return {

@@ -6,6 +6,7 @@ import { startCockpit, type RunningCockpit } from "./server.js";
 import type { CockpitExecutor } from "./api.js";
 import { markExecuted, withReceipt, type ActionItem } from "../core/action-item.js";
 import { loadState } from "../io/state.js";
+import { appendActivity, activityPathFor } from "../io/activity-log.js";
 
 let dir: string;
 let statePath: string;
@@ -106,6 +107,17 @@ describe("cockpit HTTP server", () => {
     const s = await r.json();
     expect(s.counts.pending).toBe(1);
     expect(s.suggested[0].id).toBe("a1");
+  });
+
+  it("GET /api/activity returns the log tail; a bogus ?kind= is ignored", async () => {
+    appendActivity(activityPathFor(statePath), { at: "2026-07-31T10:00:00.000Z", kind: "tick", summary: "t" });
+    appendActivity(activityPathFor(statePath), { at: "2026-07-31T10:01:00.000Z", kind: "skip", summary: "s" });
+    const all = await (await fetch(url("/api/activity"))).json();
+    expect(all.records.map((r: { kind: string }) => r.kind)).toEqual(["tick", "skip"]);
+    const filtered = await (await fetch(url("/api/activity?kind=skip"))).json();
+    expect(filtered.records.map((r: { kind: string }) => r.kind)).toEqual(["skip"]);
+    const bogus = await (await fetch(url("/api/activity?kind=nope"))).json();
+    expect(bogus.records).toHaveLength(2); // unknown kind = no filter, not empty
   });
 
   it("POST without CSRF token → 403", async () => {

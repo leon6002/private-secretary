@@ -57,7 +57,10 @@ import {
 import {
   appendActivity,
   activityPathFor,
+  readActivity,
+  ACTIVITY_KINDS,
   type ActivityKind,
+  type ActivityRecord,
 } from "../io/activity-log.js";
 import type { ExecuteResult } from "../proc/execute.js";
 
@@ -331,8 +334,24 @@ export class CockpitApi {
     });
   }
 
-  // ─── mutations (each under the single-writer lock) ────────────────
+  // Activity log (F3) for the Activity screen: the JSONL tail beside the
+  // state file, chronological (oldest→newest), optionally filtered by kind.
+  // Read-only + lock-free (append-only file; readActivity tolerates a torn
+  // last line). A missing log = an empty list, not an error — a fresh
+  // install simply has no events yet.
+  getActivity({ tail = 100, kind }: { tail?: number; kind?: ActivityKind } = {}): { records: ActivityRecord[] } {
+    let recs: ActivityRecord[] = [];
+    try {
+      recs = readActivity(readFileSync(activityPathFor(this.opts.statePath), "utf8"));
+    } catch {
+      /* no log yet */
+    }
+    if (kind) recs = recs.filter((r) => r.kind === kind);
+    const capped = Math.min(Math.max(Math.trunc(tail) || 100, 1), 500);
+    return { records: recs.slice(-capped) };
+  }
 
+  // ─── mutations (each under the single-writer lock) ────────────────
   private withLock<T>(fn: (state: LoopState) => T): T {
     const stateDir = dirname(this.opts.statePath);
     if (!acquireLock(stateDir)) {

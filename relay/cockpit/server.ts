@@ -7,6 +7,7 @@
 //   GET  /app.css, /js/**        → static assets (.js/.css only, contained in public/)
 //   GET  /api/state              → CockpitState (queue, counts, gate, errors)
 //   GET  /api/personas           → persona[] for the People screen
+//   GET  /api/activity?tail=&kind= → activity-log tail (F3, read-only)
 //   POST /api/actions/:id/approve   → approve + execute
 //   POST /api/actions/:id/edit      → {draft?, params?}
 //   POST /api/actions/:id/skip
@@ -37,6 +38,7 @@ import {
   type ExistenceVerdict,
   type FieldError,
 } from "../io/labels.js";
+import { ACTIVITY_KINDS, type ActivityKind } from "../io/activity-log.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "public");
@@ -180,6 +182,19 @@ export function createCockpitServer(opts: CockpitServerOptions): {
     }
     if (path === "/api/projects" && method === "GET") {
       sendJson(res, 200, api.getProjects());
+      return;
+    }
+    // F3 activity log (read-only): the engine's operational trail for the
+    // Activity screen. ?kind= is validated against the known kinds; ?tail=
+    // is capped inside getActivity.
+    if (path === "/api/activity" && method === "GET") {
+      const tailParam = Number(url.searchParams.get("tail") ?? "100");
+      const kindParam = url.searchParams.get("kind");
+      const kind = kindParam && ACTIVITY_KINDS.has(kindParam) ? (kindParam as ActivityKind) : undefined;
+      sendJson(res, 200, api.getActivity({
+        tail: Number.isFinite(tailParam) ? tailParam : 100,
+        ...(kind ? { kind } : {}),
+      }));
       return;
     }
     if (path === "/api/flush-auto" && method === "POST") {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CockpitApi, type CockpitExecutor } from "./api.js";
 import { loadState } from "../io/state.js";
-import { activityPathFor, readActivity } from "../io/activity-log.js";
+import { activityPathFor, appendActivity, readActivity } from "../io/activity-log.js";
 import { markExecuted, withReceipt, type ActionItem } from "../core/action-item.js";
 
 let dir: string;
@@ -361,6 +361,24 @@ describe("activity log (F3)", () => {
     // Second flush: nothing left to auto-execute → no new line.
     expect(await api.flushAutoExecute()).toBe(0);
     expect(readActivity(readFileSync(activityPathFor(statePath), "utf8"))).toHaveLength(1);
+  });
+
+  it("getActivity: missing log → empty; kind filter + tail cap work", () => {
+    seed([]);
+    const api = mkApi(sendingExecutor);
+    expect(api.getActivity().records).toEqual([]); // no file yet
+    for (let i = 0; i < 5; i++) {
+      appendActivity(activityPathFor(statePath), {
+        at: `2026-07-31T10:0${i}:00.000Z`,
+        kind: i % 2 === 0 ? "tick" : "skip",
+        summary: `event ${i}`,
+      });
+    }
+    expect(api.getActivity().records.map((r) => r.summary)).toEqual([
+      "event 0", "event 1", "event 2", "event 3", "event 4",
+    ]);
+    expect(api.getActivity({ kind: "skip" }).records.map((r) => r.summary)).toEqual(["event 1", "event 3"]);
+    expect(api.getActivity({ tail: 2 }).records.map((r) => r.summary)).toEqual(["event 3", "event 4"]);
   });
 });
 

@@ -16,6 +16,9 @@ export const App = {
   showAllPeople: false, // People rail: expand past the "+N" overflow chip
   projects: null, // /api/projects payload {projects, misc}
   selectedProject: null, // selected project id in Projects (or "__misc")
+  activity: null, // /api/activity payload {records}
+  activityKind: null, // Activity screen kind filter (null = all)
+  activitySig: null, // change signature of the last fetched activity tail
   editing: false, // draft edit mode in detail pane
   gPrefix: false, // "g" chord pending
 };

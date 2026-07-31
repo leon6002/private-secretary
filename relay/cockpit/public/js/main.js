@@ -12,6 +12,7 @@ import { keyboardAction, moveSelection, renderQueue, wireQueue } from "./queue.j
 import { renderProjects, wireProjects } from "./projects.js";
 import { renderPeople, wirePeople } from "./people.js";
 import { renderConnections, wireConnections } from "./connections.js";
+import { renderActivity, wireActivity, loadActivity } from "./activity.js";
 
 // ── data load ─────────────────────────────────────────────────────
 export async function refresh() {
@@ -32,6 +33,8 @@ async function pollRefresh() {
   App.state = next;
   updateBadge();
   if (changed) render();
+  // The Activity screen's data isn't part of /api/state — poll it too.
+  if (App.screen === "activity") loadActivity();
 }
 function updateBadge() {
   const badge = document.getElementById("pending-badge");
@@ -76,6 +79,7 @@ export function render() {
   if (App.screen === "queue") host.innerHTML = renderQueue();
   else if (App.screen === "projects") host.innerHTML = renderProjects();
   else if (App.screen === "people") host.innerHTML = renderPeople();
+  else if (App.screen === "activity") host.innerHTML = renderActivity();
   else host.innerHTML = renderConnections();
   wireScreen();
   // Restore the remembered pane scrolls (rail keeps its place across clicks/polls).
@@ -102,6 +106,7 @@ function wireScreen() {
   if (App.screen === "queue") wireQueue();
   else if (App.screen === "projects") wireProjects();
   else if (App.screen === "people") wirePeople();
+  else if (App.screen === "activity") wireActivity();
   else if (App.screen === "connections") wireConnections();
 }
 
@@ -121,6 +126,7 @@ export function switchScreen(name) {
       render();
     }).catch(() => {});
   }
+  if (name === "activity") loadActivity(); // refetch so the tail is current
   render();
 }
 
@@ -136,6 +142,7 @@ document.addEventListener("keydown", (e) => {
     else if (k === "t") switchScreen("projects");
     else if (k === "p") switchScreen("people");
     else if (k === "c") switchScreen("connections");
+    else if (k === "l") switchScreen("activity");
     return;
   }
   if (k === "g") { App.gPrefix = true; return; }

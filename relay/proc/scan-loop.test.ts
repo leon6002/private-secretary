@@ -239,6 +239,29 @@ describe("runScanTick", () => {
     expect(readActivity(readFileSync(activityPath, "utf8"))).toHaveLength(1);
   });
 
+  it("activity log: a repeating source error logs once until the error changes", async () => {
+    const failingSlack = (msg: string) =>
+      ({
+        authTest: vi.fn(async () => ({ user_id: SELF_SLACK, team: "T", user: "leo", team_id: "T1", url: "", is_enterprise_install: false })),
+        listAllConversations: vi.fn(async () => { throw new Error(msg); }),
+      }) as unknown as SlackClient;
+    const gmail = gmailStub({ historyId: "1" }, [], {});
+    const activityPath = join(dir, "activity-log.jsonl");
+
+    // Same failure three ticks running → ONE record (a dead source polls
+    // every 10s; verbatim repeats are noise, not news).
+    await runScanTick({ statePath, slackClient: failingSlack("slack rate-limit"), gmailClients: { "leo@taiv.tv": gmail } });
+    await runScanTick({ statePath, slackClient: failingSlack("slack rate-limit"), gmailClients: { "leo@taiv.tv": gmail } });
+    await runScanTick({ statePath, slackClient: failingSlack("slack rate-limit"), gmailClients: { "leo@taiv.tv": gmail } });
+    expect(readActivity(readFileSync(activityPath, "utf8"))).toHaveLength(1);
+
+    // The error CHANGED → that's news, log it.
+    await runScanTick({ statePath, slackClient: failingSlack("token revoked"), gmailClients: { "leo@taiv.tv": gmail } });
+    const recs = readActivity(readFileSync(activityPath, "utf8"));
+    expect(recs).toHaveLength(2);
+    expect(recs[1]!.summary).toContain("ERR");
+  });
+
   it("does NOT write a shadow record when nothing was seen + nothing was filtered", async () => {
     const slack = slackStub([], {});
     const gmail = gmailStub({ historyId: "1" }, [], {});
