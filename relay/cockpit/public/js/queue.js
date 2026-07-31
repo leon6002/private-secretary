@@ -215,6 +215,11 @@ function subActionRow(a) {
       ${circle}
       <div class="flex-1 min-w-0">
         <p class="text-body-medium ${textCls} ${isChinese(text) ? "font-chinese" : ""}">${escapeHtml(text)}</p>
+        ${provenanceLine(a)}
+        ${a.context?.original_message ? `
+        <details class="mb-2"><summary class="text-label-xs text-on-surface-variant cursor-pointer select-none">查看原始消息</summary>
+          <p class="mt-1 text-label-sm text-on-surface-variant whitespace-pre-wrap border-l-2 border-outline pl-2 ${isChinese(a.context.original_message) ? "font-chinese" : ""}">${escapeHtml(a.context.original_message)}</p>
+        </details>` : ""}
         <div class="mt-2">${control}</div>
       </div>
       ${rowSkip}
