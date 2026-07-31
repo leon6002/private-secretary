@@ -276,6 +276,10 @@ function renderTaskDetail(c) {
       <section class="bg-surface border border-outline rounded-xl p-5 mb-6">
         <h2 class="text-label-sm text-on-surface-variant uppercase tracking-wider mb-3 flex items-center gap-2"><span class="material-symbols-outlined text-[16px]">info</span>Context</h2>
         <p class="text-body-base text-on-surface leading-relaxed ${isChinese(primary.summary) ? "font-chinese" : ""}">${escapeHtml(primary.summary)}</p>
+        ${primary.context?.original_message ? `
+        <details class="mt-3"><summary class="text-label-sm text-on-surface-variant cursor-pointer select-none">查看原始消息</summary>
+          <p class="mt-2 text-body-medium text-on-surface-variant whitespace-pre-wrap border-l-2 border-outline pl-3 ${isChinese(primary.context.original_message) ? "font-chinese" : ""}">${escapeHtml(primary.context.original_message)}</p>
+        </details>` : ""}
       </section>` : ""}
 
       <section class="mb-6">
