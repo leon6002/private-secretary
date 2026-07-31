@@ -14,7 +14,7 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { describeIdentity } from "../relay/io/identity.js";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { runScanTick, type ScanLoopResult } from "../relay/proc/scan-loop.js";
 import { notify } from "../relay/proc/notify.js";
 import { loadPersonas } from "../relay/io/personas.js";
@@ -149,7 +149,11 @@ async function buildDraft(): Promise<DraftDeps | undefined> {
       llmMode === "api"
         ? await createAnthropicLlmCaller()
         : llmMode === "deepseek"
-          ? await createDeepseekLlmCaller()
+          // rawLogPath: capture the raw response whenever a draft comes back
+          // empty/unparseable — the silent-skip evidence trail.
+          ? await createDeepseekLlmCaller({
+              rawLogPath: join(dirname(statePath), "llm-draft-raw.jsonl"),
+            })
           : createClaudeCliLlmCaller({ model: draftModel });
     const personas = loadPersonas(personaDir);
     const { resolve: resolvePersona, keys } = buildPersonaResolver(personas);

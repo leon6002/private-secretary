@@ -755,4 +755,61 @@ describe("runScanTick", () => {
     expect(r.drafted).toBe(0);
     expect(loadState(statePath).sourceErrors["llm:draft"]).toBeTruthy();
   });
+
+  it("silent-empty draft → llm:draft-empty names the sender; a later good draft clears it", async () => {
+    // Tick 1: the LLM answers but suggests nothing — the message's cursor has
+    // advanced, so without this warning the miss is invisible AND permanent.
+    const slack = slackStub([{ id: "C1", is_im: true }], {
+      C1: [{ ts: "100.0", user: "U2", text: `hi <@${SELF_SLACK}>` }],
+    });
+    const gmail = gmailStub({ historyId: "1" }, [], {});
+    const emptyDraft = {
+      llm: async () => [],
+      resolvePersona: () => null,
+      knownPersonaKeys: [],
+      now: () => "2026-06-14T12:00:00Z",
+    };
+    const r1 = await runScanTick({
+      statePath,
+      slackClient: slack,
+      gmailClients: { "leo@taiv.tv": gmail },
+      draft: emptyDraft,
+    });
+    expect(r1.drafted).toBe(0);
+    const warn = loadState(statePath).sourceErrors["llm:draft-empty"];
+    expect(warn).toBeTruthy();
+    expect(warn!.message).toContain("U2");
+    expect(warn!.message).toContain("llm-draft-raw.jsonl");
+
+    // Tick 2: a NEW message arrives and drafts fine → the warning clears
+    // (same set/delete pattern as llm:draft).
+    const slack2 = slackStub([{ id: "C1", is_im: true }], {
+      C1: [
+        { ts: "100.0", user: "U2", text: `hi <@${SELF_SLACK}>` },
+        { ts: "200.0", user: "U2", text: `again <@${SELF_SLACK}>` },
+      ],
+    });
+    const goodDraft = {
+      llm: async () => [
+        {
+          action_type: "reply" as const,
+          target: { platform: "slack" as const, personaKey: null },
+          reason: "answer",
+          confidence: 0.9,
+          draft: "ok",
+        },
+      ],
+      resolvePersona: () => null,
+      knownPersonaKeys: [],
+      now: () => "2026-06-14T12:00:00Z",
+    };
+    const r2 = await runScanTick({
+      statePath,
+      slackClient: slack2,
+      gmailClients: { "leo@taiv.tv": gmail },
+      draft: goodDraft,
+    });
+    expect(r2.drafted).toBe(1);
+    expect(loadState(statePath).sourceErrors["llm:draft-empty"]).toBeUndefined();
+  });
 });
