@@ -13,6 +13,9 @@
 //   GET  /api/state              → CockpitState (queue, counts, gate, errors)
 //   GET  /api/personas           → persona[] for the People screen
 //   GET  /api/activity?tail=&kind= → activity-log tail (F3, read-only)
+//   GET  /api/settings             → llm config + per-service key status (masked)
+//   POST /api/settings/llm         → {mode, draftModel} → config file (daemon restart)
+//   POST /api/settings/keys        → {service, value} → macOS Keychain (value never logged)
 //   POST /api/actions/:id/approve   → approve + execute
 //   POST /api/actions/:id/edit      → {draft?, params?}
 //   POST /api/actions/:id/skip
@@ -29,6 +32,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, extname, join, resolve, sep } from "node:path";
 import {
   CockpitApi,
+  CockpitBadRequestError,
   CockpitBadStateError,
   CockpitBusyError,
   CockpitNotFoundError,
@@ -121,6 +125,7 @@ function errorStatus(e: unknown): { status: number; message: string } {
   if (e instanceof CockpitBusyError) return { status: 409, message: e.message };
   if (e instanceof CockpitBadStateError) return { status: 409, message: e.message };
   if (e instanceof InvalidActionTransition) return { status: 400, message: e.message };
+  if (e instanceof CockpitBadRequestError) return { status: 400, message: e.message };
   return { status: 500, message: (e as Error).message ?? "internal error" };
 }
 
@@ -275,6 +280,32 @@ export function createCockpitServer(opts: CockpitServerOptions): {
     if (path === "/api/flush-auto" && method === "POST") {
       const n = await api.flushAutoExecute();
       sendJson(res, 200, { autoHandled: n });
+      return;
+    }
+
+    // Settings screen (S3). Read is free-form; both writes validate the body
+    // here (shape) and inside CockpitApi (enum/whitelist → 400). Key values
+    // pass straight through to the Keychain — they are never logged.
+    if (path === "/api/settings" && method === "GET") {
+      sendJson(res, 200, await api.getSettings());
+      return;
+    }
+    if (path === "/api/settings/llm" && method === "POST") {
+      const body = (await readBody(req)) as Record<string, unknown>;
+      if (typeof body.mode !== "string" || typeof body.draftModel !== "string") {
+        sendJson(res, 400, { error: "mode and draftModel (strings) required" });
+        return;
+      }
+      sendJson(res, 200, api.setLlm({ mode: body.mode, draftModel: body.draftModel }));
+      return;
+    }
+    if (path === "/api/settings/keys" && method === "POST") {
+      const body = (await readBody(req)) as Record<string, unknown>;
+      if (typeof body.service !== "string" || typeof body.value !== "string") {
+        sendJson(res, 400, { error: "service and value (strings) required" });
+        return;
+      }
+      sendJson(res, 200, await api.setApiKey({ service: body.service, value: body.value }));
       return;
     }
 

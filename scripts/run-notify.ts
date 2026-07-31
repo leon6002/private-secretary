@@ -14,6 +14,7 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { describeIdentity } from "../relay/io/identity.js";
+import { loadSettings } from "../relay/io/settings.js";
 import { dirname, join, resolve } from "node:path";
 import { runScanTick, type ScanLoopResult } from "../relay/proc/scan-loop.js";
 import { notify } from "../relay/proc/notify.js";
@@ -67,6 +68,13 @@ function str(flag: string, def: string): string {
   const i = process.argv.indexOf(flag);
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1]! : def;
 }
+// Like str() but distinguishes "flag absent" from "flag present": settings
+// that also live in config/secretary-settings.json need the three-level
+// precedence CLI flag > config file > built-in default.
+function strOpt(flag: string): string | undefined {
+  const i = process.argv.indexOf(flag);
+  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1]! : undefined;
+}
 
 const statePath = resolve(str("--state", resolve(process.cwd(), "state/loop-state.json")));
 const personaDir = resolve(str("--personas", resolve(process.cwd(), "personas")));
@@ -84,9 +92,15 @@ const maxDraft = num("--max-draft", 20);
 // Drafting backend: "cli" (Claude Code subscription via `claude -p`, no API
 // spend — the current default, temporarily standing in for the API), "api"
 // (the Anthropic API path), or "deepseek" (DeepSeek chat-completions, key from
-// DEEPSEEK_API_KEY env or Keychain). Override with --llm <mode>.
-const llmMode = str("--llm", "cli");
-const draftModel = str("--draft-model", "opus");
+// DEEPSEEK_API_KEY env or Keychain). Precedence: --llm/--draft-model flags >
+// config/secretary-settings.json (written by the cockpit Settings screen) >
+// the cli/opus defaults. The file's mode vocabulary is cli|anthropic|deepseek;
+// "anthropic" maps onto the historical internal name "api". loadSettings is
+// total — a missing/corrupt file can never stop the daemon from starting.
+const fileSettings = loadSettings(statePath);
+const llmFlag = strOpt("--llm");
+const llmMode = (llmFlag ?? fileSettings.llm.mode) === "anthropic" ? "api" : (llmFlag ?? fileSettings.llm.mode);
+const draftModel = strOpt("--draft-model") ?? fileSettings.llm.draftModel;
 const visionEnabled = process.argv.includes("--vision");
 // Task consolidation (specs/task-consolidation.md, Stage 1): group open cards
 // that are the same real-world task. ON by default; --no-consolidate opts out.

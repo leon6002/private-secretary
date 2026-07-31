@@ -7,6 +7,7 @@ import type { CockpitExecutor } from "./api.js";
 import { markExecuted, withReceipt, type ActionItem } from "../core/action-item.js";
 import { loadState } from "../io/state.js";
 import { appendActivity, activityPathFor } from "../io/activity-log.js";
+import { __setRunner } from "../io/keychain.js";
 
 let dir: string;
 let statePath: string;
@@ -260,5 +261,79 @@ describe("cockpit HTTP server", () => {
   it("unknown route → 404", async () => {
     const r = await fetch(url("/api/nope"));
     expect(r.status).toBe(404);
+  });
+});
+
+// Settings routes (S3). The Keychain runner is stubbed so GET /api/settings
+// never probes the real login keychain. These tests run their OWN cockpit
+// with the state file in a nested state/ dir: settingsPathFor() resolves the
+// config dir two levels up from the state file, so the shared root-level
+// statePath would resolve the config into the SHARED $TMPDIR and leak
+// settings between tests (and test files).
+describe("settings routes", () => {
+  let settingsCockpit: RunningCockpit;
+
+  beforeEach(async () => {
+    __setRunner(async () => {
+      const err = new Error("not found") as Error & { code?: number };
+      err.code = 44;
+      throw err;
+    });
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
+    const nestedStatePath = join(dir, "state", "loop-state.json");
+    mkdirSync(join(dir, "state"), { recursive: true });
+    writeFileSync(
+      nestedStatePath,
+      JSON.stringify({ version: 2, marks: {}, actions: [], outcomes: [], sourceErrors: {}, tasks: {} }),
+    );
+    settingsCockpit = await startCockpit({
+      statePath: nestedStatePath,
+      personaDir,
+      executor: sendingExecutor,
+      port: 0,
+      webDistDir,
+    });
+  });
+  afterEach(async () => {
+    __setRunner(null);
+    await settingsCockpit.close();
+  });
+
+  function post(path: string, body: unknown): Promise<Response> {
+    return fetch(`${settingsCockpit.url}${path}`, {
+      method: "POST",
+      headers: { "x-csrf-token": settingsCockpit.csrfToken, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it("GET /api/settings → 200 with masked key status", async () => {
+    const r = await fetch(`${settingsCockpit.url}/api/settings`);
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as {
+      llm: { mode: string; draftModel: string };
+      keys: Record<string, { configured: boolean; preview: string | null }>;
+    };
+    expect(body.llm).toEqual({ mode: "cli", draftModel: "opus" });
+    expect(body.keys.anthropic).toEqual({ configured: false, preview: null });
+    expect(body.keys.deepseek).toEqual({ configured: false, preview: null });
+  });
+
+  it("POST /api/settings/llm with an invalid mode → 400; valid → 200 + restartRequired", async () => {
+    const bad = await post("/api/settings/llm", { mode: "wat", draftModel: "opus" });
+    expect(bad.status).toBe(400);
+    const missing = await post("/api/settings/llm", { mode: "cli" });
+    expect(missing.status).toBe(400);
+    const ok = await post("/api/settings/llm", { mode: "deepseek", draftModel: "deepseek-v4-pro" });
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as { restartRequired?: boolean }).restartRequired).toBe(true);
+  });
+
+  it("POST /api/settings/keys with an unknown service → 400", async () => {
+    const r = await post("/api/settings/keys", { service: "slack", value: "xoxp-1" });
+    expect(r.status).toBe(400);
+    const missing = await post("/api/settings/keys", { service: "anthropic" });
+    expect(missing.status).toBe(400);
   });
 });

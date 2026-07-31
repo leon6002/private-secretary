@@ -28,6 +28,10 @@ smoke-wx.mts
 # Per-user identity: whose accounts this instance reads. NEVER commit.
 config/identity.json
 
+# Personal LLM/backend preferences written by the cockpit Settings screen.
+# Not a secret (secrets live in the Keychain), but still per-owner config.
+config/secretary-settings.json
+
 # Personas are dossiers on real people — never commit them.
 personas/*.yaml
 personas/_staged/

@@ -62,6 +62,18 @@ import {
   type ActivityKind,
   type ActivityRecord,
 } from "../io/activity-log.js";
+import { LLM_MODES, loadSettings, saveSettings, type LlmMode } from "../io/settings.js";
+import {
+  ANTHROPIC_KEY_ACCOUNT,
+  ANTHROPIC_KEY_SERVICE,
+  resolveAnthropicKey,
+} from "../io/anthropic-api.js";
+import {
+  DEEPSEEK_KEY_ACCOUNT,
+  DEEPSEEK_KEY_SERVICE,
+  resolveDeepseekKey,
+} from "../io/deepseek-api.js";
+import { deleteSecret, KeychainEntryMissing, setSecret } from "../io/keychain.js";
 import type { ExecuteResult } from "../proc/execute.js";
 
 // The executor the cockpit calls on approve. The server injects the real
@@ -349,6 +361,74 @@ export class CockpitApi {
     if (kind) recs = recs.filter((r) => r.kind === kind);
     const capped = Math.min(Math.max(Math.trunc(tail) || 100, 1), 500);
     return { records: recs.slice(-capped) };
+  }
+
+  // ─── settings (Settings screen, S3) ───────────────────────────────
+  // Non-secret LLM config lives in config/secretary-settings.json (relay/io/
+  // settings.ts); the API keys themselves live ONLY in the macOS Keychain.
+  // Neither touches loop-state, so these don't take the state lock.
+  //
+  // RED LINE: nothing here ever returns, logs, or activity-records a full key.
+  // The UI gets {configured, preview} where preview is at most the last 4
+  // chars ("…1234") — enough to tell WHICH key is stored, nothing more.
+
+  async getSettings(): Promise<CockpitSettings> {
+    const { llm } = loadSettings(this.opts.statePath);
+    // "configured" = a key resolves at all. The resolvers also honor the
+    // ANTHROPIC_API_KEY / DEEPSEEK_API_KEY env vars — deliberately: an env-
+    // supplied key is just as usable by the daemon, so hiding it would lie.
+    const probe = async (resolve: () => Promise<string>): Promise<KeyStatus> => {
+      try {
+        const value = await resolve();
+        if (!value) return { configured: false, preview: null };
+        return { configured: true, preview: `…${value.slice(-4)}` };
+      } catch {
+        return { configured: false, preview: null };
+      }
+    };
+    return {
+      llm,
+      keys: {
+        anthropic: await probe(() => resolveAnthropicKey()),
+        deepseek: await probe(() => resolveDeepseekKey()),
+      },
+    };
+  }
+
+  // Persist the drafting backend + model. Takes effect on the NEXT daemon
+  // start (run-notify.ts reads the file once at startup) — hence
+  // restartRequired so the UI can say so.
+  setLlm({ mode, draftModel }: { mode: string; draftModel: string }): { ok: true; restartRequired: true } {
+    if (!LLM_MODES.includes(mode as LlmMode)) {
+      throw new CockpitBadRequestError(`unknown llm mode: ${mode}`);
+    }
+    const model = draftModel.trim();
+    if (!model) throw new CockpitBadRequestError("draftModel must be non-empty");
+    saveSettings(this.opts.statePath, { llm: { mode: mode as LlmMode, draftModel: model } });
+    this.activity("edit", `settings: llm mode=${mode} model=${model}`);
+    return { ok: true, restartRequired: true };
+  }
+
+  // Store or remove an API key in the Keychain. The whitelist is exactly two
+  // services — Slack / Google OAuth tokens are NOT settable from the cockpit
+  // (they have their own flows). An empty value removes the entry.
+  async setApiKey({ service, value }: { service: string; value: string }): Promise<{ ok: true }> {
+    const target = KEYCHAIN_TARGETS[service as ApiKeyService];
+    if (!target) throw new CockpitBadRequestError(`unknown key service: ${service}`);
+    const v = value.trim();
+    if (v) {
+      await setSecret(target.service, target.account, v);
+    } else {
+      try {
+        await deleteSecret(target.service, target.account);
+      } catch (e) {
+        // Removing a key that isn't there is a no-op, not an error.
+        if (!(e instanceof KeychainEntryMissing)) throw e;
+      }
+    }
+    // The summary names the service, never the value.
+    this.activity("edit", `settings: ${service} key ${v ? "updated" : "removed"}`);
+    return { ok: true };
   }
 
   // ─── mutations (each under the single-writer lock) ────────────────
@@ -694,6 +774,28 @@ export interface ApproveResult {
   conflicts?: ExecuteResult["conflicts"];
 }
 
+// ─── settings types (S3) ──────────────────────────────────────────────
+
+export interface KeyStatus {
+  configured: boolean;
+  /** Last-4-chars mask ("…1234"), null when no key resolves. Never the full key. */
+  preview: string | null;
+}
+
+export type ApiKeyService = "anthropic" | "deepseek";
+
+export interface CockpitSettings {
+  llm: { mode: LlmMode; draftModel: string };
+  keys: Record<ApiKeyService, KeyStatus>;
+}
+
+// The ONLY Keychain entries the cockpit may write. Deliberately a closed map —
+// a path of `/api/settings/keys` with any other service name is a 400.
+const KEYCHAIN_TARGETS: Record<ApiKeyService, { service: string; account: string }> = {
+  anthropic: { service: ANTHROPIC_KEY_SERVICE, account: ANTHROPIC_KEY_ACCOUNT },
+  deepseek: { service: DEEPSEEK_KEY_SERVICE, account: DEEPSEEK_KEY_ACCOUNT },
+};
+
 // ─── typed errors the server maps to HTTP statuses ─────────────────────
 
 export class CockpitNotFoundError extends Error {
@@ -712,5 +814,13 @@ export class CockpitBadStateError extends Error {
   constructor(public id: string, public status: string, detail: string) {
     super(`${detail} (action ${id} is "${status}")`);
     this.name = "CockpitBadStateError";
+  }
+}
+// Client-supplied input failed validation (bad enum value, unknown key
+// service, empty required field) — the server maps this to HTTP 400.
+export class CockpitBadRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CockpitBadRequestError";
   }
 }

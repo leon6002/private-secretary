@@ -2,9 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CockpitApi, type CockpitExecutor } from "./api.js";
+import { CockpitApi, CockpitBadRequestError, type CockpitExecutor } from "./api.js";
 import { loadState } from "../io/state.js";
 import { activityPathFor, appendActivity, readActivity } from "../io/activity-log.js";
+import { loadSettings } from "../io/settings.js";
+import { __setRunner, type SecurityRunner } from "../io/keychain.js";
+import { ANTHROPIC_KEY_ACCOUNT, ANTHROPIC_KEY_SERVICE } from "../io/anthropic-api.js";
+import { DEEPSEEK_KEY_ACCOUNT, DEEPSEEK_KEY_SERVICE } from "../io/deepseek-api.js";
 import { markExecuted, withReceipt, type ActionItem } from "../core/action-item.js";
 
 let dir: string;
@@ -403,5 +407,114 @@ describe("getProjects", () => {
     expect((ous.cards as unknown[]).length).toBe(2); // p1 + p2
     expect((ous.needs as unknown[]).length).toBe(1); // only the gap, covered dropped
     expect(r.misc.length).toBe(2); // m1 (MISC) + m2 (absent)
+  });
+});
+
+// Settings (S3): the LLM config file + Keychain key management. The keychain
+// runner is stubbed — these tests never touch the real login keychain, and the
+// env vars the resolvers also honor are cleared so the stub is the only source.
+describe("settings", () => {
+  let keychain: Map<string, string>;
+  let runnerCalls: string[][];
+  const KEY = "sk-ant-abcdef1234";
+
+  const stubRunner: SecurityRunner = async (args) => {
+    runnerCalls.push(args);
+    if (args[0] === "find-generic-password") {
+      const k = `${args[2]}|${args[4]}`;
+      const v = keychain.get(k);
+      if (v === undefined) {
+        const err = new Error("not found") as Error & { code?: number };
+        err.code = 44;
+        throw err;
+      }
+      return { stdout: v + "\n", stderr: "" };
+    }
+    if (args[0] === "add-generic-password") {
+      keychain.set(`${args[3]}|${args[5]}`, args[7]!);
+      return { stdout: "", stderr: "" };
+    }
+    if (args[0] === "delete-generic-password") {
+      const k = `${args[2]}|${args[4]}`;
+      if (!keychain.delete(k)) {
+        const err = new Error("not found") as Error & { code?: number };
+        err.code = 44;
+        throw err;
+      }
+      return { stdout: "", stderr: "" };
+    }
+    throw new Error(`unexpected security call: ${args[0]}`);
+  };
+
+  beforeEach(() => {
+    keychain = new Map();
+    runnerCalls = [];
+    __setRunner(stubRunner);
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
+  });
+  afterEach(() => __setRunner(null));
+
+  // A settings-dedicated api whose state file sits in a nested state/ dir.
+  // settingsPathFor() resolves the config dir TWO levels up from the state
+  // file, so the shared root-level statePath would resolve it into the shared
+  // $TMPDIR — leaking settings across tests (and across test FILES, which run
+  // in parallel workers with the same $TMPDIR).
+  let settingsStatePath: string;
+  function mkSettingsApi(): CockpitApi {
+    mkdirSync(join(dir, "state"), { recursive: true });
+    settingsStatePath = join(dir, "state", "loop-state.json");
+    writeFileSync(
+      settingsStatePath,
+      JSON.stringify({ version: 2, marks: {}, actions: [], outcomes: [], sourceErrors: {}, tasks: {} }),
+    );
+    return new CockpitApi({ statePath: settingsStatePath, personaDir, executor: sendingExecutor, now: () => "2026-06-14T12:00:00Z" });
+  }
+
+  it("getSettings masks keys to a last-4 preview and reports unconfigured services", async () => {
+    keychain.set(`${ANTHROPIC_KEY_SERVICE}|${ANTHROPIC_KEY_ACCOUNT}`, KEY);
+    const api = mkSettingsApi();
+    const s = await api.getSettings();
+    expect(s.llm).toEqual({ mode: "cli", draftModel: "opus" }); // no file yet → defaults
+    expect(s.keys.anthropic).toEqual({ configured: true, preview: "…1234" });
+    expect(s.keys.deepseek).toEqual({ configured: false, preview: null });
+    // The full key must appear NOWHERE in the payload.
+    expect(JSON.stringify(s)).not.toContain(KEY);
+  });
+
+  it("setLlm validates the mode enum and round-trips through the config file", () => {
+    const api = mkSettingsApi();
+    expect(() => api.setLlm({ mode: "wat", draftModel: "opus" })).toThrow(CockpitBadRequestError);
+    expect(() => api.setLlm({ mode: "cli", draftModel: "  " })).toThrow(CockpitBadRequestError);
+    const r = api.setLlm({ mode: "anthropic", draftModel: "claude-opus-4-8" });
+    expect(r).toEqual({ ok: true, restartRequired: true });
+    expect(loadSettings(settingsStatePath).llm).toEqual({ mode: "anthropic", draftModel: "claude-opus-4-8" });
+    const log = readActivity(readFileSync(activityPathFor(settingsStatePath), "utf8"));
+    expect(log.at(-1)!.summary).toBe("settings: llm mode=anthropic model=claude-opus-4-8");
+  });
+
+  it("setApiKey rejects services outside the anthropic/deepseek whitelist", async () => {
+    const api = mkSettingsApi();
+    await expect(api.setApiKey({ service: "slack", value: "xoxp-1" })).rejects.toThrow(
+      CockpitBadRequestError,
+    );
+    expect(runnerCalls).toEqual([]); // whitelist fails BEFORE any keychain call
+  });
+
+  it("setApiKey writes the right Keychain entry and never logs the value", async () => {
+    const api = mkSettingsApi();
+    await api.setApiKey({ service: "deepseek", value: "sk-deepseek-9999" });
+    const add = runnerCalls.find((c) => c[0] === "add-generic-password")!;
+    expect(add[3]).toBe(DEEPSEEK_KEY_SERVICE);
+    expect(add[5]).toBe(DEEPSEEK_KEY_ACCOUNT);
+    expect(keychain.get(`${DEEPSEEK_KEY_SERVICE}|${DEEPSEEK_KEY_ACCOUNT}`)).toBe("sk-deepseek-9999");
+    const logText = readFileSync(activityPathFor(settingsStatePath), "utf8");
+    expect(logText).toContain("settings: deepseek key updated");
+    expect(logText).not.toContain("sk-deepseek-9999");
+
+    // Empty value removes the entry; removing again is a no-op, not an error.
+    await api.setApiKey({ service: "deepseek", value: "" });
+    expect(keychain.has(`${DEEPSEEK_KEY_SERVICE}|${DEEPSEEK_KEY_ACCOUNT}`)).toBe(false);
+    await api.setApiKey({ service: "deepseek", value: "" });
   });
 });
