@@ -19,7 +19,7 @@ export default {
   theme: {
     extend: {
       colors: {
-        primary: "var(--primary)",
+        primary: "rgb(var(--primary) / <alpha-value>)",
         background: "var(--background)",
         surface: "var(--surface)",
         "surface-variant": "var(--surface-variant)",

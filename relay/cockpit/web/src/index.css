@@ -17,7 +17,10 @@
   --outline: #e5e7eb;
   --on-surface: #1a1d21;
   --on-surface-variant: #64748b;
-  --primary: #2563eb;
+  /* RGB channels, not a hex: tailwind composes this with <alpha-value> so
+     opacity modifiers (bg-primary/10, border-primary/40) generate at all —
+     with a plain var() color it silently drops those classes. */
+  --primary: 37 99 235;
   --error: #ef4444;
 }
 
@@ -28,7 +31,7 @@
   --outline: #262b36;
   --on-surface: #e6e8ec;
   --on-surface-variant: #9aa3b2;
-  --primary: #3b82f6;
+  --primary: 59 130 246;
   --error: #f87171;
 }
 

@@ -8,6 +8,7 @@ import { HashRouter, NavLink, Route, Routes } from "react-router-dom";
 import { Calendar, CircleCheck, Users, Network, Settings } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "./lib/cn";
+import { Toaster } from "./lib/toast";
 import QueueScreen from "./screens/QueueScreen";
 import ProjectsScreen from "./screens/ProjectsScreen";
 import PeopleScreen from "./screens/PeopleScreen";
@@ -90,6 +91,8 @@ export default function App() {
             <Route path="/settings" element={<SettingsScreen />} />
           </Routes>
         </main>
+        {/* Single toast outlet for the whole app — see src/lib/toast.tsx. */}
+        <Toaster />
       </div>
     </HashRouter>
   );
