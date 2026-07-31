@@ -144,7 +144,7 @@ export class CockpitApi {
     // shows people + the project a card advances, not raw ids.
     const named = <T extends ActionItem>(a: T): T & { sender_name?: string; recipient_name?: string; project_name?: string } => ({
       ...a,
-      sender_name: resolveName(a.context?.sender_handle) ?? a.context?.sender_handle,
+      sender_name: resolveName(a.context?.sender_handle) ?? a.context?.sender_name ?? a.context?.sender_handle,
       recipient_name:
         resolveName(a.target?.personaKey) ?? a.target?.personaKey ?? a.target?.platform ?? undefined,
       project_name: resolveProject(a.project_id),
@@ -226,7 +226,7 @@ export class CockpitApi {
       headline: a.headline || (typeof a.params?.title === "string" ? a.params.title : "") || a.reason || "",
       summary: a.summary ?? "",
       next_actions: a.next_actions ?? [],
-      sender_name: resolveName(a.context?.sender_handle) ?? a.context?.sender_handle ?? "",
+      sender_name: resolveName(a.context?.sender_handle) ?? a.context?.sender_name ?? a.context?.sender_handle ?? "",
       missing_info: a.missing_info,
     });
     const byProject = new Map<string, Array<Record<string, unknown>>>();

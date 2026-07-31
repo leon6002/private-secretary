@@ -51,6 +51,9 @@ export interface ActionTarget {
 export interface ActionContext {
   original_message?: string;
   sender_handle?: string;
+  // Slack display name resolved at scan time (relay/io/slack-users.ts). The
+  // cockpit's fallback order is persona name → this → raw sender_handle.
+  sender_name?: string;
   sent_at?: string; // ISO
   permalink?: string;
   attachments?: Attachment[];

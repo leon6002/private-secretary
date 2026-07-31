@@ -118,6 +118,7 @@ function contextFor(batch: InboundMessage[]): ActionContext {
   return {
     original_message: combined,
     sender_handle: latest.senderHandle,
+    ...(latest.senderName ? { sender_name: latest.senderName } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),
     // Persist the Gmail threadId so the Stage-2 refresh can re-read the thread
     // (the card's source_message_id is the message id, not the thread id).

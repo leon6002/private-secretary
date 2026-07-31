@@ -96,6 +96,11 @@ export interface InboundMessage {
   threadId?: string;
   subject?: string;
   messageId?: string;
+  // Resolved display name for the sender (Slack: from the users.info cache,
+  // relay/io/slack-users.ts). Purely cosmetic — the cockpit prefers the
+  // persona-curated name, then this, then the raw senderHandle. Omitted when
+  // resolution failed or the platform needs no lookup.
+  senderName?: string;
 }
 
 // True when the message carries attachments the analyzer must read before drafting.

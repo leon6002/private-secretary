@@ -368,6 +368,66 @@ describe("runScanTick", () => {
     expect(saved.actions[0]!.status).toBe("suggested");
   });
 
+  it("patches the Slack display name onto inbound messages → drafted context.sender_name", async () => {
+    const slack = slackStub([{ id: "C1", is_im: true }], {
+      C1: [{ ts: "100.0", user: "U2", text: `hi <@${SELF_SLACK}>` }],
+    });
+    // The default stub's usersInfo returns no name fields; give U2 a display name.
+    (slack.usersInfo as ReturnType<typeof vi.fn>).mockImplementation(async () => ({
+      id: "U2",
+      profile: { display_name: "Zack" },
+    }));
+    const gmail = gmailStub({ historyId: "1" }, [], {});
+    const draft = {
+      llm: async () => [
+        {
+          action_type: "reply" as const,
+          target: { platform: "slack" as const, personaKey: null },
+          reason: "answer",
+          confidence: 0.9,
+          draft: "hey",
+        },
+      ],
+      resolvePersona: () => null,
+      knownPersonaKeys: [],
+      now: () => "2026-06-14T12:00:00Z",
+    };
+    await runScanTick({ statePath, slackClient: slack, gmailClients: { "leo@taiv.tv": gmail }, draft });
+    const saved = loadState(statePath);
+    expect(saved.actions).toHaveLength(1);
+    expect(saved.actions[0]!.context?.sender_handle).toBe("U2");
+    expect(saved.actions[0]!.context?.sender_name).toBe("Zack");
+  });
+
+  it("sender-name resolution failure is silent — the draft still commits with the raw ID", async () => {
+    const slack = slackStub([{ id: "C1", is_im: true }], {
+      C1: [{ ts: "100.0", user: "U2", text: `hi <@${SELF_SLACK}>` }],
+    });
+    (slack.usersInfo as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      throw new Error("ratelimited");
+    });
+    const gmail = gmailStub({ historyId: "1" }, [], {});
+    const draft = {
+      llm: async () => [
+        {
+          action_type: "reply" as const,
+          target: { platform: "slack" as const, personaKey: null },
+          reason: "answer",
+          confidence: 0.9,
+          draft: "hey",
+        },
+      ],
+      resolvePersona: () => null,
+      knownPersonaKeys: [],
+      now: () => "2026-06-14T12:00:00Z",
+    };
+    const r = await runScanTick({ statePath, slackClient: slack, gmailClients: { "leo@taiv.tv": gmail }, draft });
+    expect(r.drafted).toBe(1);
+    const saved = loadState(statePath);
+    expect(saved.actions[0]!.context?.sender_handle).toBe("U2");
+    expect(saved.actions[0]!.context?.sender_name).toBeUndefined();
+  });
+
   it("consolidate dep: groups two ungrouped open cards under one shared task_id", async () => {
     const mk = (id: string) => ({
       id, source_message_id: `wechat:${id}`, action_type: "task" as const,
