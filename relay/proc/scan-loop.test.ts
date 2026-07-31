@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { runScanTick } from "./scan-loop.js";
 import { acquireLock, loadState, releaseLock } from "../io/state.js";
 import { labelsPathFor, readLabels } from "../io/labels.js";
+import { readActivity } from "../io/activity-log.js";
 import type {
   SlackClient,
   SlackConversation,
@@ -214,6 +215,28 @@ describe("runScanTick", () => {
     await runScanTick({ statePath, slackClient: slack, gmailClients: { "leo@taiv.tv": gmail } });
     const saved = JSON.parse(readFileSync(statePath, "utf8"));
     expect(saved.sourceErrors["slack:direct"]).toBeUndefined();
+  });
+
+  it("activity log: one tick record for a non-idle tick, none for an idle one", async () => {
+    const slack = slackStub(
+      [{ id: "C1", is_im: true }],
+      { C1: [{ ts: "100.0", user: "U2", text: `hi <@${SELF_SLACK}>` }] },
+    );
+    const gmail = gmailStub({ historyId: "9999" }, [], {});
+    const activityPath = join(dir, "activity-log.jsonl");
+
+    await runScanTick({ statePath, slackClient: slack, gmailClients: { "leo@taiv.tv": gmail } });
+    const recs = readActivity(readFileSync(activityPath, "utf8"));
+    expect(recs).toHaveLength(1);
+    expect(recs[0]!.kind).toBe("tick");
+    expect(recs[0]!.summary).toContain("slack:direct 1 in/1 trig");
+    expect(recs[0]!.summary).toContain("drafted 0");
+
+    // Second tick: nothing new (stub honours the cursor by returning no
+    // messages) → fully idle → no new line.
+    const slackIdle = slackStub([{ id: "C1", is_im: true }], {});
+    await runScanTick({ statePath, slackClient: slackIdle, gmailClients: { "leo@taiv.tv": gmail } });
+    expect(readActivity(readFileSync(activityPath, "utf8"))).toHaveLength(1);
   });
 
   it("does NOT write a shadow record when nothing was seen + nothing was filtered", async () => {

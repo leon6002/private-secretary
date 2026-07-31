@@ -54,6 +54,11 @@ import {
   type FieldError,
   type LabelDecision,
 } from "../io/labels.js";
+import {
+  appendActivity,
+  activityPathFor,
+  type ActivityKind,
+} from "../io/activity-log.js";
 import type { ExecuteResult } from "../proc/execute.js";
 
 // The executor the cockpit calls on approve. The server injects the real
@@ -383,6 +388,32 @@ export class CockpitApi {
     }
   }
 
+  // F3 activity log: one JSONL line per cockpit decision, beside the state
+  // file (labels.jsonl is the accuracy ledger; this is the operational
+  // trail). Never throws — same contract as label() above.
+  private activity(kind: ActivityKind, summary: string, data?: Record<string, unknown>): void {
+    try {
+      appendActivity(activityPathFor(this.opts.statePath), {
+        at: this.now(),
+        kind,
+        summary,
+        ...(data ? { data } : {}),
+      });
+    } catch {
+      /* logging must never block the human's decision */
+    }
+  }
+
+  // One-line identity of a card for activity summaries.
+  private static headlineOf(a: ActionItem): string {
+    return (
+      a.headline ||
+      (typeof a.params?.title === "string" ? a.params.title : "") ||
+      a.reason ||
+      a.id
+    );
+  }
+
   // Approve → execute. Returns the post-execution action + flags so the UI
   // can render the slide-out (sent), the awaiting-manual morph (gmail/
   // wechat), or the conflict state (calendar).
@@ -422,6 +453,11 @@ export class CockpitApi {
           this.replace(s, restored);
           saveState(this.opts.statePath, s);
         }
+        this.activity(
+          "error",
+          `approve of ${approved.action_type} "${CockpitApi.headlineOf(approved)}" failed: ${(e as Error).message ?? String(e)} — rolled back to suggested`,
+          { id, action_type: approved.action_type },
+        );
         throw e;
       }
 
@@ -432,6 +468,11 @@ export class CockpitApi {
         const restored = restoreAction(approved);
         this.replace(state, restored);
         saveState(this.opts.statePath, state);
+        this.activity(
+          "approve",
+          `approved calendar "${CockpitApi.headlineOf(approved)}" → conflict, un-approved for re-timing`,
+          { id, action_type: approved.action_type, conflicts: result.conflicts },
+        );
         return { ok: false, conflicts: result.conflicts, action: restored };
       }
       this.replace(state, result.action);
@@ -441,6 +482,11 @@ export class CockpitApi {
       if (result.action.status === "executed") {
         this.label(result.action, "executed", { existence: "confirmed" });
       }
+      this.activity(
+        "approve",
+        `approved ${approved.action_type} "${CockpitApi.headlineOf(approved)}" → ${result.action.status}${result.awaitingManual ? " (awaiting manual)" : ""}`,
+        { id, action_type: approved.action_type, status: result.action.status },
+      );
       return {
         ok: true,
         action: result.action,
@@ -486,6 +532,11 @@ export class CockpitApi {
       };
       this.replace(state, updated);
       saveState(this.opts.statePath, state);
+      this.activity(
+        "edit",
+        `edited ${updated.action_type} "${CockpitApi.headlineOf(updated)}" (${diff.map((d) => d.field).join(", ") || "no field change"})`,
+        { id, action_type: updated.action_type, fields: diff.map((d) => d.field) },
+      );
       return updated;
     });
   }
@@ -507,6 +558,11 @@ export class CockpitApi {
         field_errors: reason?.field_errors,
         note: reason?.note,
       });
+      this.activity(
+        "skip",
+        `skipped ${updated.action_type} "${CockpitApi.headlineOf(updated)}"${reason?.existence ? ` (${reason.existence})` : ""}${reason?.note ? ` — ${reason.note}` : ""}`,
+        { id, action_type: updated.action_type, ...(reason?.existence ? { existence: reason.existence } : {}) },
+      );
       return updated;
     });
   }
@@ -517,6 +573,11 @@ export class CockpitApi {
       const updated = restoreAction(action); // throws if has receipt / wrong status
       this.replace(state, updated);
       saveState(this.opts.statePath, state);
+      this.activity(
+        "restore",
+        `restored ${updated.action_type} "${CockpitApi.headlineOf(updated)}" → suggested`,
+        { id, action_type: updated.action_type },
+      );
       return updated;
     });
   }
@@ -544,6 +605,11 @@ export class CockpitApi {
       this.replace(state, updated);
       saveState(this.opts.statePath, state);
       this.label(updated, "executed", { existence: "confirmed" });
+      this.activity(
+        "mark-done",
+        `marked done ${updated.action_type} "${CockpitApi.headlineOf(updated)}"`,
+        { id, action_type: updated.action_type },
+      );
       return updated;
     });
   }
@@ -561,6 +627,11 @@ export class CockpitApi {
       this.replace(state, updated);
       saveState(this.opts.statePath, state);
       this.label(updated, "executed", { existence: "confirmed" });
+      this.activity(
+        "mark-done",
+        `marked sent ${updated.action_type} "${CockpitApi.headlineOf(updated)}" (ref: ${ref})`,
+        { id, action_type: updated.action_type, ref },
+      );
       return updated;
     });
   }
@@ -581,7 +652,14 @@ export class CockpitApi {
         this.replace(state, result.action);
         n++;
       }
-      if (n > 0) saveState(this.opts.statePath, state);
+      if (n > 0) {
+        saveState(this.opts.statePath, state);
+        this.activity(
+          "auto-execute",
+          `auto-executed ${n} card(s): ${candidates.map((c) => `${c.action_type} "${CockpitApi.headlineOf(c)}"`).join("; ")}`,
+          { count: n, ids: candidates.map((c) => c.id) },
+        );
+      }
       return n;
     } finally {
       releaseLock(stateDir);

@@ -24,6 +24,7 @@ import {
   type ShadowRecordInput,
 } from "../core/shadow.js";
 import { advance, isNew } from "../core/dedup.js";
+import { appendActivity, activityPathFor, type ActivityKind } from "../io/activity-log.js";
 import { evaluateTrigger, isAutomatedSender } from "../core/trigger-filter.js";
 import { acquireLock, loadState, releaseLock, saveState, type LoopState } from "../io/state.js";
 import { appendLabels, buildLabel, labelsPathFor } from "../io/labels.js";
@@ -243,6 +244,23 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
   let draftSkipped = 0;
 
   const stateDir = dirname(opts.statePath);
+  // Activity-log sink for this tick (F3): one JSONL line per engine event,
+  // beside the state file. NEVER throws — the log narrates the engine, it
+  // must never break it; dryRun narrates nothing.
+  const activityPath = activityPathFor(opts.statePath);
+  const logActivity = (kind: ActivityKind, summary: string, data?: Record<string, unknown>): void => {
+    if (opts.dryRun) return;
+    try {
+      appendActivity(activityPath, {
+        at: new Date().toISOString(),
+        kind,
+        summary,
+        ...(data ? { data } : {}),
+      });
+    } catch {
+      /* logging is observability, never a failure mode */
+    }
+  };
   // PHASE 0 (UNLOCKED snapshot): take a consistent read of state WITHOUT the
   // lock. saveState writes atomically (tmp + rename) and carries a revision
   // guard, so an unlocked read sees old-or-new bytes, never a torn file —
@@ -608,6 +626,10 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
   const willWrite = shouldWriteShadowRecord(draftedActions, shadowInput);
   let shadowWritten = false;
   let draftedCount = 0;
+  // Supersede bookkeeping for the activity log, filled inside the phase-3
+  // commit (which may not run) and logged after it resolves.
+  let supersededCount = 0;
+  let supersedeExemptCount = 0;
   if (!opts.dryRun && (draftedActions.length > 0 || llmDraftError !== undefined || draftEmpty.length > 0 || willWrite)) {
     const committed = await commitUnderLock((fresh) => {
       if (draftedActions.length > 0) {
@@ -637,6 +659,14 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
         // time changes in the thread, the old-time card survives alongside the
         // new one; the user picks the right one and skips the other.
         const freshKeys = new Set(toCommit.map(clusterKey).filter((k): k is string => !!k));
+        // Exempt survivors (suggested calendar w/ concrete start — a commitment,
+        // not an evolving draft): counted so the activity log can say "dropped N,
+        // kept M exempt" instead of leaving a vanished-card mystery.
+        const exemptKept = fresh.actions.filter((a) => {
+          if (a.status !== "suggested" || !isSupersedeExempt(a)) return false;
+          const k = clusterKey(a);
+          return !!(k && freshKeys.has(k));
+        }).length;
         const superseded = fresh.actions.filter((a) => {
           if (a.status !== "suggested") return false;
           if (isSupersedeExempt(a)) return false;
@@ -662,6 +692,8 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
         if (supersedeOk) {
           const doomed = new Set(superseded.map((a) => a.id));
           fresh.actions = fresh.actions.filter((a) => !doomed.has(a.id));
+          supersededCount = superseded.length;
+          supersedeExemptCount = exemptKept;
         }
         // P1 durable identity: a replacement card INHERITS the superseded
         // card's task_id (copy, never mint) so the plan + cockpit cluster
@@ -697,6 +729,21 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
     if (committed) {
       draftedCount = draftedActions.length;
       shadowWritten = willWrite;
+      if (supersededCount > 0 || supersedeExemptCount > 0) {
+        logActivity(
+          "supersede",
+          `superseded ${supersededCount} suggested card(s), kept ${supersedeExemptCount} exempt calendar card(s)`,
+          { phase: "draft-commit", dropped: supersededCount, exemptKept: supersedeExemptCount },
+        );
+      }
+    } else {
+      // The lock never came back — drafts are dropped this tick (cursors are
+      // safe from phase 1.5). Invisible in state, so it MUST be visible here.
+      logActivity(
+        "error",
+        `phase-3 commit failed (lock busy) — ${draftedActions.length} draft(s) dropped, will re-draft next tick`,
+        { phase: "draft-commit", drafts: draftedActions.length },
+      );
     }
   }
 
@@ -764,7 +811,8 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
         const { refreshedKeys, newActions } = await refreshOpenTasks(open, opts.refresh);
         if (refreshedKeys.length > 0 || newActions.length > 0) {
           const keys = new Set(refreshedKeys);
-          await commitUnderLock((fresh) => {
+          let refreshDropped = 0;
+          const refreshCommitted = await commitUnderLock((fresh) => {
             // Drop the stale still-suggested card(s) in each refreshed
             // conversation; user-touched cards (not "suggested") are kept.
             // Same exemption as phase 3: a suggested calendar with a concrete
@@ -783,7 +831,15 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
             // while a sibling in the same conversation held the task_id.
             fresh.actions.push(...inheritSupersededTaskIds(newActions, dropped));
             delete fresh.sourceErrors["llm:refresh"];
+            refreshDropped = dropped.length;
           });
+          if (refreshCommitted && refreshDropped > 0) {
+            logActivity(
+              "supersede",
+              `refresh superseded ${refreshDropped} stale suggested card(s), added ${newActions.length}`,
+              { phase: "refresh", dropped: refreshDropped, added: newActions.length },
+            );
+          }
         }
       } catch (e) {
         await commitUnderLock((fresh) => {
@@ -854,12 +910,43 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
     }
   }
 
+  // ── tick summary (activity log). One line per tick that DID something —
+  // fully-idle ticks are skipped on purpose: a 10s WeChat poll would
+  // otherwise bury the signal under ~8k noise lines a day.
+  const totalInbound = perSource.reduce((s, p) => s + p.inboundCount, 0);
+  const totalTriggered = perSource.reduce((s, p) => s + p.triggered, 0);
+  const erroredSources = perSource.filter((s) => s.error).map((s) => s.source);
+  if (
+    totalInbound > 0 ||
+    draftedCount > 0 ||
+    draftSkipped > 0 ||
+    promoFiltered > 0 ||
+    erroredSources.length > 0 ||
+    llmDraftError !== undefined
+  ) {
+    const parts = perSource.map(
+      (s) => `${s.source} ${s.inboundCount} in/${s.triggered} trig${s.error ? " ERR" : ""}`,
+    );
+    let summary = `${parts.join("; ") || "no sources"} → drafted ${draftedCount}`;
+    if (draftSkipped > 0) summary += `, ${draftSkipped} skipped (cap)`;
+    if (promoFiltered > 0) summary += `, ${promoFiltered} promo filtered`;
+    if (llmDraftError !== undefined) summary += `, llm ERR`;
+    logActivity("tick", summary, {
+      durationMs: Date.now() - startedAtMs,
+      drafted: draftedCount,
+      draftSkipped,
+      promoFiltered,
+      ...(erroredSources.length > 0 ? { erroredSources } : {}),
+      ...(llmDraftError !== undefined ? { llmDraftError } : {}),
+    });
+  }
+
   return {
     startedAtMs,
     durationMs: Date.now() - startedAtMs,
     perSource,
-    totalInbound: perSource.reduce((s, p) => s + p.inboundCount, 0),
-    totalTriggered: perSource.reduce((s, p) => s + p.triggered, 0),
+    totalInbound,
+    totalTriggered,
     shadowWritten,
     drafted: draftedCount,
     draftSkipped,

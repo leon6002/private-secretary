@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CockpitApi, type CockpitExecutor } from "./api.js";
 import { loadState } from "../io/state.js";
+import { activityPathFor, readActivity } from "../io/activity-log.js";
 import { markExecuted, withReceipt, type ActionItem } from "../core/action-item.js";
 
 let dir: string;
@@ -322,6 +323,44 @@ describe("flushAutoExecute", () => {
     // task stays put: somebody's request is never auto-completed (2026-07-31).
     expect(state.actions.find((a) => a.id === "tk")!.status).toBe("suggested");
     expect(state.actions.find((a) => a.id === "rep")!.status).toBe("suggested");
+  });
+});
+
+describe("activity log (F3)", () => {
+  it("cockpit decisions append one record each, in order", async () => {
+    seed([
+      action({ id: "a1", headline: "Q3 budget" }),
+      action({ id: "a2", headline: "Lunch?" }),
+    ]);
+    const api = mkApi(sendingExecutor);
+    api.edit("a1", { draft: "revised text" });
+    api.skip("a2", { existence: "not_mine" });
+    api.restore("a2");
+    await api.approve("a1"); // stub executor stamps a sent receipt → executed
+    const recs = readActivity(readFileSync(activityPathFor(statePath), "utf8"));
+    expect(recs.map((r) => r.kind)).toEqual(["edit", "skip", "restore", "approve"]);
+    expect(recs[0]!.summary).toContain("Q3 budget");
+    expect(recs[0]!.summary).toContain("draft");
+    expect(recs[1]!.summary).toContain("not_mine");
+    expect(recs[3]!.summary).toContain("executed");
+  });
+
+  it("flushAutoExecute logs one auto-execute record (and nothing when idle)", async () => {
+    seed([
+      action({ id: "ig", action_type: "ignore", draft: undefined, target: {}, confidence: 0.98, params: { category: "newsletter" } }),
+    ]);
+    const localExecutor: CockpitExecutor = async (a) => {
+      const receipt = { kind: "local" as const, ref: "local", at: "t" };
+      return { ok: true, action: markExecuted(withReceipt(a, receipt)), receipt, awaitingManual: false };
+    };
+    const api = mkApi(localExecutor);
+    expect(await api.flushAutoExecute()).toBe(1);
+    const recs = readActivity(readFileSync(activityPathFor(statePath), "utf8"));
+    expect(recs.map((r) => r.kind)).toEqual(["auto-execute"]);
+    expect(recs[0]!.summary).toContain("auto-executed 1 card(s)");
+    // Second flush: nothing left to auto-execute → no new line.
+    expect(await api.flushAutoExecute()).toBe(0);
+    expect(readActivity(readFileSync(activityPathFor(statePath), "utf8"))).toHaveLength(1);
   });
 });
 
