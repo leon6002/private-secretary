@@ -157,6 +157,23 @@ describe("draftActions orchestrator", () => {
     expect(a.source_message_id).toBe("slack:C1:1.0");
     expect(a.context?.original_message).toContain("what supply");
     expect(a.context?.sender_handle).toBe("UMICHAEL");
+    expect(a.context?.sender_name).toBeUndefined(); // no name resolution in this batch
+  });
+
+  it("context carries sender_name when the batch was name-resolved at scan time", async () => {
+    const llm: LlmCaller = async () => [
+      {
+        action_type: "reply",
+        target: { platform: "slack", personaKey: "michael-dobosz" },
+        reason: "answer the supply question",
+        confidence: 0.95,
+        draft: "25-30W is fine",
+      } as DraftedAction,
+    ];
+    const r = await draftActions([msg({ senderName: "Michael" })], deps(llm));
+    expect(r.actions).toHaveLength(1);
+    expect(r.actions[0]!.context?.sender_handle).toBe("UMICHAEL");
+    expect(r.actions[0]!.context?.sender_name).toBe("Michael");
   });
 
   it("a Gmail reply carries the mailbox + thread + Re: subject so the executor can draft it", async () => {

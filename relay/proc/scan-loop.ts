@@ -36,6 +36,7 @@ import { clusterKey, inheritSupersededTaskIds } from "../core/unit-key.js";
 import { rankTasks, type PlanDeps } from "./plan.js";
 import { updatePersonaCommitments, type PersonaUpdateDeps } from "./persona-update.js";
 import { scanSlackDirect } from "../sources/slack-direct.js";
+import { resolveSlackUserNames } from "../io/slack-users.js";
 import type { SlackClient } from "../io/slack-api.js";
 import { GmailClient } from "../io/gmail-api.js";
 import { scanGmailDirect } from "../sources/gmail-direct.js";
@@ -287,6 +288,25 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
           state: prev,
           perChannelLimit: opts.onWake ? 500 : 200,
         });
+        // Cosmetic display names: resolve this tick's distinct sender IDs →
+        // Slack display names via a 24h disk cache (relay/io/slack-users.ts),
+        // so cards show a name instead of "U0B…". Cost is bounded — one
+        // users.info per uncached id — and every failure is silent (the raw
+        // ID fallback remains). Self messages never reach r.inbound
+        // (pollResultToInbound drops them).
+        try {
+          const names = await resolveSlackUserNames(
+            slack,
+            r.inbound.map((m) => m.senderHandle),
+            join(stateDir, "slack-users.json"),
+          );
+          for (const m of r.inbound) {
+            const n = names.get(m.senderHandle);
+            if (n) m.senderName = n;
+          }
+        } catch {
+          // name resolution is best-effort
+        }
         if (!opts.dryRun) setSlackState(slackMarks, acct.account, r.nextState);
         let triggered = 0;
         let filtered = 0;

@@ -102,6 +102,39 @@ describe("getState", () => {
     };
     expect(needs.missing_info.length).toBeGreaterThan(0);
   });
+
+  // sender_name fallback chain: persona-curated name → Slack display name
+  // (context.sender_name, resolved at scan time) → raw sender handle.
+  it("sender_name falls back persona → Slack display name → raw handle", () => {
+    writeFileSync(
+      join(personaDir, "michael-dobosz.yaml"),
+      [
+        "key: michael-dobosz",
+        "display_name: Michael Dobosz",
+        "handles:",
+        "  slack: U_MICHAEL",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    seed([
+      // persona match wins over the scan-resolved Slack name
+      action({ id: "p1", context: { sender_handle: "U_MICHAEL", sender_name: "Mike" } }),
+      // no persona → the Slack display name
+      action({ id: "n1", context: { sender_handle: "U_UNKNOWN", sender_name: "Zack" } }),
+      // neither → the raw id
+      action({ id: "r1", context: { sender_handle: "U_RAW" } }),
+    ]);
+    const api = mkApi(sendingExecutor);
+    const byId = new Map(
+      api
+        .getState()
+        .suggested.map((a) => [a.id, (a as { sender_name?: string }).sender_name]),
+    );
+    expect(byId.get("p1")).toBe("Michael Dobosz");
+    expect(byId.get("n1")).toBe("Zack");
+    expect(byId.get("r1")).toBe("U_RAW");
+  });
 });
 
 describe("approve → execute", () => {
