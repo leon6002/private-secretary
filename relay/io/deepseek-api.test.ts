@@ -86,6 +86,9 @@ describe("DeepseekClient.chatJson", () => {
     expect(call.url).toBe("https://api.deepseek.com/chat/completions");
     expect((call.init.headers as Record<string, string>).Authorization).toBe("Bearer sk-ds-test");
     expect(call.body.response_format).toEqual({ type: "json_object" });
+    // Reasoning is disabled for JSON extraction — a reasoning model can burn
+    // the whole max_tokens budget on reasoning_content and return "" content.
+    expect(call.body.thinking).toEqual({ type: "disabled" });
     expect(call.body.messages).toEqual([
       { role: "system", content: "you are a test" },
       { role: "user", content: "do the thing" },
@@ -142,5 +145,25 @@ describe("DeepseekClient.chatJson", () => {
     const c = new DeepseekClient({ apiKey: "k", fetchFn, maxRetries: 2 });
     await c.chatJson({ system: "s", userText: "u" });
     expect(n).toBe(2);
+  });
+});
+
+describe("DeepseekClient.chatJson truncation guard", () => {
+  it("throws on finish_reason=length — truncated JSON must not become a silent skip", async () => {
+    const { fetchFn } = fakeFetch(() => ({
+      ok: true,
+      body: { choices: [{ message: { role: "assistant", content: '{"actions":[{"action_type":"task"' }, finish_reason: "length" }] },
+    }));
+    const c = new DeepseekClient({ apiKey: "k", fetchFn });
+    await expect(c.chatJson({ system: "s", userText: "u" })).rejects.toThrow(/truncated at max_tokens/);
+  });
+
+  it("finish_reason=stop still returns the content", async () => {
+    const { fetchFn } = fakeFetch(() => ({
+      ok: true,
+      body: { choices: [{ message: { role: "assistant", content: '{"actions":[]}' }, finish_reason: "stop" }] },
+    }));
+    const c = new DeepseekClient({ apiKey: "k", fetchFn });
+    await expect(c.chatJson({ system: "s", userText: "u" })).resolves.toBe('{"actions":[]}');
   });
 });

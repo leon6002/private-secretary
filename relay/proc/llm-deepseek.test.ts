@@ -177,3 +177,11 @@ describe("deepseekJsonCaller", () => {
     ).rejects.toThrow(/unparseable JSON/);
   });
 });
+
+describe("deepseekLlmCaller output budget", () => {
+  it("requests 8192 max tokens — a multi-message batch truncates mid-JSON at 4096", async () => {
+    const { client, seen } = fakeClient('{"actions":[]}');
+    await deepseekLlmCaller(client)(draftReq);
+    expect((seen[0] as { maxTokens?: number }).maxTokens).toBe(8192);
+  });
+});

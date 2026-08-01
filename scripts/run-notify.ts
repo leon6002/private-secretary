@@ -164,9 +164,12 @@ async function buildDraft(): Promise<DraftDeps | undefined> {
         ? await createAnthropicLlmCaller()
         : llmMode === "deepseek"
           // rawLogPath: capture the raw response whenever a draft comes back
-          // empty/unparseable — the silent-skip evidence trail.
+          // empty/unparseable — the silent-skip evidence trail. draftModel MUST
+          // be passed (it used to be dropped here, silently pinning the backend
+          // to the built-in default regardless of the Settings screen).
           ? await createDeepseekLlmCaller({
               rawLogPath: join(dirname(statePath), "llm-draft-raw.jsonl"),
+              model: draftModel,
             })
           : createClaudeCliLlmCaller({ model: draftModel });
     const personas = loadPersonas(personaDir);
@@ -180,7 +183,7 @@ async function buildDraft(): Promise<DraftDeps | undefined> {
       ? `${decisionProfile}\n\n## LEO'S OWN FACTS / ASSETS (durable; use when a message concerns Leo's house, assets, or family logistics):\n${facts}`
       : decisionProfile;
     console.log(
-      `[notify] drafting enabled via ${llmMode}${llmMode === "cli" ? ` (model=${draftModel})` : ""} (${keys.length} personas, ${projects.length} projects, leo-profile ${decisionProfile.trim() ? "on" : "off"})`,
+      `[notify] drafting enabled via ${llmMode} (model=${draftModel}) (${keys.length} personas, ${projects.length} projects, leo-profile ${decisionProfile.trim() ? "on" : "off"})`,
     );
     // Vision is OPT-IN (--vision) and cli-only (claude -p reads the staged image
     // via Read; the API caller has no image blocks yet). Off by default because
@@ -365,7 +368,7 @@ async function buildRefresh(): Promise<RefreshDeps | undefined> {
       llmMode === "api"
         ? await createAnthropicLlmCaller()
         : llmMode === "deepseek"
-          ? await createDeepseekLlmCaller()
+          ? await createDeepseekLlmCaller({ model: draftModel })
           : createClaudeCliLlmCaller({ model: draftModel });
     const { resolve: resolvePersona } = buildPersonaResolver(loadPersonas(personaDir));
     const projectCatalog = renderProjectCatalog(loadProjects(projectsDir));
@@ -384,7 +387,7 @@ async function buildConsolidate(): Promise<ConsolidateDeps | undefined> {
       llmMode === "api"
         ? await createAnthropicJsonCaller()
         : llmMode === "deepseek"
-          ? await createDeepseekJsonCaller()
+          ? await createDeepseekJsonCaller({ model: draftModel })
           : createClaudeCliJsonCaller({ model: draftModel });
     console.log(`[notify] task consolidation enabled via ${llmMode}`);
     return { json };
@@ -401,7 +404,7 @@ async function buildPlan(): Promise<PlanDeps | undefined> {
       llmMode === "api"
         ? await createAnthropicJsonCaller()
         : llmMode === "deepseek"
-          ? await createDeepseekJsonCaller()
+          ? await createDeepseekJsonCaller({ model: draftModel })
           : createClaudeCliJsonCaller({ model: draftModel });
     console.log(`[notify] daily plan (ranking) enabled via ${llmMode}`);
     return { json };
@@ -418,7 +421,7 @@ async function buildPersonaUpdate(): Promise<PersonaUpdateDeps | undefined> {
       llmMode === "api"
         ? await createAnthropicJsonCaller()
         : llmMode === "deepseek"
-          ? await createDeepseekJsonCaller()
+          ? await createDeepseekJsonCaller({ model: draftModel })
           : createClaudeCliJsonCaller({ model: draftModel });
     const { resolve: resolvePersona } = buildPersonaResolver(loadPersonas(personaDir));
     console.log(`[notify] persona commitments update enabled via ${llmMode}`);

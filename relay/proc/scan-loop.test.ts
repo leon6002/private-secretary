@@ -292,6 +292,29 @@ describe("runScanTick", () => {
     expect(recs[1]!.summary).toContain("gmail:direct");
   });
 
+  it("activity log: a silent-empty draft (triggered senders, 0 cards) records an error", async () => {
+    // The 2026-08-01 incident: 4 triggered messages, LLM returned nothing
+    // usable, cursor already advanced — and the only trace lived in
+    // sourceErrors, which the NEXT tick wipes. The durable record is here.
+    const slack = slackStub(
+      [{ id: "C1", is_im: true }],
+      { C1: [{ ts: "100.0", user: "U2", text: `hi <@${SELF_SLACK}>` }] },
+    );
+    const gmail = gmailStub({ historyId: "1" }, [], {});
+    const draft = {
+      llm: async () => [],
+      resolvePersona: () => null,
+      knownPersonaKeys: [],
+      now: () => "2026-06-14T12:00:00Z",
+    };
+    await runScanTick({ statePath, slackClient: slack, gmailClients: { "leo@taiv.tv": gmail }, draft });
+    const recs = readActivity(readFileSync(join(dir, "activity-log.jsonl"), "utf8"));
+    const err = recs.find((r) => r.kind === "error");
+    expect(err?.summary).toContain("drafted 0 cards");
+    expect(err?.summary).toContain("U2");
+    expect(err?.summary).toContain("llm-draft-raw.jsonl");
+  });
+
   it("does NOT write a shadow record when nothing was seen + nothing was filtered", async () => {
     const slack = slackStub([], {});
     const gmail = gmailStub({ historyId: "1" }, [], {});

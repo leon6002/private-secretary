@@ -757,6 +757,18 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
     }
   }
 
+  // Silent-empty drafts (LLM answered, zero cards — usually a parse-failure,
+  // see llm-draft-raw.jsonl) are the invisible permanent skip: the cursor is
+  // already past those messages. sourceErrors surfaces them in the cockpit but
+  // the next tick's phase-3 WIPES that entry — the durable record lives here.
+  if (draftEmpty.length > 0) {
+    logActivity(
+      "error",
+      `${draftEmpty.length} sender(s) triggered but drafted 0 cards: ${draftEmpty.join(", ")} — raw responses in llm-draft-raw.jsonl`,
+      { phase: "draft", senders: draftEmpty },
+    );
+  }
+
   // ── PHASE 4 (UNLOCKED LLM, then brief commit): task consolidation. Group open
   // cards that are the same real-world task under a shared task_id (cross-sender)
   // so the cockpit shows one cluster instead of N standalone cards. Runs when
@@ -958,6 +970,7 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
         drafted: draftedCount,
         draftSkipped,
         promoFiltered,
+        ...(draftEmpty.length > 0 ? { draftEmpty } : {}),
         // Full error text per failing source (truncated) — "ERR" alone would
         // send you right back to guessing, which is what this log exists to kill.
         ...(erroredSources.length > 0

@@ -23,6 +23,7 @@ import { buildPersonaResolver, type DraftDeps } from "../relay/proc/draft.js";
 import { createAnthropicLlmCaller } from "../relay/proc/llm-anthropic.js";
 import { createClaudeCliLlmCaller } from "../relay/proc/llm-claude-cli.js";
 import { createDeepseekLlmCaller } from "../relay/proc/llm-deepseek.js";
+import { loadSettings } from "../relay/io/settings.js";
 import { describeIdentity } from "../relay/io/identity.js";
 
 interface Args {
@@ -77,6 +78,11 @@ async function buildDraft(args: Args): Promise<DraftDeps | undefined> {
   // correctly-set-up machine was told "No Anthropic API key … scan-only",
   // which reads as a broken install.
   const mode = process.argv.includes("--llm") ? process.argv[process.argv.indexOf("--llm") + 1] : "cli";
+  // Same model precedence as the daemon: --draft-model flag > Settings file >
+  // built-in default. (The deepseek branch used to drop this entirely.)
+  const draftModel = process.argv.includes("--draft-model")
+    ? process.argv[process.argv.indexOf("--draft-model") + 1]!
+    : loadSettings(args.statePath).llm.draftModel;
   try {
     const llm =
       mode === "api"
@@ -86,8 +92,9 @@ async function buildDraft(args: Args): Promise<DraftDeps | undefined> {
           // empty/unparseable — the silent-skip evidence trail.
           ? await createDeepseekLlmCaller({
               rawLogPath: join(dirname(args.statePath), "llm-draft-raw.jsonl"),
+              model: draftModel,
             })
-          : createClaudeCliLlmCaller({});
+          : createClaudeCliLlmCaller({ model: draftModel });
     const { resolve: resolvePersona, keys } = buildPersonaResolver(
       loadPersonas(args.personaDir),
     );

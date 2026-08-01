@@ -34,7 +34,14 @@ export const DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-pro";
 
 export class DeepseekApiError extends Error {
   constructor(public httpStatus: number, public body: unknown) {
-    super(`DeepSeek API failed: HTTP ${httpStatus}`);
+    // Fold the body's message into the error text when present — daemon error
+    // paths log err.message, and "HTTP 200" alone hides the actual cause
+    // (e.g. the max_tokens truncation guard).
+    const detail =
+      body && typeof body === "object" && typeof (body as { message?: unknown }).message === "string"
+        ? `: ${(body as { message: string }).message}`
+        : "";
+    super(`DeepSeek API failed: HTTP ${httpStatus}${detail}`);
     this.name = "DeepseekApiError";
   }
 }
@@ -50,7 +57,7 @@ export class DeepseekKeyMissingError extends Error {
 }
 
 interface DeepseekChatResponse {
-  choices?: Array<{ message?: { role?: string; content?: string } }>;
+  choices?: Array<{ message?: { role?: string; content?: string }; finish_reason?: string }>;
 }
 
 export interface DeepseekClientOptions {
@@ -97,6 +104,12 @@ export class DeepseekClient {
       model: opts.model ?? this.model,
       max_tokens: opts.maxTokens ?? 4096,
       response_format: { type: "json_object" },
+      // JSON-mode callers in this project do extraction/formatting, never open
+      // reasoning — and the reasoning budget is charged against max_tokens:
+      // a reasoning model can burn the ENTIRE budget on reasoning_content and
+      // return "" as content (the 2026-08-01 "empty assistant content" draft
+      // failure). thinking=disabled is faster, cheaper, and avoids the trap.
+      thinking: { type: "disabled" },
       messages: [
         { role: "system", content: opts.system },
         { role: "user", content: opts.userText },
@@ -130,9 +143,19 @@ export class DeepseekClient {
         throw new DeepseekApiError(resp.status, errBody);
       }
       const data = (await resp.json()) as DeepseekChatResponse;
-      const content = data.choices?.[0]?.message?.content;
+      const choice = data.choices?.[0];
+      const content = choice?.message?.content;
       if (typeof content !== "string" || content.trim() === "") {
         throw new DeepseekApiError(200, { message: "empty assistant content" });
+      }
+      // finish_reason "length" = the output hit max_tokens mid-JSON. Downstream
+      // that surfaces as an unparseable blob → a SILENT permanent skip (the
+      // source cursor already advanced). Treat it as the error it is so the
+      // caller's error path (sourceErrors + activity log) sees it.
+      if (choice?.finish_reason === "length") {
+        throw new DeepseekApiError(200, {
+          message: `response truncated at max_tokens (${body.max_tokens}) — raise maxTokens or shrink the batch`,
+        });
       }
       return content;
     }

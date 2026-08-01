@@ -89,6 +89,12 @@ export function deepseekLlmCaller(
     const content = await client.chatJson({
       system: req.system + jsonOutputRule(req.toolInputSchema, "actions"),
       userText: req.userText,
+      // A multi-message batch carries draft + headline + summary + next_actions
+      // per action; 4096 output tokens truncates mid-JSON (the 2026-08-01
+      // silent-skip: 4 triggered messages, 0 cards, parse-failure in the raw
+      // log). 8192 keeps realistic batches whole — and anything still longer
+      // now throws on finish_reason=length instead of skipping silently.
+      maxTokens: 8192,
     });
     const actions = parseDeepseekActions(content);
     if (actions.length === 0 && opts?.rawLogPath) {
@@ -121,13 +127,20 @@ export function deepseekJsonCaller(client: DeepseekClient): JsonLlmCaller {
 // Convenience: build ready callers from Keychain/env credentials.
 // Throw DeepseekKeyMissingError if no key is configured — the entrypoints
 // (run-secretary, run-notify) catch it and run scan-only. `opts.rawLogPath`
-// is forwarded to the draft caller (raw-response capture on silent empties).
+// is forwarded to the draft caller (raw-response capture on silent empties);
+// `opts.model` overrides the client's default model (the daemon passes the
+// Settings screen's draft model through here).
 export async function createDeepseekLlmCaller(
-  opts?: { rawLogPath?: string },
+  opts?: { rawLogPath?: string; model?: string },
 ): Promise<LlmCaller> {
-  return deepseekLlmCaller(await createDeepseekClient(), opts);
+  return deepseekLlmCaller(
+    await createDeepseekClient({ ...(opts?.model ? { model: opts.model } : {}) }),
+    opts,
+  );
 }
 
-export async function createDeepseekJsonCaller(): Promise<JsonLlmCaller> {
-  return deepseekJsonCaller(await createDeepseekClient());
+export async function createDeepseekJsonCaller(opts?: { model?: string }): Promise<JsonLlmCaller> {
+  return deepseekJsonCaller(
+    await createDeepseekClient({ ...(opts?.model ? { model: opts.model } : {}) }),
+  );
 }
