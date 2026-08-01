@@ -1,15 +1,17 @@
-// Settings screen (S3) — four tabs:
+// Settings screen (S3) — five tabs:
 //   General   theme three-state (System / Light / Dark) via useTheme()
 //   Model     drafting backend + model, persisted to config/secretary-settings.json
 //             (POST /api/settings/llm; the daemon picks it up on its NEXT start)
 //   Keys      Anthropic / DeepSeek API keys, stored ONLY in the macOS Keychain
 //             (POST /api/settings/keys) — the UI ever sees is a last-4 preview
+//   Google    first-time Gmail + Calendar onboarding (SETUP.md §3) as a 5-step
+//             guide: store the OAuth client JSON, then authorize each mailbox
 //   Activity  the F3 activity-log view ported from legacy public/js/activity.js
 //             (kind filter chips, newest first, 15s poll)
 //
 // /api/settings is fetched once by the screen and shared by the Model + Keys
 // tabs; Key saves call reload() so the status dots/previews refresh.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Button from "../components/Button";
 import Tabs from "../components/Tabs";
 import { apiGet, apiPost } from "../lib/api";
@@ -290,6 +292,236 @@ function KeysTab({ keys, onChanged }: { keys: SettingsData["keys"]; onChanged: (
   );
 }
 
+// ─── Google ──────────────────────────────────────────────────────────
+// First-time Gmail + Calendar onboarding (SETUP.md §3) as a guided flow.
+// One consent covers BOTH gmail.modify and calendar.events — Gmail and
+// Calendar share a single authorization per mailbox, and the copy says so
+// so nobody expects a second dance for Calendar.
+
+interface GoogleMailbox {
+  email: string;
+  authorized: boolean;
+  isCalendar: boolean;
+}
+
+interface GoogleSetupData {
+  clientConfigured: boolean;
+  mailboxes: GoogleMailbox[];
+}
+
+// Numbered guide step. Steps with a computable completion state (4: client
+// stored, 5: every mailbox authorized) flip their badge to a check; 1–3 are
+// manual console work and stay neutral.
+function GuideStep({
+  n,
+  done,
+  title,
+  children,
+}: {
+  n: number;
+  done?: boolean;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="bg-surface border border-outline rounded p-4 flex gap-3">
+      <span
+        className={cn(
+          "w-6 h-6 rounded-full border flex items-center justify-center flex-shrink-0 text-label-sm",
+          done ? "border-emerald-500 text-emerald-600 dark:text-emerald-400" : "border-outline text-on-surface-variant",
+        )}
+      >
+        {done ? "✓" : n}
+      </span>
+      <div className="flex-1 min-w-0 flex flex-col gap-2">
+        <div className="text-body-medium text-on-surface">{title}</div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function StatusDot({ ok }: { ok: boolean }) {
+  return (
+    <span
+      className={cn(
+        "w-2.5 h-2.5 rounded-full flex-shrink-0",
+        ok ? "bg-emerald-500" : "bg-slate-300 dark:bg-slate-600",
+      )}
+    />
+  );
+}
+
+function GoogleTab() {
+  const [setup, setSetup] = useState<GoogleSetupData | null>(null);
+  const [clientJson, setClientJson] = useState("");
+  const [saving, setSaving] = useState(false);
+  // Email of the mailbox whose authorize request is in flight — one browser
+  // flow at a time is confusing enough already.
+  const [authorizing, setAuthorizing] = useState<string | null>(null);
+
+  const reload = useCallback(() => {
+    apiGet<GoogleSetupData>("/api/settings/google")
+      .then(setSetup)
+      .catch((e) => toast(e instanceof Error ? e.message : String(e), true));
+  }, []);
+  useEffect(reload, [reload]);
+
+  async function saveClient() {
+    setSaving(true);
+    try {
+      await apiPost("/api/settings/google/client", { json: clientJson });
+      toast("OAuth client stored in the macOS Keychain");
+      setClientJson("");
+      reload();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function authorize(email: string) {
+    setAuthorizing(email);
+    try {
+      await apiPost("/api/settings/google/authorize", { mailbox: email });
+      toast(`Browser opened — sign in as ${email} and accept`);
+      // The consent script writes the token bundle when the browser flow
+      // finishes — a beat after this response — so the dot may lag one reload.
+      reload();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setAuthorizing(null);
+    }
+  }
+
+  const allAuthorized =
+    setup != null && setup.mailboxes.length > 0 && setup.mailboxes.every((m) => m.authorized);
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* status overview */}
+      <div className="bg-surface border border-outline rounded p-4 flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <StatusDot ok={setup?.clientConfigured ?? false} />
+          <div className="flex-1 text-body-base text-on-surface">OAuth client</div>
+          <span className="text-label-sm text-on-surface-variant">
+            {setup ? (setup.clientConfigured ? "configured" : "not configured") : "…"}
+          </span>
+        </div>
+        {setup?.mailboxes.map((m) => (
+          <div key={m.email} className="flex items-center gap-2">
+            <StatusDot ok={m.authorized} />
+            <div className="flex-1 min-w-0 text-body-base text-on-surface truncate">
+              {m.email}
+              {m.isCalendar && (
+                <span className="ml-2 text-label-xs rounded border border-outline text-on-surface-variant px-1.5 py-0.5">
+                  calendar
+                </span>
+              )}
+            </div>
+            <span className="text-label-sm text-on-surface-variant">
+              {m.authorized ? "authorized" : "not authorized"}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* the 5-step guide */}
+      <GuideStep n={1} title="Create a Google Cloud project and enable the APIs">
+        <p className="text-body-base text-on-surface-variant leading-relaxed">
+          In the{" "}
+          <a
+            href="https://console.cloud.google.com/"
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary underline"
+          >
+            Google Cloud console
+          </a>
+          , create a project, then enable the <strong>Gmail API</strong> and the{" "}
+          <strong>Google Calendar API</strong>.
+        </p>
+      </GuideStep>
+      <GuideStep n={2} title="Configure the OAuth consent screen">
+        <p className="text-body-base text-on-surface-variant leading-relaxed">
+          Choose <strong>External</strong> and add yourself as a <strong>Test user</strong> — an
+          un-published app only consents for listed test users.
+        </p>
+      </GuideStep>
+      <GuideStep n={3} title="Create and download the OAuth client JSON">
+        <p className="text-body-base text-on-surface-variant leading-relaxed">
+          Under <strong>Credentials</strong>, create an <strong>OAuth client ID</strong> of type{" "}
+          <strong>Desktop app</strong> and download the JSON.
+        </p>
+      </GuideStep>
+      <GuideStep n={4} done={setup?.clientConfigured} title="Store the client JSON in the Keychain">
+        <p className="text-body-base text-on-surface-variant leading-relaxed">
+          Paste the downloaded JSON below. It is stored only in the macOS Keychain — never written
+          to a file.
+        </p>
+        <textarea
+          value={clientJson}
+          onChange={(e) => setClientJson(e.target.value)}
+          placeholder='{"installed": {"client_id": "…", …}}'
+          aria-label="OAuth client JSON"
+          rows={4}
+          className="rounded border border-outline bg-surface px-2 py-1.5 text-body-base text-on-surface font-mono outline-none focus:border-primary resize-y"
+        />
+        <div>
+          <Button onClick={() => void saveClient()} disabled={saving || !clientJson.trim()}>
+            {saving ? "Saving…" : "Save to macOS Keychain"}
+          </Button>
+        </div>
+      </GuideStep>
+      <GuideStep n={5} done={allAuthorized} title="Authorize each mailbox">
+        <p className="text-body-base text-on-surface-variant leading-relaxed">
+          Opens a browser per mailbox — sign in as that address and accept. One consent grants both
+          Gmail and Calendar.
+        </p>
+        <div className="flex flex-col gap-2">
+          {(setup?.mailboxes ?? []).map((m) => (
+            <div key={m.email} className="flex items-center gap-2">
+              <span className="flex-1 min-w-0 text-body-base text-on-surface truncate">{m.email}</span>
+              {m.authorized ? (
+                <>
+                  <span className="text-label-sm text-on-surface-variant">authorized</span>
+                  <Button
+                    variant="ghost"
+                    disabled={authorizing !== null}
+                    onClick={() => void authorize(m.email)}
+                  >
+                    Re-authorize
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  disabled={!setup?.clientConfigured || authorizing !== null}
+                  onClick={() => void authorize(m.email)}
+                >
+                  {authorizing === m.email ? "Opening…" : `Authorize ${m.email}`}
+                </Button>
+              )}
+            </div>
+          ))}
+          {setup && setup.mailboxes.length === 0 && (
+            <p className="text-label-sm text-on-surface-variant">
+              No mailboxes configured — set up config/identity.json first (see SETUP.md).
+            </p>
+          )}
+        </div>
+      </GuideStep>
+
+      <p className="text-label-sm text-on-surface-variant leading-relaxed">
+        Gmail and Calendar share the single authorization above. In External Testing mode the
+        refresh token expires after 7 days — when that happens, come back here and Re-authorize.
+        Publishing the consent screen removes the 7-day limit.
+      </p>
+    </div>
+  );
+}
+
 // ─── Activity ────────────────────────────────────────────────────────
 // Behavioral reference: legacy public/js/activity.js — same chips, same row
 // layout, same 15s poll. Newest first; a failed poll keeps the last good list.
@@ -405,6 +637,7 @@ const TABS = [
   { id: "general", label: "General" },
   { id: "model", label: "Model" },
   { id: "keys", label: "Keys" },
+  { id: "google", label: "Google" },
   { id: "activity", label: "Activity" },
 ];
 
@@ -432,6 +665,7 @@ export default function SettingsScreen() {
           {tab === "general" && <GeneralTab />}
           {tab === "model" && settings && <ModelTab llm={settings.llm} />}
           {tab === "keys" && settings && <KeysTab keys={settings.keys} onChanged={reload} />}
+          {tab === "google" && <GoogleTab />}
           {tab === "activity" && <ActivityTab />}
         </div>
       </div>

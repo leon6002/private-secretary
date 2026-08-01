@@ -9,10 +9,11 @@ vi.mock("../lib/api", () => ({
   apiPost: vi.fn(),
 }));
 
-import { apiGet } from "../lib/api";
+import { apiGet, apiPost } from "../lib/api";
 import SettingsScreen from "./SettingsScreen";
 
 const mockApiGet = vi.mocked(apiGet);
+const mockApiPost = vi.mocked(apiPost);
 
 // A plausible /api/settings payload. The full key NEVER appears here — only
 // the server-computed last-4 preview — and the tests assert it stays that way.
@@ -31,8 +32,24 @@ const ACTIVITY = {
   ],
 };
 
-function mockApi() {
+interface GoogleSetup {
+  clientConfigured: boolean;
+  mailboxes: Array<{ email: string; authorized: boolean; isCalendar: boolean }>;
+}
+
+// Client not yet stored; one authorized mailbox, one not, one calendar-flagged.
+const GOOGLE_SETUP: GoogleSetup = {
+  clientConfigured: false,
+  mailboxes: [
+    { email: "me@work.com", authorized: false, isCalendar: true },
+    { email: "me@gmail.com", authorized: true, isCalendar: false },
+  ],
+};
+
+function mockApi(google: GoogleSetup = GOOGLE_SETUP) {
   mockApiGet.mockImplementation((path: string) => {
+    // /api/settings/google must match before the /api/settings prefix.
+    if (path === "/api/settings/google") return Promise.resolve(google);
     if (path.startsWith("/api/settings")) return Promise.resolve(SETTINGS);
     if (path.startsWith("/api/activity")) return Promise.resolve(ACTIVITY);
     return Promise.reject(new Error(`unexpected apiGet ${path}`));
@@ -42,6 +59,7 @@ function mockApi() {
 afterEach(() => {
   cleanup();
   mockApiGet.mockReset();
+  mockApiPost.mockReset();
 });
 
 describe("SettingsScreen", () => {
@@ -84,6 +102,60 @@ describe("SettingsScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "error" }));
     await waitFor(() =>
       expect(mockApiGet).toHaveBeenCalledWith("/api/activity?tail=200&kind=error"),
+    );
+  });
+
+  it("Google tab renders the status overview from /api/settings/google", async () => {
+    mockApi();
+    render(<SettingsScreen />);
+    fireEvent.click(screen.getByRole("tab", { name: "Google" }));
+
+    // Overview: client not configured, per-mailbox authorized states, calendar tag.
+    expect(await screen.findByText("OAuth client")).toBeTruthy();
+    expect(screen.getByText("not configured")).toBeTruthy();
+    // Each mailbox renders in both the overview and step 5.
+    expect(screen.getAllByText("me@work.com").length).toBeGreaterThan(0);
+    expect(screen.getByText("calendar")).toBeTruthy();
+    // "authorized" appears in both the overview row and step 5 for me@gmail.com.
+    expect(screen.getAllByText("authorized").length).toBeGreaterThan(0);
+    expect(mockApiGet).toHaveBeenCalledWith("/api/settings/google");
+  });
+
+  it("Google tab step 4 saves the pasted client JSON to the Keychain endpoint", async () => {
+    mockApiPost.mockResolvedValue({ ok: true });
+    mockApi(); // clientConfigured: false
+    render(<SettingsScreen />);
+    fireEvent.click(screen.getByRole("tab", { name: "Google" }));
+
+    // Step 4 is visible with the paste area while the client is unconfigured.
+    const box = await screen.findByLabelText("OAuth client JSON");
+    const json = JSON.stringify({ installed: { client_id: "x.apps.googleusercontent.com" } });
+    fireEvent.change(box, { target: { value: json } });
+    fireEvent.click(screen.getByRole("button", { name: "Save to macOS Keychain" }));
+
+    await waitFor(() =>
+      expect(mockApiPost).toHaveBeenCalledWith("/api/settings/google/client", { json }),
+    );
+  });
+
+  it("Google tab authorizes an unauthorized mailbox and re-authorizes an authorized one", async () => {
+    mockApiPost.mockResolvedValue({ started: true });
+    mockApi({ ...GOOGLE_SETUP, clientConfigured: true });
+    render(<SettingsScreen />);
+    fireEvent.click(screen.getByRole("tab", { name: "Google" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Authorize me@work.com" }));
+    await waitFor(() =>
+      expect(mockApiPost).toHaveBeenCalledWith("/api/settings/google/authorize", {
+        mailbox: "me@work.com",
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Re-authorize" }));
+    await waitFor(() =>
+      expect(mockApiPost).toHaveBeenCalledWith("/api/settings/google/authorize", {
+        mailbox: "me@gmail.com",
+      }),
     );
   });
 });

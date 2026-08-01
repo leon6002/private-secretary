@@ -14,6 +14,9 @@
 //   GET  /api/settings             → llm config + per-service key status (masked)
 //   POST /api/settings/llm         → {mode, draftModel} → config file (daemon restart)
 //   POST /api/settings/keys        → {service, value} → macOS Keychain (value never logged)
+//   GET  /api/settings/google      → Google setup status (client + per-mailbox authorized)
+//   POST /api/settings/google/client    → {json} → OAuth client JSON → Keychain (never logged)
+//   POST /api/settings/google/authorize → {mailbox} → spawn browser consent flow
 //   POST /api/actions/:id/approve   → approve + execute
 //   POST /api/actions/:id/edit      → {draft?, params?}
 //   POST /api/actions/:id/skip
@@ -278,6 +281,35 @@ export function createCockpitServer(opts: CockpitServerOptions): {
         return;
       }
       sendJson(res, 200, await api.setApiKey({ service: body.service, value: body.value }));
+      return;
+    }
+
+    // Settings Google tab: first-time Gmail + Calendar onboarding. The client
+    // JSON passes straight through to the Keychain after shape validation
+    // inside CockpitApi — like the API keys, it is never logged. authorize
+    // validates the mailbox against the identity config before it reaches
+    // the spawned consent script's argv.
+    if (path === "/api/settings/google" && method === "GET") {
+      sendJson(res, 200, await api.getGoogleSetup());
+      return;
+    }
+    if (path === "/api/settings/google/client" && method === "POST") {
+      const body = (await readBody(req)) as Record<string, unknown>;
+      if (typeof body.json !== "string" || !body.json.trim()) {
+        sendJson(res, 400, { error: "json (string) required" });
+        return;
+      }
+      sendJson(res, 200, await api.setGoogleClientJson(body.json));
+      return;
+    }
+    if (path === "/api/settings/google/authorize" && method === "POST") {
+      const body = (await readBody(req)) as Record<string, unknown>;
+      const mailbox = typeof body.mailbox === "string" ? body.mailbox.trim() : "";
+      if (!mailbox) {
+        sendJson(res, 400, { error: "mailbox required" });
+        return;
+      }
+      sendJson(res, 200, await api.authorizeGoogleMailbox(mailbox));
       return;
     }
 

@@ -14,8 +14,10 @@
 // persist the executed/awaiting result. A calendar conflict un-does
 // the approval back to suggested so the user can re-time + re-approve.
 
+import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   approveAction,
   hasReceipt,
@@ -73,7 +75,13 @@ import {
   DEEPSEEK_KEY_SERVICE,
   resolveDeepseekKey,
 } from "../io/deepseek-api.js";
-import { deleteSecret, KeychainEntryMissing, setSecret } from "../io/keychain.js";
+import { deleteSecret, hasSecret, KeychainEntryMissing, setSecret } from "../io/keychain.js";
+import { loadIdentity } from "../io/identity.js";
+import {
+  GOOGLE_CLIENT_ACCOUNT,
+  GOOGLE_CLIENT_SERVICE,
+  TOKEN_KEYCHAIN_SERVICE,
+} from "../io/google-oauth.js";
 import type { ExecuteResult } from "../proc/execute.js";
 
 // The executor the cockpit calls on approve. The server injects the real
@@ -429,6 +437,84 @@ export class CockpitApi {
     // The summary names the service, never the value.
     this.activity("edit", `settings: ${service} key ${v ? "updated" : "removed"}`);
     return { ok: true };
+  }
+
+  // ─── google setup (Settings Google tab) ───────────────────────────
+  // First-time Gmail + Calendar onboarding (SETUP.md §3) driven from the
+  // cockpit instead of the terminal. reauth.ts covers "existing bundle went
+  // stale"; this covers "no bundle yet". Same red line as the API keys: the
+  // client JSON and token bundles NEVER appear in any response, log, or
+  // activity record — only configured/authorized booleans cross the wire.
+
+  async getGoogleSetup(): Promise<GoogleSetupStatus> {
+    const identity = loadIdentity();
+    // Display list = authorize whitelist: primary + every polled mailbox,
+    // de-duped (primaryEmail is usually also in mailboxes).
+    const emails = [...new Set([identity.primaryEmail, ...identity.mailboxes].filter(Boolean))];
+    return {
+      clientConfigured: await hasSecret(GOOGLE_CLIENT_SERVICE, GOOGLE_CLIENT_ACCOUNT),
+      mailboxes: await Promise.all(
+        emails.map(async (email) => ({
+          email,
+          authorized: await hasSecret(TOKEN_KEYCHAIN_SERVICE, email),
+          isCalendar: email === identity.calendarMailbox,
+        })),
+      ),
+    };
+  }
+
+  // Store the OAuth client JSON downloaded from Google Cloud. Validated
+  // before it touches Keychain: it must parse and look like a Google client
+  // blob (`installed` = Desktop app, `web` accepted so a wrong-but-honest
+  // download still works with the consent script's client_id lookup).
+  async setGoogleClientJson(json: string): Promise<{ ok: true }> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(json);
+    } catch {
+      throw new CockpitBadRequestError("client JSON is not valid JSON");
+    }
+    const hasClientId = (o: unknown): boolean =>
+      !!o && typeof o === "object" && typeof (o as Record<string, unknown>).client_id === "string";
+    const root = parsed as Record<string, unknown> | null;
+    if (!root || (!hasClientId(root.installed) && !hasClientId(root.web))) {
+      throw new CockpitBadRequestError(
+        "client JSON must contain installed.client_id or web.client_id — download the OAuth client ID (Desktop app) JSON from Google Cloud",
+      );
+    }
+    await setSecret(GOOGLE_CLIENT_SERVICE, GOOGLE_CLIENT_ACCOUNT, json);
+    // Names the event only — the JSON itself is never logged.
+    this.activity("edit", "settings: google client JSON stored");
+    return { ok: true };
+  }
+
+  // Kick off the browser consent flow for one mailbox (first authorization,
+  // or a deliberate re-consent). The mailbox must come from the identity
+  // config — it lands in the spawned argv, so an arbitrary string here would
+  // be argument injection into a local script; the whitelist keeps the
+  // cockpit from consenting mailboxes the engine doesn't even poll.
+  async authorizeGoogleMailbox(
+    mailbox: string,
+    spawnConsent: GoogleConsentSpawn = defaultGoogleConsentSpawn,
+  ): Promise<{ started: true }> {
+    const identity = loadIdentity();
+    const allowed = new Set([identity.primaryEmail, ...identity.mailboxes]);
+    if (!allowed.has(mailbox)) {
+      throw new CockpitBadRequestError(`unknown mailbox: ${mailbox} — not in the identity config`);
+    }
+    if (!(await hasSecret(GOOGLE_CLIENT_SERVICE, GOOGLE_CLIENT_ACCOUNT))) {
+      throw new CockpitBadRequestError("store the OAuth client JSON first (step 4)");
+    }
+    spawnConsent([
+      "tsx",
+      GOOGLE_CONSENT_SCRIPT,
+      "consent",
+      GOOGLE_CLIENT_SERVICE,
+      GOOGLE_CLIENT_ACCOUNT,
+      mailbox,
+    ]);
+    this.activity("edit", `settings: google consent started for ${mailbox}`);
+    return { started: true };
   }
 
   // ─── mutations (each under the single-writer lock) ────────────────
@@ -794,6 +880,46 @@ export interface CockpitSettings {
 const KEYCHAIN_TARGETS: Record<ApiKeyService, { service: string; account: string }> = {
   anthropic: { service: ANTHROPIC_KEY_SERVICE, account: ANTHROPIC_KEY_ACCOUNT },
   deepseek: { service: DEEPSEEK_KEY_SERVICE, account: DEEPSEEK_KEY_ACCOUNT },
+};
+
+// ─── google setup types + consent spawn ──────────────────────────────
+
+export interface GoogleMailboxStatus {
+  email: string;
+  /** A token bundle exists in Keychain for this mailbox. */
+  authorized: boolean;
+  /** This mailbox is the calendar new events are booked on. */
+  isCalendar: boolean;
+}
+
+export interface GoogleSetupStatus {
+  clientConfigured: boolean;
+  mailboxes: GoogleMailboxStatus[];
+}
+
+// Injectable so tests assert the exact argv instead of spawning a real
+// browser flow. Receives the argv handed to `npx` (["tsx", script, ...]).
+export type GoogleConsentSpawn = (argv: string[]) => void;
+
+const COCKPIT_DIR = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = join(COCKPIT_DIR, "..", "..");
+// Same script reauth.ts drives; the difference is the client refs come from
+// the default constants (first-time setup) instead of a stale bundle.
+const GOOGLE_CONSENT_SCRIPT = join(REPO_ROOT, "scripts", "auth", "google-oauth.ts");
+
+// Spawn the consent flow and return immediately — the browser dance can take
+// a minute, so the HTTP request never waits on it (same pattern as reauth.ts:
+// output mirrored to stderr for debugging, unref'd so it outlives the request).
+const defaultGoogleConsentSpawn: GoogleConsentSpawn = (argv) => {
+  const child = spawn("npx", argv, {
+    cwd: REPO_ROOT,
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: false,
+  });
+  const mailbox = argv.at(-1);
+  child.stdout?.on("data", (d) => process.stderr.write(`[google-consent:${mailbox}] ${d}`));
+  child.stderr?.on("data", (d) => process.stderr.write(`[google-consent:${mailbox}] ${d}`));
+  child.unref();
 };
 
 // ─── typed errors the server maps to HTTP statuses ─────────────────────

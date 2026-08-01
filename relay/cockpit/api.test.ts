@@ -7,6 +7,12 @@ import { loadState } from "../io/state.js";
 import { activityPathFor, appendActivity, readActivity } from "../io/activity-log.js";
 import { loadSettings } from "../io/settings.js";
 import { __setRunner, type SecurityRunner } from "../io/keychain.js";
+import { _resetIdentity, _setIdentityForTest } from "../io/identity.js";
+import {
+  GOOGLE_CLIENT_ACCOUNT,
+  GOOGLE_CLIENT_SERVICE,
+  TOKEN_KEYCHAIN_SERVICE,
+} from "../io/google-oauth.js";
 import { ANTHROPIC_KEY_ACCOUNT, ANTHROPIC_KEY_SERVICE } from "../io/anthropic-api.js";
 import { DEEPSEEK_KEY_ACCOUNT, DEEPSEEK_KEY_SERVICE } from "../io/deepseek-api.js";
 import { markExecuted, withReceipt, type ActionItem } from "../core/action-item.js";
@@ -516,5 +522,130 @@ describe("settings", () => {
     await api.setApiKey({ service: "deepseek", value: "" });
     expect(keychain.has(`${DEEPSEEK_KEY_SERVICE}|${DEEPSEEK_KEY_ACCOUNT}`)).toBe(false);
     await api.setApiKey({ service: "deepseek", value: "" });
+  });
+});
+
+// Settings Google tab: first-time Gmail + Calendar onboarding. Everything goes
+// through the injected keychain runner + identity seam — the real Keychain and
+// the real config/identity.json are never touched.
+describe("google setup (Settings Google tab)", () => {
+  let keychain: Map<string, string>;
+  let runnerCalls: string[][];
+
+  const stubRunner: SecurityRunner = async (args) => {
+    runnerCalls.push(args);
+    if (args[0] === "find-generic-password") {
+      const v = keychain.get(`${args[2]}|${args[4]}`);
+      if (v === undefined) {
+        const err = new Error("not found") as Error & { code?: number };
+        err.code = 44;
+        throw err;
+      }
+      return { stdout: v + "\n", stderr: "" };
+    }
+    if (args[0] === "add-generic-password") {
+      keychain.set(`${args[3]}|${args[5]}`, args[7]!);
+      return { stdout: "", stderr: "" };
+    }
+    throw new Error(`unexpected security call: ${args[0]}`);
+  };
+
+  const CLIENT_JSON = JSON.stringify({
+    installed: { client_id: "abc.apps.googleusercontent.com", client_secret: "shh" },
+  });
+
+  beforeEach(() => {
+    keychain = new Map();
+    runnerCalls = [];
+    __setRunner(stubRunner);
+    _setIdentityForTest({
+      primaryEmail: "me@work.com",
+      mailboxes: ["me@work.com", "me@gmail.com"],
+      calendarMailbox: "me@work.com",
+    });
+    seed([]);
+  });
+  afterEach(() => {
+    __setRunner(null);
+    _resetIdentity();
+  });
+
+  it("getGoogleSetup reports client + per-mailbox authorized state from Keychain", async () => {
+    const api = mkApi(sendingExecutor);
+    const empty = await api.getGoogleSetup();
+    expect(empty.clientConfigured).toBe(false);
+    expect(empty.mailboxes).toEqual([
+      { email: "me@work.com", authorized: false, isCalendar: true },
+      { email: "me@gmail.com", authorized: false, isCalendar: false },
+    ]);
+
+    keychain.set(`${GOOGLE_CLIENT_SERVICE}|${GOOGLE_CLIENT_ACCOUNT}`, CLIENT_JSON);
+    keychain.set(`${TOKEN_KEYCHAIN_SERVICE}|me@gmail.com`, "{}");
+    const s = await api.getGoogleSetup();
+    expect(s.clientConfigured).toBe(true);
+    expect(s.mailboxes.find((m) => m.email === "me@gmail.com")?.authorized).toBe(true);
+    expect(s.mailboxes.find((m) => m.email === "me@work.com")?.authorized).toBe(false);
+    // Status is booleans only — no token/client content crosses the wire.
+    expect(JSON.stringify(s)).not.toContain("client_secret");
+  });
+
+  it("setGoogleClientJson rejects non-JSON and JSON without a client_id", async () => {
+    const api = mkApi(sendingExecutor);
+    await expect(api.setGoogleClientJson("not json {")).rejects.toThrow(CockpitBadRequestError);
+    await expect(api.setGoogleClientJson('{"installed": {}}')).rejects.toThrow(CockpitBadRequestError);
+    await expect(api.setGoogleClientJson('{"web": {"redirect_uris": []}}')).rejects.toThrow(
+      CockpitBadRequestError,
+    );
+    expect(runnerCalls).toEqual([]); // validation fails BEFORE any keychain call
+  });
+
+  it("setGoogleClientJson stores the blob under the default client entry and never logs it", async () => {
+    const api = mkApi(sendingExecutor);
+    await expect(api.setGoogleClientJson(CLIENT_JSON)).resolves.toEqual({ ok: true });
+    const add = runnerCalls.find((c) => c[0] === "add-generic-password")!;
+    expect(add[3]).toBe(GOOGLE_CLIENT_SERVICE);
+    expect(add[5]).toBe(GOOGLE_CLIENT_ACCOUNT);
+    expect(add[7]).toBe(CLIENT_JSON);
+
+    const logText = readFileSync(activityPathFor(statePath), "utf8");
+    expect(logText).toContain("settings: google client JSON stored");
+    expect(logText).not.toContain("client_secret");
+    // A "web"-shaped download (wrong credential kind, still a client_id) is accepted.
+    await expect(
+      api.setGoogleClientJson(JSON.stringify({ web: { client_id: "x.apps.googleusercontent.com" } })),
+    ).resolves.toEqual({ ok: true });
+  });
+
+  it("authorizeGoogleMailbox 400s when the client JSON is not stored yet", async () => {
+    const api = mkApi(sendingExecutor);
+    await expect(api.authorizeGoogleMailbox("me@work.com", () => {})).rejects.toThrow(
+      /store the OAuth client JSON first/,
+    );
+  });
+
+  it("authorizeGoogleMailbox rejects mailboxes outside the identity config", async () => {
+    keychain.set(`${GOOGLE_CLIENT_SERVICE}|${GOOGLE_CLIENT_ACCOUNT}`, CLIENT_JSON);
+    const api = mkApi(sendingExecutor);
+    let spawned: string[][] = [];
+    await expect(
+      api.authorizeGoogleMailbox("evil@elsewhere.com", (argv) => spawned.push(argv)),
+    ).rejects.toThrow(CockpitBadRequestError);
+    expect(spawned).toEqual([]); // nothing reaches the consent script's argv
+  });
+
+  it("authorizeGoogleMailbox spawns consent with the default client + target mailbox", async () => {
+    keychain.set(`${GOOGLE_CLIENT_SERVICE}|${GOOGLE_CLIENT_ACCOUNT}`, CLIENT_JSON);
+    const api = mkApi(sendingExecutor);
+    const spawned: string[][] = [];
+    const r = await api.authorizeGoogleMailbox("me@gmail.com", (argv) => spawned.push(argv));
+    expect(r).toEqual({ started: true });
+    expect(spawned).toHaveLength(1);
+    const argv = spawned[0]!;
+    expect(argv[0]).toBe("tsx");
+    expect(argv[1]).toMatch(/scripts[/\\]auth[/\\]google-oauth\.ts$/);
+    expect(argv.slice(2)).toEqual(["consent", GOOGLE_CLIENT_SERVICE, GOOGLE_CLIENT_ACCOUNT, "me@gmail.com"]);
+
+    const logText = readFileSync(activityPathFor(statePath), "utf8");
+    expect(logText).toContain("settings: google consent started for me@gmail.com");
   });
 });
