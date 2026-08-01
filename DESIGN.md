@@ -32,14 +32,26 @@ DESIGN SYSTEM (identical across all screens of this app):
 - Language badges: text chips `EN` / `中文` — never flags.
 - Banned: gradients, icons-in-colored-circles, centered text blocks,
   border-left accent stripes on cards, decorative blobs/waves, emoji as UI,
-  dark mode, drop shadows, Inter/Roboto/system-ui.
+  drop shadows, Inter/Roboto/system-ui.
 ```
+
+## Dark theme (amendment, 2026-07-31 — owner: 古龙)
+
+Dark mode is no longer banned; it ships with the React cockpit. The original
+light-only stance assumed a single token set; the React migration made every
+color a CSS variable (`relay/cockpit/web/src/index.css`, `:root` light /
+`.dark` dark), so dark is the same design with a second value column, not a
+second design. The rules survive unchanged: hairline borders, no shadows,
+structure from borders and tint zoning. Dark palette: canvas #0F1115,
+surface #171A21, surface-variant #1E222B, outline #262B36, text #E6E8EC /
+#9AA3B2 secondary, primary #3B82F6, error #F87171. Preference: follow the OS
+by default, override in Settings → General (persisted locally).
 
 ## Component vocabulary
 
 | Component | Spec |
 |---|---|
-| Left nav rail | 56px wide, icons: Queue / Tasks / People / Connections, pending-count badge on Queue, wordmark on top |
+| Left nav rail | 56px wide, icons: Queue / Projects / People / Connections / Settings, pending-count badge on Queue, wordmark on top |
 | Task group header | full-width tinted band (#F1F2F4), title + people avatars + "2 of 4 done" + collapse |
 | Approval card (selected) | routing line → original (expandable) → why + evidence chips → draft (read-only until [Edit]) → actions |
 | Routing line | sender avatar+platform → recipient avatar+platform, action-type tag |
@@ -48,7 +60,7 @@ DESIGN SYSTEM (identical across all screens of this app):
 | Provenance badges | manual = solid lock; inferred = dotted outline |
 | Empty queue | quiet full-area "All handled." + auto-handled drawer centered + last-scan time |
 | Drawer rows | every assistant-solo decision; [Restore to queue] on each |
-| Motion | exactly two: approve slide-out, pending-count tick. Nothing else moves |
+| Motion | exactly one: approve slide-out. Nothing else moves |
 
 ## Voice (microcopy)
 

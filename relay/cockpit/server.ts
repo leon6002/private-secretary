@@ -8,8 +8,6 @@
 //   GET  /index.html             → same as /
 //   GET  /assets/**              → vite build output (hashed, immutable cache;
 //                                  whitelisted extensions, contained in web/dist)
-//   GET  /app.css, /js/**        → legacy vanilla SPA assets (.js/.css only,
-//                                  contained in public/; removed in S6)
 //   GET  /api/state              → CockpitState (queue, counts, gate, errors)
 //   GET  /api/personas           → persona[] for the People screen
 //   GET  /api/activity?tail=&kind= → activity-log tail (F3, read-only)
@@ -50,10 +48,8 @@ import {
 import { ACTIVITY_KINDS, type ActivityKind } from "../io/activity-log.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PUBLIC_DIR = join(__dirname, "public");
 // The React app's build output (`npm run cockpit:build`). Served for "/" and
-// "/assets/**"; the legacy public/ tree above keeps only its old routes until
-// the migration finishes (S6).
+// "/assets/**".
 const DEFAULT_WEB_DIST_DIR = join(__dirname, "web", "dist");
 
 export interface CockpitServerOptions extends CockpitApiOptions {
@@ -223,30 +219,6 @@ export function createCockpitServer(opts: CockpitServerOptions): {
         "Content-Type": contentType,
         "Cache-Control": "public, max-age=31536000, immutable",
       });
-      res.end(body);
-      return;
-    }
-    // Legacy vanilla SPA assets (public/), kept until the React migration
-    // finishes (S6). The path is resolved against PUBLIC_DIR and must stay
-    // inside it (../ traversal is rejected), and only .js/.css are ever
-    // served — no HTML, no TS sources.
-    if (method === "GET" && (path === "/app.css" || path.startsWith("/js/"))) {
-      const file = resolve(PUBLIC_DIR, "." + path);
-      const ext = extname(file);
-      if ((ext !== ".js" && ext !== ".css") || !file.startsWith(PUBLIC_DIR + sep)) {
-        sendJson(res, 404, { error: `no route: ${method} ${path}` });
-        return;
-      }
-      let body: string;
-      try {
-        body = readFileSync(file, "utf8");
-      } catch {
-        sendJson(res, 404, { error: `no route: ${method} ${path}` });
-        return;
-      }
-      // no-store so a plain reload always picks up edits (local dev tool;
-      // there's no CDN to benefit from caching anyway).
-      res.writeHead(200, { "Content-Type": CONTENT_TYPES[ext]!, "Cache-Control": "no-store" });
       res.end(body);
       return;
     }

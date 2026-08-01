@@ -181,6 +181,10 @@ skill). Without it drafts read as generically human rather than as you.
 ## 7. Run it
 
 ```bash
+# Build the cockpit web app first (React + Vite; only needed after checkout
+# or frontend changes). The server shows a build-hint page if you skip this.
+npm run cockpit:build
+
 # The triage UI — start here, it works with an empty queue.
 npx tsx scripts/run-cockpit.ts --port 4317
 
@@ -190,6 +194,11 @@ npx tsx scripts/run-secretary.ts --once
 # The daemon.
 npx tsx scripts/run-notify.ts
 ```
+
+Frontend dev loop: `npm run cockpit:dev` starts Vite on its own port and
+proxies `/api` to a running cockpit on 4317 — edit React code with hot reload,
+no rebuild. `npm run cockpit:typecheck` type-checks the web app (the root
+`npm run typecheck` excludes it).
 
 Useful daemon flags: `--no-consolidate`, `--no-plan`, `--no-persona-update`,
 `--no-refresh`, `--refresh-max N`, `--max-draft N`, `--draft-model <model>`,

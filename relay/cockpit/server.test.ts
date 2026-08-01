@@ -133,39 +133,11 @@ describe("cockpit HTTP server", () => {
     }
   });
 
-  it("GET /app.css and /js/* serve static assets", async () => {
-    const css = await fetch(url("/app.css"));
-    expect(css.status).toBe(200);
-    expect(css.headers.get("content-type")).toMatch(/text\/css/);
-    expect(css.headers.get("cache-control")).toBe("no-store");
-    const js = await fetch(url("/js/main.js"));
-    expect(js.status).toBe(200);
-    expect(js.headers.get("content-type")).toMatch(/text\/javascript/);
-    expect(js.headers.get("cache-control")).toBe("no-store");
-    expect(await js.text()).toContain("boot");
-  });
-
-  it("path traversal under /js/ is rejected", async () => {
-    // fetch()/the URL parser collapses ".." (and its percent-encoded forms)
-    // before the request is sent, so these arrive as /server.ts and 404 on
-    // the catch-all; the server's containment check covers anything else.
-    for (const p of ["/js/../server.ts", "/js/%2e%2e/server.ts", "/js/%2E%2E/api.ts"]) {
-      const r = await fetch(url(p));
-      expect(r.status, p).toBeGreaterThanOrEqual(400);
-      expect([403, 404]).toContain(r.status);
-    }
-  });
-
-  it("disallowed extensions under /js/ are rejected", async () => {
-    for (const p of ["/js/main.ts", "/js/style.html", "/js/readme.txt"]) {
+  it("legacy vanilla SPA routes are gone (public/ deleted in S6)", async () => {
+    for (const p of ["/app.css", "/js/main.js"]) {
       const r = await fetch(url(p));
       expect(r.status, p).toBe(404);
     }
-  });
-
-  it("a missing .js file under /js/ → 404", async () => {
-    const r = await fetch(url("/js/nope.js"));
-    expect(r.status).toBe(404);
   });
 
   it("GET /api/state returns the seeded queue", async () => {
