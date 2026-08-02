@@ -649,3 +649,27 @@ describe("google setup (Settings Google tab)", () => {
     expect(logText).toContain("settings: google consent started for me@gmail.com");
   });
 });
+
+describe("calendar double-booking guard", () => {
+  it("approving a calendar card auto-rejects still-suggested siblings with the same start", async () => {
+    const calExecutor: CockpitExecutor = async (a) => {
+      const receipt = { kind: "calendar_event" as const, ref: "evt1", at: "t" };
+      return { ok: true, action: markExecuted(withReceipt(a, receipt)), receipt, awaitingManual: false };
+    };
+    const cal = (id: string, title: string, start: string) =>
+      action({ id, action_type: "calendar", draft: undefined, target: {}, params: { title, start, end: start } });
+    seed([
+      cal("c1", "Q3 评审", "2026-08-02T15:00:00+08:00"),
+      cal("c2", "Q3 评审 (refresh dup)", "2026-08-02T15:00:00+08:00"),
+      cal("c3", "别的事", "2026-08-03T10:00:00+08:00"),
+    ]);
+    const api = mkApi(calExecutor);
+    await api.approve("c1");
+    const state = loadState(statePath);
+    expect(state.actions.find((a) => a.id === "c1")!.status).toBe("executed");
+    // same start → auto-rejected (the six-duplicate-Q3-events guard)
+    expect(state.actions.find((a) => a.id === "c2")!.status).toBe("rejected");
+    // different start → untouched
+    expect(state.actions.find((a) => a.id === "c3")!.status).toBe("suggested");
+  });
+});

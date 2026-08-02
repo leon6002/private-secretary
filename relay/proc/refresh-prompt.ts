@@ -71,6 +71,12 @@ export function buildRefreshRequest(opts: {
   thread: string;
   persona: Persona | null;
   projectCatalog?: string;
+  // The model's clock anchor, same as drafting (draft-prompt.ts). WHY: without
+  // it the model resolves the thread's relative dates from its own stale
+  // calendar — the 2026-08-01 incident booked real events into 2023/2024/2025
+  // (21 bogus events had to be deleted from the live calendar).
+  now?: string;
+  nowLocal?: string;
 }): DraftRequest {
   const c = opts.card;
   const cardBlock =
@@ -83,7 +89,11 @@ export function buildRefreshRequest(opts: {
   const catalogBlock = opts.projectCatalog?.trim()
     ? `\n\nPROJECT CATALOG — set project_id to the BEST-FITTING id by topic/domain (keep the card's current project_id unless the thread clearly fits a different one; "MISC" only if none fit):\n${opts.projectCatalog.trim()}`
     : "";
+  const timeLine = opts.now
+    ? `CURRENT TIME: ${opts.now} (UTC)${opts.nowLocal ? ` = local ${opts.nowLocal}` : ""} — resolve all relative dates in the thread (明天/下周三/next Friday) against THIS date, never your own knowledge of the calendar.\n\n`
+    : "";
   const userText =
+    timeLine +
     `${describePersona(opts.persona)}\n\n${cardBlock}${catalogBlock}\n\n` +
     `FULL RECENT THREAD (both sides, newest last):\n${opts.thread}\n\n` +
     `Re-decide what this card should be now and call ${TOOL_NAME}.`;

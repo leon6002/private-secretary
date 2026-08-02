@@ -737,6 +737,40 @@ export class CockpitApi {
       if (result.action.status === "executed") {
         this.label(result.action, "executed", { existence: "confirmed" });
       }
+      // Double-booking guard: approving a calendar card SETTLES that meeting.
+      // Still-suggested siblings for the same start (supersede-exempt
+      // survivors, refresh re-emissions) are now duplicates — auto-reject them
+      // so a second click can't book the meeting twice (2026-08-02: six
+      // duplicate Q3 预算评审会 events were created exactly this way).
+      if (
+        result.action.action_type === "calendar" &&
+        result.action.status === "executed" &&
+        typeof result.action.params?.start === "string" &&
+        result.action.params.start !== ""
+      ) {
+        const start = result.action.params.start;
+        const siblings = state.actions.filter(
+          (s) =>
+            s.id !== result.action.id &&
+            s.status === "suggested" &&
+            s.action_type === "calendar" &&
+            s.params?.start === start,
+        );
+        for (const sib of siblings) {
+          const rejected = rejectAction(sib);
+          this.replace(state, rejected);
+          this.label(rejected, "rejected", {
+            existence: "duplicate",
+            note: `auto-skipped: identical start to approved card ${result.action.id}`,
+          });
+          this.activity(
+            "skip",
+            `auto-skipped duplicate calendar "${CockpitApi.headlineOf(rejected)}" (same start ${start} as the approved card)`,
+            { id: sib.id, action_type: "calendar", start },
+          );
+        }
+        if (siblings.length > 0) saveState(this.opts.statePath, state);
+      }
       this.activity(
         "approve",
         `approved ${approved.action_type} "${CockpitApi.headlineOf(approved)}" → ${result.action.status}${result.awaitingManual ? " (awaiting manual)" : ""}`,

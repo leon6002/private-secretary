@@ -181,6 +181,23 @@ export function isSupersedeExempt(a: ActionItem): boolean {
   );
 }
 
+// Already-booked check (draft-commit + refresh-commit in scan-loop). A fresh
+// suggested calendar whose task_id OR exact start matches an EXECUTED calendar
+// is a duplicate waiting to double-book — the event already exists. Refresh
+// used to skip this check entirely (phase 3 had it, phase 5 didn't), which is
+// how one meeting ended up approved into N real events.
+export function isCalendarAlreadyBooked(a: ActionItem, existing: ActionItem[]): boolean {
+  if (a.action_type !== "calendar") return false;
+  const start = typeof a.params?.start === "string" ? a.params.start : undefined;
+  return existing.some(
+    (e) =>
+      e.action_type === "calendar" &&
+      e.status === "executed" &&
+      ((a.task_id && e.task_id === a.task_id) ||
+        (start !== undefined && e.params?.start === start)),
+  );
+}
+
 export type ValidationResult =
   | { ok: true; item: ActionItem }
   | { ok: false; errors: string[] };

@@ -458,3 +458,21 @@ describe("buildRawMimeMessage", () => {
     expect(decoded).toContain("\r\n\r\nBody line 1\nBody line 2");
   });
 });
+
+describe("pollMailbox — self-sent mail", () => {
+  it("From === mailbox is dropped AND recorded as filtered gmail:self (was a silent continue)", async () => {
+    const messages: Record<string, GmailMessage> = {
+      M1: makeMessage({ id: "M1", threadId: "T1", from: "leo@taiv.tv", to: "leo@taiv.tv", body: "note to self", labelIds: ["INBOX", "UNREAD"] }),
+    };
+    const client = clientStub({
+      getProfile: vi.fn(async () => ({ emailAddress: "leo@taiv.tv", messagesTotal: 1, threadsTotal: 1, historyId: "999" })),
+      messagesList: vi.fn(async () => ({ messages: [{ id: "M1", threadId: "T1" }] })),
+      getMessage: vi.fn(async ({ id }) => messages[id]!),
+      getThread: vi.fn(async ({ id }) => ({ id, messages: [messages.M1!] })),
+    });
+    const r = await pollMailbox({ client, mailboxEmail: "leo@taiv.tv" });
+    expect(r.inbound).toEqual([]);
+    expect(r.filtered).toEqual([{ id: "gmail:M1", reason: "gmail:self" }]);
+    expect(r.newHistoryId).toBe("999"); // cursor still advances
+  });
+});

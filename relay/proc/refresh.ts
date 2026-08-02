@@ -94,9 +94,20 @@ export async function refreshOpenTasks(
 
     const sender = rep.context!.sender_handle!;
     const persona = deps.resolvePersona(sender);
+    // Clock anchor for the refresh prompt — same construction as draft.ts.
+    // The un-anchored refresh pass hallucinated dates into 2023–2025 and the
+    // approvals of those cards became REAL bogus calendar events (2026-08-01).
+    const nowIso = now();
+    const d = new Date(nowIso);
+    const pad2 = (n: number): string => String(n).padStart(2, "0");
+    const offMin = -d.getTimezoneOffset();
+    const nowLocal =
+      `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ` +
+      `${pad2(d.getHours())}:${pad2(d.getMinutes())} ` +
+      `(UTC${offMin >= 0 ? "+" : "-"}${pad2(Math.floor(Math.abs(offMin) / 60))}:${pad2(Math.abs(offMin) % 60)})`;
     let actions;
     try {
-      actions = await deps.llm(buildRefreshRequest({ card: rep, thread, persona, projectCatalog: deps.projectCatalog }));
+      actions = await deps.llm(buildRefreshRequest({ card: rep, thread, persona, projectCatalog: deps.projectCatalog, now: nowIso, nowLocal }));
     } catch {
       continue; // a single conversation's failure must not sink the pass
     }

@@ -30,7 +30,7 @@ import { acquireLock, loadState, releaseLock, saveState, type LoopState } from "
 import { appendLabels, buildLabel, labelsPathFor } from "../io/labels.js";
 import type { InboundMessage } from "../core/types.js";
 import type { ActionItem } from "../core/action-item.js";
-import { isSupersedeExempt } from "../core/action-item.js";
+import { isCalendarAlreadyBooked, isSupersedeExempt } from "../core/action-item.js";
 import { draftActions, type DraftDeps } from "./draft.js";
 import { consolidateTasks, type ConsolidateDeps } from "./consolidate.js";
 import { refreshOpenTasks, type RefreshDeps } from "./refresh.js";
@@ -417,11 +417,13 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
       }
       // Promo/non-primary mail dropped at ingestion (before the trigger
       // filter). Fold into filteredOut so each is dedup-marked seen + recorded
-      // in the shadow log with its reason; count it so a mis-filter is
-      // detectable. It never reaches drafting.
+      // in the shadow log with its reason; count it so a mis-filter of
+      // real mail is detectable. It never reaches drafting. Self-sent mail
+      // ("gmail:self") is logged the same way but is NOT promo — don't count
+      // it in the promo metric.
       for (const f of r.filtered) {
         filtered++;
-        promoFiltered++;
+        if (f.reason !== "gmail:self") promoFiltered++;
         filteredOut.push({ id: f.id, reason: f.reason });
       }
       // Per-mailbox failures are isolated inside scanGmailDirect: healthy
@@ -647,19 +649,7 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
         // calendar whose task_id OR exact start matches an EXECUTED calendar. The
         // event already exists — a later re-mention shouldn't spawn a duplicate
         // card (the '看房 already created, why still here' bug).
-        const bookedTasks = new Set<string>();
-        const bookedStarts = new Set<string>();
-        for (const a of fresh.actions) {
-          if (a.action_type === "calendar" && a.status === "executed") {
-            if (a.task_id) bookedTasks.add(a.task_id);
-            if (typeof a.params?.start === "string") bookedStarts.add(a.params.start);
-          }
-        }
-        const toCommit = draftedActions.filter((a) => {
-          if (a.action_type !== "calendar") return true;
-          const st = a.params?.start;
-          return !((a.task_id && bookedTasks.has(a.task_id)) || (typeof st === "string" && bookedStarts.has(st)));
-        });
+        const toCommit = draftedActions.filter((a) => !isCalendarAlreadyBooked(a, fresh.actions));
         // Cross-tick clustering: a fresh SUGGESTED card for a sender supersedes
         // the prior still-suggested card(s) for that sender — one chatty contact
         // yields one evolving card, not a flood. EXEMPTION (see
@@ -834,6 +824,7 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
         if (refreshedKeys.length > 0 || newActions.length > 0) {
           const keys = new Set(refreshedKeys);
           let refreshDropped = 0;
+          let refreshBookedFiltered = 0;
           const refreshCommitted = await commitUnderLock((fresh) => {
             // Drop the stale still-suggested card(s) in each refreshed
             // conversation; user-touched cards (not "suggested") are kept.
@@ -848,18 +839,24 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
             });
             const doomed = new Set(dropped.map((a) => a.id));
             fresh.actions = fresh.actions.filter((a) => !doomed.has(a.id));
+            // Same already-booked check as phase 3: refresh kept re-emitting
+            // calendar cards for a meeting that was ALREADY executed, and each
+            // approval created another real event (2026-08-02: six duplicate
+            // Q3 预算评审会 bookings). Filter BEFORE the cards land.
+            const toAdd = newActions.filter((a) => !isCalendarAlreadyBooked(a, fresh.actions));
+            refreshBookedFiltered = newActions.length - toAdd.length;
             // P1: the refresh already carries the rep's task_id, but inherit
             // from ANY dropped card too — the rep may have been ungrouped
             // while a sibling in the same conversation held the task_id.
-            fresh.actions.push(...inheritSupersededTaskIds(newActions, dropped));
+            fresh.actions.push(...inheritSupersededTaskIds(toAdd, dropped));
             delete fresh.sourceErrors["llm:refresh"];
             refreshDropped = dropped.length;
           });
-          if (refreshCommitted && refreshDropped > 0) {
+          if (refreshCommitted && (refreshDropped > 0 || refreshBookedFiltered > 0)) {
             logActivity(
               "supersede",
-              `refresh superseded ${refreshDropped} stale suggested card(s), added ${newActions.length}`,
-              { phase: "refresh", dropped: refreshDropped, added: newActions.length },
+              `refresh superseded ${refreshDropped} stale suggested card(s), added ${newActions.length - refreshBookedFiltered}${refreshBookedFiltered > 0 ? `, ${refreshBookedFiltered} already-booked filtered` : ""}`,
+              { phase: "refresh", dropped: refreshDropped, added: newActions.length - refreshBookedFiltered, bookedFiltered: refreshBookedFiltered },
             );
           }
         }

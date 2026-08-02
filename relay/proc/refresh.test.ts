@@ -131,3 +131,29 @@ describe("refresh prompt: no silent no-op", () => {
     expect(req.system).toContain('{category:"resolved"}');
   });
 });
+
+describe("refresh prompt: clock anchor", () => {
+  // The un-anchored refresh pass resolved relative dates from the model's own
+  // stale calendar and produced events in 2023-2025; approving them booked 21
+  // bogus real events (deleted 2026-08-02). The anchor is the fix.
+  it("includes the CURRENT TIME line when now/nowLocal are given", () => {
+    const req = buildRefreshRequest({
+      card: {
+        id: "c1",
+        source_message_id: "wechat:x:1",
+        action_type: "task",
+        target: {},
+        reason: "r",
+        confidence: 0.5,
+        params: {},
+        status: "suggested",
+        created_at: "2026-07-01T00:00:00Z",
+      },
+      thread: "me: 明天下午3点见",
+      persona: null,
+      now: "2026-08-02T03:00:00.000Z",
+      nowLocal: "2026-08-02 11:00 (UTC+08:00)",
+    });
+    expect(req.userText).toContain("CURRENT TIME: 2026-08-02T03:00:00.000Z (UTC) = local 2026-08-02 11:00 (UTC+08:00)");
+  });
+});

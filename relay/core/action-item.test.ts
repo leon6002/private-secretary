@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   approveAction,
+  isCalendarAlreadyBooked,
   hasReceipt,
   InvalidActionTransition,
   markDone,
@@ -354,5 +355,29 @@ describe("requiresManualExecution", () => {
     expect(
       requiresManualExecution(item({ action_type: "calendar", params: {} })),
     ).toBe(false);
+  });
+});
+
+describe("isCalendarAlreadyBooked", () => {
+  const booked = item({
+    id: "done1",
+    action_type: "calendar",
+    status: "executed",
+    task_id: "t9",
+    params: { title: "Q3", start: "2026-08-02T15:00:00+08:00" },
+  });
+  it("matches an executed calendar by exact start", () => {
+    const fresh = item({ id: "f1", action_type: "calendar", params: { title: "Q3", start: "2026-08-02T15:00:00+08:00" } });
+    expect(isCalendarAlreadyBooked(fresh, [booked])).toBe(true);
+  });
+  it("matches an executed calendar by task_id", () => {
+    const fresh = item({ id: "f2", action_type: "calendar", task_id: "t9", params: { title: "Q3", start: "2026-08-03T15:00:00+08:00" } });
+    expect(isCalendarAlreadyBooked(fresh, [booked])).toBe(true);
+  });
+  it("does NOT match a different start, a non-executed calendar, or a non-calendar action", () => {
+    const other = item({ id: "f3", action_type: "calendar", params: { title: "Q3", start: "2026-08-04T15:00:00+08:00" } });
+    expect(isCalendarAlreadyBooked(other, [booked])).toBe(false);
+    expect(isCalendarAlreadyBooked(other, [item({ ...booked, status: "suggested" })])).toBe(false);
+    expect(isCalendarAlreadyBooked(item({ id: "f4", action_type: "task" }), [booked])).toBe(false);
   });
 });

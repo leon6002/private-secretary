@@ -299,7 +299,11 @@ export async function pollMailbox(
     // not originate an action item (mirrors the Slack selfId / WeChat `me:`
     // exclusion). Without this, removing the addressed-to-user trigger gate let
     // Leo's own replies become "track" tasks. The cursor still advances past it.
+    // Recorded as filtered ("gmail:self") — the bare `continue` made self-sent
+    // test mail vanish with zero trace (2026-08-02: 'why no draft from my
+    // email?' was undebuggable until code-reading).
     if (senderEmail(msg).toLowerCase() === mailboxEmail.toLowerCase()) {
+      filtered.push({ id: `gmail:${msg.id}`, reason: "gmail:self" });
       continue;
     }
     // Unread gate (decision 2026-06-20): the messageAdded history path can return

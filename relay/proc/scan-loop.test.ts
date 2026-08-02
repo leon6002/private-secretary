@@ -583,6 +583,47 @@ describe("runScanTick", () => {
     expect(cal!.context?.sender_handle).toBe("张工"); // same conversation
   });
 
+  it("refresh: a calendar action for an ALREADY-EXECUTED meeting is filtered (no double-book)", async () => {
+    // The 2026-08-02 incident: refresh kept re-emitting a booked meeting and
+    // each approval created another real event. Phase 5 now applies the same
+    // booked check phase 3 always had.
+    writeFileSync(statePath, JSON.stringify({
+      version: 2, marks: {}, outcomes: [], sourceErrors: {}, tasks: {},
+      actions: [
+        {
+          id: "done-cal", source_message_id: "wechat:m1", action_type: "calendar",
+          target: {}, reason: "booked", confidence: 0.9,
+          params: { title: "Q3 评审", start: "2026-06-24T09:30:00+08:00",
+            execution_receipt: { kind: "calendar_event", ref: "evt1", at: "t" } },
+          status: "executed", created_at: "2026-06-23T00:00:00Z",
+          context: { sender_handle: "张工" },
+        },
+        {
+          id: "m1", source_message_id: "wechat:m1", action_type: "reply",
+          target: { platform: "wechat", personaKey: null }, reason: "ask to schedule",
+          confidence: 0.5, params: {}, status: "suggested", created_at: "2026-06-23T00:00:00Z",
+          draft: "麻烦张工帮忙约一下", context: { sender_handle: "张工" },
+        },
+      ],
+    }));
+    const refresh = {
+      llm: async () => [{
+        action_type: "calendar" as const, reason: "thread re-mentions the meeting", confidence: 0.8,
+        params: { title: "Q3 评审", start: "2026-06-24T09:30:00+08:00", end: "2026-06-24T11:00:00+08:00" },
+        headline: "Q3 评审", summary: "已定", next_actions: [],
+      }],
+      resolvePersona: () => null,
+      fetchThread: async () => "me: 周三九点半见\n张工: 好",
+      now: () => "2026-06-23T12:00:00Z",
+    };
+    await runScanTick({ statePath, sources: [], refresh });
+    const saved = loadState(statePath);
+    expect(
+      saved.actions.filter((a) => a.action_type === "calendar" && a.status === "suggested"),
+    ).toHaveLength(0); // no duplicate card for the booked meeting
+    expect(saved.actions.find((a) => a.id === "done-cal")!.status).toBe("executed");
+  });
+
   it("Gmail: a real email NOT addressed to Leo still reaches drafting (LLM judges); noreply stays filtered", async () => {
     const slack = slackStub([], {});
     const gmail = gmailStub({ historyId: "1" }, ["GM1", "GM2"], {
