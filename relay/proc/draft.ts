@@ -231,6 +231,13 @@ export async function draftActions(
     let suggested: DraftedAction[];
     try {
       suggested = await deps.llm(req);
+      // DeepSeek drafting is FLAKY: the same batch can legitimately come back
+      // with cards on one call and {"actions":[]} on the next (measured; the
+      // raw-log exists because of it). An empty first answer gets ONE retry —
+      // the retry agrees it's empty, it's a real "nothing to do" and the
+      // sender is recorded empty; the retry disagrees, the cards were almost
+      // lost to a coin flip. Bounded: at most 2 calls per sender per tick.
+      if (suggested.length === 0) suggested = await deps.llm(req);
     } catch (e) {
       return { sender, actions: [], error: (e as Error).message ?? String(e), senderErrors: [], empty: false };
     }
@@ -279,17 +286,20 @@ export async function draftActions(
         if (fallback) baseParams.title = fallback;
       }
       // Assemble the full ActionItem shape the validator + queue expect.
+      // Optional fields pass through ONLY when they carry the right type —
+      // the model sometimes writes explicit nulls ("draft":null) for "none",
+      // which fails validation and silently kills an otherwise good card.
       const raw = {
         action_type: s.action_type,
         target,
         reason: s.reason,
         confidence: s.confidence,
         params: { ...baseParams, ...gmailParams },
-        ...(s.draft !== undefined ? { draft: s.draft } : {}),
-        ...(s.headline !== undefined ? { headline: s.headline } : {}),
-        ...(s.summary !== undefined ? { summary: s.summary } : {}),
-        ...(s.next_actions !== undefined ? { next_actions: s.next_actions } : {}),
-        ...(s.project_id !== undefined ? { project_id: s.project_id } : {}),
+        ...(typeof s.draft === "string" ? { draft: s.draft } : {}),
+        ...(typeof s.headline === "string" ? { headline: s.headline } : {}),
+        ...(typeof s.summary === "string" ? { summary: s.summary } : {}),
+        ...(Array.isArray(s.next_actions) ? { next_actions: s.next_actions } : {}),
+        ...(typeof s.project_id === "string" ? { project_id: s.project_id } : {}),
         status: "suggested" as const,
         source_message_id: latest.id,
         context: ctx,

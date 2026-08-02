@@ -185,3 +185,40 @@ describe("deepseekLlmCaller output budget", () => {
     expect((seen[0] as { maxTokens?: number }).maxTokens).toBe(8192);
   });
 });
+
+describe("parseDeepseekActions envelope recovery", () => {
+  // Real 2026-08-02 fixture: the model emitted a well-formed action object and
+  // then placed "project_id" OUTSIDE it, breaking the envelope — one stray key
+  // used to kill the whole draft (4 triggered messages, 0 cards).
+  it("recovers intact action objects from a broken envelope", () => {
+    const broken =
+      '{"actions":[{"action_type":"calendar","target":{"personaKey":null,"platform":"slack"},' +
+      '"reason":"meeting proposed","confidence":0.8,' +
+      '"params":{"title":"迪士尼考察（下周二）","start":"2026-08-04T09:00:00+08:00","end":"2026-08-04T11:00:00+08:00"},' +
+      '"draft":null,"headline":"迪士尼考察安排","summary":"对方提议下周二。","next_actions":["确认时间"]},' +
+      '"project_id":"MISC"}]}';
+    const actions = parseDeepseekActions(broken);
+    expect(actions).toHaveLength(1);
+    expect(actions[0]!.action_type).toBe("calendar");
+    expect(actions[0]!.params?.title).toBe("迪士尼考察（下周二）");
+  });
+
+  it("skips objects without action_type during recovery", () => {
+    const actions = parseDeepseekActions(
+      '{"actions":[{"action_type":"task","reason":"r","confidence":0.7},{"note":"x"},oops]}',
+    );
+    expect(actions.map((a) => a.action_type)).toEqual(["task"]);
+  });
+
+  it("stops at the actions array end — a trailing action-shaped tail is not scooped", () => {
+    const actions = parseDeepseekActions(
+      '{"actions":[{"action_type":"task","reason":"r","confidence":0.7}],"meta":{"action_type":"relay"}',
+    );
+    expect(actions.map((a) => a.action_type)).toEqual(["task"]);
+  });
+
+  it("still returns [] when nothing recoverable exists", () => {
+    expect(parseDeepseekActions('{"actions": []}')).toEqual([]);
+    expect(parseDeepseekActions("no json here")).toEqual([]);
+  });
+});

@@ -393,3 +393,73 @@ describe("buildPersonaResolver", () => {
     expect(resolve("michael dobosz")?.key).toBe("michael-dobosz"); // case-insensitive
   });
 });
+
+describe("draftActions null-tolerance", () => {
+  // The model writes explicit nulls for "none" ("draft":null on a calendar
+  // action — the 2026-08-02 迪士尼 card). Passing null through used to fail
+  // validation and silently kill the card; null now means "absent".
+  it("coerces null optional fields to absent instead of failing validation", async () => {
+    const llm: LlmCaller = async () => [
+      {
+        action_type: "calendar",
+        reason: "meeting proposed",
+        confidence: 0.8,
+        params: { title: "迪士尼考察", start: "2026-08-04T09:00:00+08:00", end: "2026-08-04T11:00:00+08:00" },
+        draft: null,
+        headline: "迪士尼考察安排",
+        summary: null,
+        next_actions: null,
+        project_id: null,
+      } as unknown as DraftedAction,
+    ];
+    const r = await draftActions([msg()], {
+      llm,
+      resolvePersona: () => null,
+      knownPersonaKeys: [],
+      now: () => "2026-06-14T12:00:00Z",
+    });
+    expect(r.actions).toHaveLength(1);
+    const a = r.actions[0]!;
+    expect(a.action_type).toBe("calendar");
+    expect(a.draft).toBeUndefined();
+    expect(a.headline).toBe("迪士尼考察安排");
+  });
+});
+
+describe("draftActions empty-retry (flaky LLM)", () => {
+  it("an empty first answer gets exactly one retry; cards on the retry are kept", async () => {
+    let calls = 0;
+    const llm: LlmCaller = async () => {
+      calls++;
+      if (calls === 1) return [];
+      return [{ action_type: "task", reason: "track", confidence: 0.8, params: { title: "t" }, headline: "x" } as DraftedAction];
+    };
+    const r = await draftActions([msg()], {
+      llm, resolvePersona: () => null, knownPersonaKeys: [], now: () => "2026-06-14T12:00:00Z",
+    });
+    expect(calls).toBe(2);
+    expect(r.actions).toHaveLength(1);
+    expect(r.empty).toEqual([]);
+  });
+
+  it("two empties in a row = genuinely empty (recorded once, exactly 2 calls)", async () => {
+    let calls = 0;
+    const llm: LlmCaller = async () => { calls++; return []; };
+    const r = await draftActions([msg()], {
+      llm, resolvePersona: () => null, knownPersonaKeys: [], now: () => "2026-06-14T12:00:00Z",
+    });
+    expect(calls).toBe(2);
+    expect(r.actions).toEqual([]);
+    expect(r.empty).toEqual(["UMICHAEL"]);
+  });
+
+  it("a non-empty first answer does NOT retry", async () => {
+    let calls = 0;
+    const llm: LlmCaller = async () => { calls++; return [{ action_type: "task", reason: "t", confidence: 0.8, params: { title: "t" }, headline: "x" } as DraftedAction]; };
+    const r = await draftActions([msg()], {
+      llm, resolvePersona: () => null, knownPersonaKeys: [], now: () => "2026-06-14T12:00:00Z",
+    });
+    expect(calls).toBe(1);
+    expect(r.actions).toHaveLength(1);
+  });
+});

@@ -44,7 +44,57 @@ function extractJsonObject(text: string): unknown {
 export function parseDeepseekActions(content: string): DraftedAction[] {
   const obj = extractJsonObject(content);
   const actions = (obj as { actions?: unknown } | null)?.actions;
-  return Array.isArray(actions) ? (actions as DraftedAction[]) : [];
+  if (Array.isArray(actions)) return actions as DraftedAction[];
+  // Envelope broken but the action objects themselves may be intact — the
+  // model's known failure is a key placed OUTSIDE the object boundary
+  // (2026-08-02: `[{...action...}, "project_id":"MISC"}]}`, one stray key
+  // killed the whole draft). Recover balanced objects instead of skipping.
+  return extractActionObjects(content);
+}
+
+// Balanced-brace scan after the "actions" key: JSON.parse each intact {...}
+// that carries an action_type, skip everything else. Stops at the array's
+// closing bracket so trailing fragments outside the array are never scooped.
+function extractActionObjects(content: string): DraftedAction[] {
+  const out: DraftedAction[] = [];
+  const anchor = content.indexOf('"actions"');
+  if (anchor < 0) return out;
+  let i = content.indexOf("{", anchor);
+  while (i >= 0) {
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    let end = -1;
+    for (let j = i; j < content.length; j++) {
+      const ch = content[j]!;
+      if (esc) { esc = false; continue; }
+      if (ch === "\\") { esc = true; continue; }
+      if (ch === '"') { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) { end = j; break; }
+      } else if (ch === "]" && depth === 0) break; // end of the actions array
+    }
+    if (end < 0) break;
+    try {
+      const o = JSON.parse(content.slice(i, end + 1)) as unknown;
+      if (o && typeof o === "object" && typeof (o as { action_type?: unknown }).action_type === "string") {
+        out.push(o as DraftedAction);
+      }
+    } catch {
+      // broken object — keep scanning the rest of the array
+    }
+    // Stop at the actions array's closing bracket BETWEEN objects — trailing
+    // fragments after it are never scooped (a stray {"action_type":...} in
+    // some following tail must not leak into the draft).
+    const nextBrace = content.indexOf("{", end + 1);
+    const nextClose = content.indexOf("]", end + 1);
+    if (nextClose >= 0 && (nextBrace < 0 || nextClose < nextBrace)) break;
+    i = nextBrace;
+  }
+  return out;
 }
 
 // Parse the model's content as a single JSON object for the generic JSON

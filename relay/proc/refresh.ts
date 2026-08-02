@@ -133,10 +133,12 @@ export async function refreshOpenTasks(
         reason: s.reason,
         confidence: s.confidence,
         params: s.params ?? {},
-        ...(s.draft !== undefined ? { draft: s.draft } : {}),
-        ...(s.headline !== undefined ? { headline: s.headline } : {}),
-        ...(s.summary !== undefined ? { summary: s.summary } : {}),
-        ...(s.next_actions !== undefined ? { next_actions: s.next_actions } : {}),
+        // Same null-tolerance as draft.ts: the model writes explicit nulls
+        // for "none", which would fail validation and kill the card.
+        ...(typeof s.draft === "string" ? { draft: s.draft } : {}),
+        ...(typeof s.headline === "string" ? { headline: s.headline } : {}),
+        ...(typeof s.summary === "string" ? { summary: s.summary } : {}),
+        ...(Array.isArray(s.next_actions) ? { next_actions: s.next_actions } : {}),
         // Prefer the LLM's fresh project link; fall back to the rep card's.
         ...(s.project_id ?? rep.project_id ? { project_id: s.project_id ?? rep.project_id } : {}),
         status: "suggested" as const,
