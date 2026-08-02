@@ -35,6 +35,7 @@ import {
   Circle,
   CircleCheck,
   CircleHelp,
+  ExternalLink,
   FilePen,
   Folder,
   Forward,
@@ -785,11 +786,40 @@ export default function QueueScreen() {
         </span>
       );
     } else if (approved) {
+      // awaitingManual: a Gmail draft or a WeChat clipboard paste. The row
+      // links to Gmail drafts when applicable and ALWAYS offers Mark sent —
+      // otherwise the user could never finish the card from the task view.
+      const gmail = a.target?.platform === "gmail";
       control = (
-        <span className="text-label-xs text-emerald-600 flex items-center gap-1">
-          <MailOpen size={14} strokeWidth={1.75} />
-          Awaiting your send
-        </span>
+        <div className="flex items-center gap-2">
+          {gmail ? (
+            <a
+              href="https://mail.google.com/mail/u/0/#drafts"
+              target="_blank"
+              rel="noreferrer"
+              title="Open Gmail drafts"
+              className="text-label-xs text-emerald-600 flex items-center gap-1 hover:underline"
+            >
+              <MailOpen size={14} strokeWidth={1.75} />
+              Awaiting your send
+            </a>
+          ) : (
+            <span className="text-label-xs text-emerald-600 flex items-center gap-1">
+              <MailOpen size={14} strokeWidth={1.75} />
+              Awaiting your send
+            </span>
+          )}
+          <button
+            type="button"
+            className="text-label-xs bg-primary text-white px-2 py-0.5 rounded hover:bg-blue-700"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleAct("mark-sent", a.id);
+            }}
+          >
+            Mark sent
+          </button>
+        </div>
       );
     } else if (ex.assignee === "me") {
       control = (
@@ -1317,9 +1347,15 @@ export default function QueueScreen() {
       actions = (
         <div className="px-6 py-4 bg-surface-variant border-y border-outline flex items-center gap-4">
           {isGmail ? (
-            <span className="text-body-medium text-on-surface-variant flex-1">
-              Draft created — open Gmail to send.
-            </span>
+            <a
+              href="https://mail.google.com/mail/u/0/#drafts"
+              target="_blank"
+              rel="noreferrer"
+              className="text-body-medium text-primary hover:underline flex-1 inline-flex items-center gap-1.5"
+            >
+              Draft created — open Gmail to send
+              <ExternalLink size={14} strokeWidth={1.75} />
+            </a>
           ) : (
             <button type="button" className={cn(secondaryCls, "flex-1")} onClick={() => handleAct("copy", a.id)}>
               Copy
