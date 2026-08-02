@@ -83,6 +83,7 @@ import {
   TOKEN_KEYCHAIN_SERVICE,
 } from "../io/google-oauth.js";
 import type { ExecuteResult } from "../proc/execute.js";
+import { CalendarClient, type CalendarEvent } from "../io/calendar-api.js";
 
 // The executor the cockpit calls on approve. The server injects the real
 // one (Keychain-wired Slack/Gmail/Calendar); tests inject a stub. It is
@@ -93,6 +94,13 @@ export type CockpitExecutor = (
   persistClaim: (claimed: ActionItem) => Promise<void>,
 ) => Promise<ExecuteResult>;
 
+// The slice of CalendarClient the Calendar screen's read feed needs —
+// structural, so the real client satisfies it and tests stub it.
+export type CalendarEventsLister = (opts: {
+  timeMin: string;
+  timeMax: string;
+}) => Promise<CalendarEvent[]>;
+
 export interface CockpitApiOptions {
   statePath: string;
   personaDir: string;
@@ -101,9 +109,27 @@ export interface CockpitApiOptions {
   projectsDir?: string;
   executor: CockpitExecutor;
   now?: () => string;
+  // Calendar screen: builds the events lister for a mailbox. Default wires the
+  // real Keychain-backed CalendarClient; tests inject a stub so no OAuth or
+  // network is touched.
+  calendarLister?: (email: string) => CalendarEventsLister;
 }
 
 // ─── read model ──────────────────────────────────────────────────────
+
+// One Google Calendar event as the Calendar screen renders it (see
+// getCalendarEvents). start/end are RFC 3339 for timed events, YYYY-MM-DD
+// for all-day ones (allDay distinguishes).
+export interface CockpitCalendarEvent {
+  id: string;
+  summary: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+  location?: string;
+  attendees: string[]; // displayName, else email
+  htmlLink?: string;
+}
 
 export interface CockpitState {
   // Task-grouped clusters of suggested + in-flight items (oldest-first,
@@ -369,6 +395,50 @@ export class CockpitApi {
     if (kind) recs = recs.filter((r) => r.kind === kind);
     const capped = Math.min(Math.max(Math.trunc(tail) || 100, 1), 500);
     return { records: recs.slice(-capped) };
+  }
+
+  // ─── calendar (Calendar screen) ─────────────────────────────────
+  // Read-only week feed: the real Google Calendar events of the identity's
+  // calendarMailbox, reduced to the display shape the week grid needs. This
+  // is a READ path only — the cockpit never writes to Calendar from here
+  // (booking stays behind the approve flow).
+  //
+  // Failures PROPAGATE (server → 500, screen → error strip). Never swallow:
+  // a silently-empty calendar reads as "nothing scheduled", the worst lie
+  // this screen could tell. Cancelled events are filtered out — they are
+  // tombstones, not schedule.
+
+  async getCalendarEvents({
+    timeMin,
+    timeMax,
+  }: {
+    timeMin: string;
+    timeMax: string;
+  }): Promise<{ events: CockpitCalendarEvent[] }> {
+    const mailbox = loadIdentity().calendarMailbox;
+    if (!mailbox) {
+      throw new CockpitBadRequestError("no calendar mailbox configured (identity.calendarMailbox)");
+    }
+    const list =
+      this.opts.calendarLister?.(mailbox) ??
+      ((o: { timeMin: string; timeMax: string }) =>
+        new CalendarClient({ email: mailbox }).listAllEvents(o));
+    const raw = await list({ timeMin, timeMax });
+    const events: CockpitCalendarEvent[] = raw
+      .filter((e) => e.status !== "cancelled")
+      .map((e) => ({
+        id: e.id ?? "",
+        summary: e.summary ?? "(no title)",
+        // Timed events carry RFC 3339 dateTime; all-day carry a YYYY-MM-DD
+        // date. The grid branches on allDay, so keep both verbatim.
+        start: e.start.dateTime ?? e.start.date ?? "",
+        end: e.end.dateTime ?? e.end.date ?? "",
+        allDay: !e.start.dateTime,
+        ...(e.location ? { location: e.location } : {}),
+        attendees: (e.attendees ?? []).map((a) => a.displayName ?? a.email),
+        ...(e.htmlLink ? { htmlLink: e.htmlLink } : {}),
+      }));
+    return { events };
   }
 
   // ─── settings (Settings screen, S3) ───────────────────────────────

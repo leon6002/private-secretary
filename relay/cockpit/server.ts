@@ -11,6 +11,8 @@
 //   GET  /api/state              → CockpitState (queue, counts, gate, errors)
 //   GET  /api/personas           → persona[] for the People screen
 //   GET  /api/activity?tail=&kind= → activity-log tail (F3, read-only)
+//   GET  /api/calendar/events?start=&end= → week of Google Calendar events
+//                                  (read-only; Calendar screen)
 //   GET  /api/settings             → llm config + per-service key status (masked)
 //   POST /api/settings/llm         → {mode, draftModel} → config file (daemon restart)
 //   POST /api/settings/keys        → {service, value} → macOS Keychain (value never logged)
@@ -255,6 +257,20 @@ export function createCockpitServer(opts: CockpitServerOptions): {
     if (path === "/api/flush-auto" && method === "POST") {
       const n = await api.flushAutoExecute();
       sendJson(res, 200, { autoHandled: n });
+      return;
+    }
+
+    // Calendar screen's read-only week feed. start/end must both parse as
+    // dates; Calendar API failures surface as 500 with the message so the
+    // screen can show its error strip (expired token etc.).
+    if (path === "/api/calendar/events" && method === "GET") {
+      const start = url.searchParams.get("start");
+      const end = url.searchParams.get("end");
+      if (!start || !end || Number.isNaN(Date.parse(start)) || Number.isNaN(Date.parse(end))) {
+        sendJson(res, 400, { error: "start and end (ISO dates) required" });
+        return;
+      }
+      sendJson(res, 200, await api.getCalendarEvents({ timeMin: start, timeMax: end }));
       return;
     }
 

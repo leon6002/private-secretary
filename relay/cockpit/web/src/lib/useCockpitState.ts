@@ -53,6 +53,10 @@ export interface QueueAction {
   draft?: string | null;
   params?: {
     title?: string;
+    // calendar cards: RFC 3339 start/end of the proposed event (the Calendar
+    // screen overlays these on the real Google Calendar week).
+    start?: string;
+    end?: string;
     _edited?: boolean;
     execution_receipt?: { kind: string; at?: string };
   };

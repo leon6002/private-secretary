@@ -15,7 +15,7 @@
 // registering no listener is the React equivalent.
 import { useEffect, useRef, useState } from "react";
 import { HashRouter, NavLink, Route, Routes, useNavigate } from "react-router-dom";
-import { Calendar, CircleCheck, Users, Network, Settings } from "lucide-react";
+import { Calendar, CalendarDays, CircleCheck, Users, Network, Settings } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { apiPost } from "./lib/api";
 import { cn } from "./lib/cn";
@@ -25,6 +25,7 @@ import QueueScreen from "./screens/QueueScreen";
 import ProjectsScreen from "./screens/ProjectsScreen";
 import PeopleScreen from "./screens/PeopleScreen";
 import ConnectionsScreen from "./screens/ConnectionsScreen";
+import CalendarScreen from "./screens/CalendarScreen";
 import SettingsScreen from "./screens/SettingsScreen";
 
 interface NavItem {
@@ -40,6 +41,9 @@ const NAV: NavItem[] = [
   // lucide has no "hub" glyph; Network is the closest match to the legacy
   // Material Symbols "hub" icon.
   { to: "/connections", label: "Connections", icon: Network },
+  // Queue took the plain Calendar glyph first; CalendarDays distinguishes
+  // the week view at a glance.
+  { to: "/calendar", label: "Calendar", icon: CalendarDays },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -82,7 +86,7 @@ function HelpSheet({ onClose }: { onClose: () => void }) {
     ["a", "approve & send"],
     ["e", "edit draft"],
     ["s", "skip"],
-    ["g then q / t / p / c / s", "Queue / Projects / People / Connections / Settings"],
+    ["g then q / t / p / c / a / s", "Queue / Projects / People / Connections / Calendar / Settings"],
     ["?", "this sheet"],
   ];
   return (
@@ -144,6 +148,8 @@ function Shell() {
         else if (k === "t") navigate("/projects");
         else if (k === "p") navigate("/people");
         else if (k === "c") navigate("/connections");
+        // "a" = cAlendar — "c" was already Connections.
+        else if (k === "a") navigate("/calendar");
         else if (k === "s") navigate("/settings");
         return;
       }
@@ -186,6 +192,7 @@ function Shell() {
             <Route path="/projects" element={<ProjectsScreen />} />
             <Route path="/people" element={<PeopleScreen />} />
             <Route path="/connections" element={<ConnectionsScreen />} />
+            <Route path="/calendar" element={<CalendarScreen />} />
             <Route path="/settings" element={<SettingsScreen />} />
           </Routes>
         </main>

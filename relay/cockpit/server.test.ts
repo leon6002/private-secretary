@@ -8,6 +8,7 @@ import { markExecuted, withReceipt, type ActionItem } from "../core/action-item.
 import { loadState } from "../io/state.js";
 import { appendActivity, activityPathFor } from "../io/activity-log.js";
 import { __setRunner } from "../io/keychain.js";
+import { _resetIdentity, _setIdentityForTest } from "../io/identity.js";
 
 let dir: string;
 let statePath: string;
@@ -307,5 +308,107 @@ describe("settings routes", () => {
     expect(r.status).toBe(400);
     const missing = await post("/api/settings/keys", { service: "anthropic" });
     expect(missing.status).toBe(400);
+  });
+});
+
+// Calendar events route (Calendar screen). The lister is injected (no OAuth,
+// no network) and the identity is pinned so the mailbox lookup never depends
+// on the host's config. Failures must surface, not be swallowed.
+describe("calendar events route", () => {
+  let calCockpit: RunningCockpit;
+
+  async function boot(lister: (email: string) => (opts: { timeMin: string; timeMax: string }) => Promise<unknown[]>) {
+    _setIdentityForTest({ primaryEmail: "me@work.com", calendarMailbox: "me@work.com" });
+    calCockpit = await startCockpit({
+      statePath,
+      personaDir,
+      executor: sendingExecutor,
+      port: 0,
+      webDistDir,
+      calendarLister: lister as never,
+    });
+  }
+  afterEach(async () => {
+    _resetIdentity();
+    await calCockpit.close();
+  });
+
+  it("GET /api/calendar/events → 200 with the reduced event shape", async () => {
+    let seenOpts: { timeMin: string; timeMax: string } | null = null;
+    await boot(() => async (opts) => {
+      seenOpts = opts;
+      return [
+        {
+          id: "E1",
+          status: "confirmed",
+          summary: "Sync with Michael",
+          location: "Meet",
+          start: { dateTime: "2026-08-03T15:00:00Z" },
+          end: { dateTime: "2026-08-03T16:00:00Z" },
+          attendees: [{ email: "m@x.com", displayName: "Michael" }, { email: "k@x.com" }],
+          htmlLink: "https://calendar.google.com/event?eid=E1",
+        },
+        {
+          id: "E2",
+          status: "confirmed",
+          summary: "Company holiday",
+          start: { date: "2026-08-05" },
+          end: { date: "2026-08-06" },
+        },
+        {
+          id: "E3",
+          status: "cancelled", // tombstone — must not ship to the grid
+          summary: "old",
+          start: { dateTime: "2026-08-04T10:00:00Z" },
+          end: { dateTime: "2026-08-04T11:00:00Z" },
+        },
+      ];
+    });
+    const r = await fetch(
+      `${calCockpit.url}/api/calendar/events?start=2026-08-03T00:00:00Z&end=2026-08-10T00:00:00Z`,
+    );
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as { events: Array<Record<string, unknown>> };
+    expect(seenOpts).toEqual({ timeMin: "2026-08-03T00:00:00Z", timeMax: "2026-08-10T00:00:00Z" });
+    expect(body.events).toEqual([
+      {
+        id: "E1",
+        summary: "Sync with Michael",
+        start: "2026-08-03T15:00:00Z",
+        end: "2026-08-03T16:00:00Z",
+        allDay: false,
+        location: "Meet",
+        attendees: ["Michael", "k@x.com"],
+        htmlLink: "https://calendar.google.com/event?eid=E1",
+      },
+      {
+        id: "E2",
+        summary: "Company holiday",
+        start: "2026-08-05",
+        end: "2026-08-06",
+        allDay: true,
+        attendees: [],
+      },
+    ]);
+  });
+
+  it("missing or unparsable start/end → 400", async () => {
+    await boot(() => async () => []);
+    expect((await fetch(`${calCockpit.url}/api/calendar/events`)).status).toBe(400);
+    expect((await fetch(`${calCockpit.url}/api/calendar/events?start=2026-08-03`)).status).toBe(400);
+    expect(
+      (await fetch(`${calCockpit.url}/api/calendar/events?start=nope&end=2026-08-10`)).status,
+    ).toBe(400);
+  });
+
+  it("lister failure (e.g. expired OAuth) → 500 with the message, never a fake empty week", async () => {
+    await boot(() => async () => {
+      throw new Error("OAuth refresh failed for me@work.com: HTTP 400");
+    });
+    const r = await fetch(
+      `${calCockpit.url}/api/calendar/events?start=2026-08-03T00:00:00Z&end=2026-08-10T00:00:00Z`,
+    );
+    expect(r.status).toBe(500);
+    expect(((await r.json()) as { error: string }).error).toContain("OAuth refresh failed");
   });
 });
