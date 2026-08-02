@@ -65,6 +65,27 @@ message is never understood from text alone (the GST25A12 lesson).
   Windows PowerShell 5.1 pipe — PS transcodes stdin to the OEM codepage and mangles
   non-ASCII (中文, em dashes, →) into `?`. The CLI strips a UTF-8 BOM itself.
 
+## Git commit convention
+
+Every change must be committed with a message in this format:
+
+```text
+<type>(<scope>): <short summary>
+
+<detailed explanation — what changed, why, and any trade-offs>
+
+Signed-off-by: <git user.name> <git user.email>
+```
+
+**Never** add Claude co-authored lines (e.g. `Co-authored-by: Claude`).
+
+**Types:** `feat` (new feature/demo) · `fix` (bug fix) · `refactor` (no behaviour change) ·
+`docs` (documentation) · `build` (build system/env) · `chore` (tooling, .gitignore) ·
+`test` (tests).
+
+**Scope** = the affected area, e.g. `cockpit`, `relay/core`, `io`, `scan`, `llm`, `proc`,
+`web`, `cli`, `docs`. The sign-off always uses the repo's actual git identity.
+
 ## Hard constraints
 - An Action Item ORIGINATES only from a person-to-person message (Slack/Gmail/WeChat).
   Jira/Notion are analysis-time context lookups and (future) executor targets — never
