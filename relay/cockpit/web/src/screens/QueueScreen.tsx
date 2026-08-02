@@ -25,6 +25,7 @@
 // copy rule; the skip reason/field KEYS are API values and unchanged.
 import { useContext, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { motion } from "motion/react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -36,6 +37,7 @@ import {
   CircleHelp,
   FilePen,
   Folder,
+  Forward,
   Hash,
   Inbox,
   Info,
@@ -44,13 +46,16 @@ import {
   MailOpen,
   MessageSquare,
   RefreshCw,
+  Repeat,
+  Reply,
   Send,
   Shapes,
+  TriangleAlert,
   User,
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { apiPost } from "../lib/api";
+import { apiGet, apiPost } from "../lib/api";
 import { Avatar } from "../lib/avatar";
 import { cn } from "../lib/cn";
 import { isChinese } from "../lib/text";
@@ -101,6 +106,97 @@ function liveClusters(clusters: TaskCluster[]): TaskCluster[] {
   return clusters.filter((c) => c.actions.some((a) => a.status === "suggested" || a.status === "approved"));
 }
 
+// A calendar card's proposed time + place, e.g. "8/5 15:00–16:00 · Acme HQ".
+// Blank when params carry no parseable start — never guess a time.
+function calendarTimeLine(a: QueueAction): string {
+  const p = a.params;
+  const loc = p?.location ?? "";
+  if (typeof p?.start !== "string") return loc ? `· ${loc}` : "";
+  const s = new Date(p.start);
+  if (isNaN(s.getTime())) return loc ? `· ${loc}` : "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const startStr = `${pad(s.getHours())}:${pad(s.getMinutes())}`;
+  let range = `${s.getMonth() + 1}/${s.getDate()} ${startStr}`;
+  if (typeof p?.end === "string") {
+    const e = new Date(p.end);
+    if (!isNaN(e.getTime())) {
+      const endStr = `${pad(e.getHours())}:${pad(e.getMinutes())}`;
+      range += e.toDateString() === s.toDateString() ? `–${endStr}` : `–${e.getMonth() + 1}/${e.getDate()} ${endStr}`;
+    }
+  }
+  return loc ? `${range} · ${loc}` : range;
+}
+
+// Conflict pre-check result for one calendar card (GET
+// /api/actions/:id/calendar-conflicts → {conflicts: Conflict[]}). The API
+// returns full Conflicts (event + window); the badge only reads event.summary.
+interface CalendarConflict {
+  event: { summary?: string; start?: { dateTime?: string; date?: string } };
+}
+type ConflictState = { status: "loading" | "ok" | "error"; conflicts?: CalendarConflict[] };
+
+// The mark-done check that draws itself: circle, then the checkmark (stroke-
+// draw via motion.path). Mounts when a task flips to executed, so the draw
+// plays exactly on the done click's refresh.
+function CheckPop({ size = 20 }: { size?: number }) {
+  return (
+    <motion.svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      initial={{ scale: 0.4, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={{ type: "spring", stiffness: 520, damping: 24 }}
+      className="shrink-0"
+      aria-hidden="true"
+    >
+      <motion.circle
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="2"
+        initial={{ pathLength: 0 }}
+        animate={{ pathLength: 1 }}
+        transition={{ duration: 0.35, ease: "easeOut" }}
+      />
+      <motion.path
+        d="m8.5 12.5 2.4 2.4 4.6-5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        initial={{ pathLength: 0 }}
+        animate={{ pathLength: 1 }}
+        transition={{ duration: 0.3, ease: "easeOut", delay: 0.22 }}
+      />
+    </motion.svg>
+  );
+}
+
+// The calendar row's conflict badge. Loading is explicit so the user knows
+// the check is in flight; error shows NOTHING (misconfigured/offline calendar
+// must not read as "clear").
+function conflictBadge(c: ConflictState | undefined) {
+  if (!c) return null;
+  if (c.status === "loading") return <span className="text-on-surface-variant">Checking…</span>;
+  if (c.status === "error") return null;
+  if (!c.conflicts || c.conflicts.length === 0) {
+    return (
+      <span className="text-emerald-600 inline-flex items-center gap-1">
+        <Check size={12} strokeWidth={2} /> No conflict
+      </span>
+    );
+  }
+  const names = c.conflicts.map((x) => x.event?.summary || "another event").join(", ");
+  return (
+    <span className="text-amber-600 inline-flex items-center gap-1" title={`Overlaps existing: ${names}`}>
+      <TriangleAlert size={12} strokeWidth={2} /> Conflicts: {names}
+    </span>
+  );
+}
+
 const TIERS = [
   { tier: "A", label: "A · Do first", dot: "bg-red-500" },
   { tier: "B", label: "B · Today", dot: "bg-amber-500" },
@@ -117,6 +213,24 @@ function execLabel(a: QueueAction): { assignee: "ai" | "me"; label: string | nul
       : { assignee: "ai", label: "Approve & Send", icon: Send };
   }
   return { assignee: "me", label: null, icon: User }; // task / ignore → Me reminder
+}
+
+// The row glyph for a suggested NON-task card (calendar/reply/relay/forward):
+// a muted action-type icon in place of the mark-done circle, which those types
+// don't use (they act via their control button, not the circle).
+function actionTypeIcon(a: QueueAction): LucideIcon {
+  switch (a.action_type) {
+    case "calendar":
+      return Calendar;
+    case "reply":
+      return Reply;
+    case "relay":
+      return Repeat;
+    case "forward":
+      return Forward;
+    default:
+      return Circle;
+  }
 }
 
 // The detail footer's own targeting: approve/edit → readyCard (footer
@@ -221,11 +335,57 @@ export default function QueueScreen() {
   const [removingKey, setRemovingKey] = useState<string | null>(null);
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [dropTier, setDropTier] = useState<string | null>(null);
+  // Calendar conflict pre-check results, keyed by action id (see the effect).
+  const [conflictState, setConflictState] = useState<Record<string, ConflictState>>({});
+  // Actions the user just marked done: render the check-draw animation locally
+  // and delay the refresh so the card disappears AFTER the animation, not before.
+  const [doneAnim, setDoneAnim] = useState<Set<string>>(new Set());
+  // Calendar re-time editor: which card's editor is open + its instruction text.
+  const [reTimeFor, setReTimeFor] = useState<string | null>(null);
+  const [reTimeText, setReTimeText] = useState("");
+  const [reTimeBusy, setReTimeBusy] = useState(false);
+  // Bumped after a re-time so the conflict pre-check re-fetches for the new time.
+  const [conflictRefreshToken, setConflictRefreshToken] = useState(0);
   const draftRef = useRef<HTMLTextAreaElement>(null);
   const cardRefs = useRef(new Map<string, HTMLElement>());
 
   const allClusters = state?.clusters ?? [];
   const clusters = liveClusters(allClusters);
+
+  // The selected task's calendar cards → their ids, as a stable key for the
+  // conflict pre-check effect (re-fetch only when the selected task changes).
+  const selCluster = selectedCluster();
+  const calendarActionIds = selCluster
+    ? selCluster.actions.filter((a) => a.action_type === "calendar").map((a) => a.id)
+    : [];
+  const calendarIdsKey = calendarActionIds.join(",");
+
+  // Read-only conflict pre-check for the selected task's calendar cards (GET
+  // /api/actions/:id/calendar-conflicts — one Google Calendar read per card,
+  // only when the selected task changes, never on the 15s poll).
+  useEffect(() => {
+    if (!calendarActionIds.length) return;
+    let cancelled = false;
+    for (const id of calendarActionIds) {
+      setConflictState((prev) => ({ ...prev, [id]: { status: "loading" } }));
+      apiGet<{ conflicts: CalendarConflict[] }>(
+        `/api/actions/${encodeURIComponent(id)}/calendar-conflicts`,
+      ).then(
+        (res) => {
+          if (cancelled) return;
+          setConflictState((prev) => ({ ...prev, [id]: { status: "ok", conflicts: res.conflicts } }));
+        },
+        () => {
+          if (cancelled) return;
+          setConflictState((prev) => ({ ...prev, [id]: { status: "error" } }));
+        },
+      );
+    }
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calendarIdsKey, conflictRefreshToken]);
 
   // The Queue's edit mode pauses the shell's 15s poll (legacy App.editing →
   // pollRefresh guard); clear it on unmount so other screens never inherit it.
@@ -354,6 +514,27 @@ export default function QueueScreen() {
     void doAction(act, arg, id);
   }
 
+  // Calendar re-time: send the natural-language instruction to the backend's
+  // AI re-time endpoint, then refresh the card + re-fetch its conflicts.
+  async function submitReTime(id: string) {
+    if (reTimeBusy) return;
+    const instruction = reTimeText.trim();
+    if (!instruction) return;
+    setReTimeBusy(true);
+    try {
+      await apiPost(`/api/actions/${encodeURIComponent(id)}/re-time`, { instruction });
+      setReTimeFor(null);
+      setReTimeText("");
+      setConflictRefreshToken((t) => t + 1);
+      await refresh();
+      toast("Time updated");
+    } catch (e) {
+      toast(errMsg(e), true);
+    } finally {
+      setReTimeBusy(false);
+    }
+  }
+
   async function doAction(act: string, arg: string | undefined, id: string) {
     try {
       if (act === "approve") {
@@ -420,7 +601,15 @@ export default function QueueScreen() {
         await apiPost(`/api/actions/${encodeURIComponent(id)}/done`, {});
         setSelectedId(null);
         setEditCardId(null);
+        // Let the check-draw animation play before the refresh removes the
+        // card from the live list — otherwise it vanishes mid-draw.
+        await new Promise((r) => setTimeout(r, 800));
         await refresh();
+        setDoneAnim((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
         toast("Marked done");
       } else if (act === "copy") {
         const a = allLiveActions(allClusters).find(({ action }) => action.id === id)?.action;
@@ -470,6 +659,8 @@ export default function QueueScreen() {
     const selected = key === selectedTaskId && !editCardId;
     const title = c.title || (c.actions[0] && (c.actions[0].headline || c.actions[0].reason)) || "Task";
     const why = c.plan?.why || "";
+    const calAction = c.actions.find((a) => a.action_type === "calendar");
+    const calLine = calAction ? calendarTimeLine(calAction) : "";
     const proj = c.actions.find((a) => a.project_id && a.project_id !== "MISC")?.project_id;
     // Status tag from the members: needs-info > awaiting > ready > brief.
     const anyNeeds = c.actions.some((a) => a.status === "suggested" && a.missing_info && a.missing_info.length);
@@ -515,21 +706,26 @@ export default function QueueScreen() {
           removingKey === key && "removing",
         )}
       >
-        <div className="flex justify-between items-start gap-2 mb-1.5">
-          {proj ? (
-            <span className="text-[11px] font-mono text-on-surface-variant bg-surface-variant px-2 py-0.5 rounded">
-              {proj}
-            </span>
-          ) : (
-            <span />
-          )}
-          <span className={cn("text-label-xs uppercase tracking-wide px-2 py-0.5 rounded flex-shrink-0", tag.cls)}>
+        <div className="flex items-start justify-between gap-2 mb-1.5">
+          <div className="flex items-center gap-2 min-w-0">
+            {proj && (
+              <span className="text-[11px] font-mono text-on-surface-variant bg-surface-variant px-2 py-0.5 rounded flex-shrink-0">
+                {proj}
+              </span>
+            )}
+            <h3
+              className={cn(
+                "text-body-medium text-on-surface font-medium truncate",
+                isChinese(title) && "font-chinese",
+              )}
+            >
+              {title}
+            </h3>
+          </div>
+          <span className={cn("text-[10px] uppercase tracking-wide px-1.5 py-px rounded-full flex-shrink-0", tag.cls)}>
             {tag.t}
           </span>
         </div>
-        <h3 className={cn("text-body-medium text-on-surface font-medium mb-1", isChinese(title) && "font-chinese")}>
-          {title}
-        </h3>
         {why && (
           <p
             className={cn(
@@ -539,6 +735,12 @@ export default function QueueScreen() {
           >
             {why}
           </p>
+        )}
+        {calLine && (
+          <div className="flex items-center gap-1 text-on-surface-variant text-label-xs mb-2">
+            <Calendar size={14} strokeWidth={1.75} />
+            <span>{calLine}</span>
+          </div>
         )}
         <div className="flex items-center justify-between text-on-surface-variant text-label-xs">
           <div className="flex items-center gap-1">
@@ -566,7 +768,10 @@ export default function QueueScreen() {
   // One resolution-plan row (a task's member card as a sub-action).
   function subActionRow(a: QueueAction) {
     const needs = !!(a.missing_info && a.missing_info.length > 0);
-    const done = a.status === "executed";
+    // `done` includes the optimistic post-click state so the check-draw plays
+    // while the card is still on screen (refresh is delayed in doAction).
+    const completed = a.status === "executed";
+    const done = completed || doneAnim.has(a.id);
     const approved = a.status === "approved";
     const text = a.headline || (a.params && a.params.title) || a.reason || a.action_type;
     const ex = execLabel(a);
@@ -637,20 +842,34 @@ export default function QueueScreen() {
     // their button instead; done/approved rows show a static state.
     const checkable = !done && !approved && ex.assignee === "me";
     const circle = checkable ? (
-      <button
+      <motion.button
         type="button"
-        className="mt-0.5 text-on-surface-variant hover:text-primary transition-colors"
+        whileTap={{ scale: 0.8 }}
+        className="mt-0.5 p-1 -m-1 text-on-surface-variant hover:text-primary cursor-pointer transition-colors"
         title="Mark done"
         onClick={(e) => {
           e.stopPropagation();
-          handleAct("done", a.id);
+          if (doneAnim.has(a.id)) return;
+          // Optimistic: draw the check NOW, refresh comes after the animation
+          // (doAction delays it) so the card doesn't vanish mid-draw.
+          setDoneAnim((prev) => new Set(prev).add(a.id));
+          void doAction("done", undefined, a.id);
         }}
       >
         <Circle size={20} strokeWidth={1.75} />
-      </button>
+      </motion.button>
+    ) : checked ? (
+      <span className="mt-0.5 inline-flex text-primary">
+        <CheckPop />
+      </span>
     ) : (
-      <span className={cn("mt-0.5 inline-flex", checked ? "text-primary" : "text-on-surface-variant")}>
-        {checked ? <CircleCheck size={20} strokeWidth={1.75} /> : <Circle size={20} strokeWidth={1.75} />}
+      // A suggested non-task card (calendar/reply/relay) isn't "done"-able —
+      // show a muted ACTION-TYPE icon instead of a pretend-button circle.
+      <span className="mt-0.5 inline-flex text-on-surface-variant opacity-40" aria-hidden="true">
+        {(() => {
+          const Icon = actionTypeIcon(a);
+          return <Icon size={16} strokeWidth={1.75} />;
+        })()}
       </span>
     );
     // Per-row skip: a task with several sub-actions must let you drop ONE of
@@ -670,7 +889,15 @@ export default function QueueScreen() {
         </button>
       ) : null;
     return (
-      <div key={a.id} className={cn("flex items-start gap-3 p-4 bg-surface border border-outline rounded-xl", done && "opacity-60")}>
+      <div
+        key={a.id}
+        className={cn(
+          "flex items-start gap-3 p-4 bg-surface border border-outline rounded-xl",
+          // dim only the truly-executed rows — a just-clicked one stays full
+          // opacity so the check-draw animation is clearly visible
+          completed && "opacity-60",
+        )}
+      >
         {circle}
         <div className="flex-1 min-w-0">
           <p
@@ -682,6 +909,50 @@ export default function QueueScreen() {
           >
             {text}
           </p>
+          {a.action_type === "calendar" && (
+            <div className="mt-1 flex items-center gap-2 text-label-xs flex-wrap">
+              <span className="text-on-surface-variant inline-flex items-center gap-1">
+                <Calendar size={12} strokeWidth={1.75} />
+                {calendarTimeLine(a)}
+              </span>
+              {conflictBadge(conflictState[a.id])}
+              {!completed && (
+                <button
+                  type="button"
+                  className="text-primary hover:underline"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setReTimeFor(reTimeFor === a.id ? null : a.id);
+                    if (reTimeFor !== a.id) setReTimeText("");
+                  }}
+                >
+                  {reTimeFor === a.id ? "Cancel" : "Re-time"}
+                </button>
+              )}
+            </div>
+          )}
+          {reTimeFor === a.id && (
+            <div className="mt-2 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+              <input
+                value={reTimeText}
+                onChange={(e) => setReTimeText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void submitReTime(a.id);
+                }}
+                placeholder='e.g. "move to 8/7 15:00-16:00" or "extend by 30 min"'
+                aria-label="re-time instruction"
+                className="flex-1 min-w-0 text-label-sm bg-primary/5 border border-outline rounded px-2 py-1 text-on-surface"
+              />
+              <button
+                type="button"
+                disabled={reTimeBusy || !reTimeText.trim()}
+                className="text-label-sm bg-primary text-white px-2.5 py-1 rounded hover:bg-blue-700 disabled:opacity-40"
+                onClick={() => void submitReTime(a.id)}
+              >
+                {reTimeBusy ? "Applying…" : "Apply"}
+              </button>
+            </div>
+          )}
           {renderProvenance(a)}
           {a.context?.original_message && (
             <details className="mb-2">

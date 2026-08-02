@@ -54,6 +54,21 @@ export function unitKey(a: ActionItem): string {
   return k ? `__ungrouped_${stableHash(k)}` : `__ungrouped_${a.id}`;
 }
 
+// A cockpit cluster identity (`unit_key` — the select/re-tier target) is
+// either a task_id or `__ungrouped_<actionId>` — UNIQUE per cluster, because
+// several ungrouped cards from one conversation must not share a select id
+// (that would select/highlight them together). Plans and tier overrides
+// attach to the STABLE conversation key instead (`__ungrouped_<hash>`), which
+// survives a supersede. This resolves an identity key to that stable key:
+// task_id passes through; an ungrouped identity re-derives `unitKey` from the
+// action. Unknown identities fall back to themselves (defensive).
+export function resolvePlanKey(identityKey: string, actions: ActionItem[]): string {
+  const PREFIX = "__ungrouped_";
+  if (!identityKey.startsWith(PREFIX)) return identityKey;
+  const action = actions.find((a) => a.id === identityKey.slice(PREFIX.length));
+  return action ? unitKey(action) : identityKey;
+}
+
 // Supersede task_id inheritance (leak 1): a fresh card replacing a still-
 // suggested same-conversation card inherits that card's task_id, so the plan
 // and cockpit cluster stay attached to the task. Only COPIES — a card with

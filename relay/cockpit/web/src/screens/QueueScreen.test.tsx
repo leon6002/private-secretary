@@ -193,6 +193,33 @@ describe("QueueScreen", () => {
     });
   });
 
+  it("(e-ungrouped) clicking one same-conversation ungrouped card highlights ONLY it (regression: shared unit_key)", async () => {
+    // Three cards drafted from the SAME sender+channel in one batch, each its
+    // own ungrouped cluster. The backend assigns DISTINCT unit_keys
+    // (__ungrouped_<actionId>); before the fix all three shared the
+    // conversation key, so clicking one highlighted all three.
+    const clusters = ["u1", "u2", "u3"].map((id) => ({
+      task_id: null,
+      unit_key: `__ungrouped_${id}`,
+      title: `Card ${id}`,
+      actions: [makeAction({ id, headline: `Card ${id}`, sender_name: "Bob" })],
+      plan: { tier: "C", rank: 9, why: "" },
+      done: 0,
+      total: 1,
+    }));
+    mockApiGet.mockResolvedValue({ ...makeState(), clusters, suggested: [] });
+    const { container } = renderQueue();
+    await waitFor(() => expect(container.querySelectorAll(".task-card")).toHaveLength(3));
+
+    expect(container.querySelectorAll(".task-card.bg-primary\\/10")).toHaveLength(0);
+    fireEvent.click(container.querySelector('.task-card[data-task="__ungrouped_u2"]')!);
+    const selected = container.querySelectorAll(".task-card.bg-primary\\/10");
+    expect(selected).toHaveLength(1);
+    expect(selected[0]!.getAttribute("data-task")).toBe("__ungrouped_u2");
+    // detail follows the clicked card
+    await waitFor(() => expect(screen.getByTestId("detail-title").textContent).toBe("Card u2"));
+  });
+
   it("(e) the drawer lists done + skipped rows and Restore POSTs restore", async () => {
     renderQueue();
     await screen.findByText("A · Do first");
@@ -206,6 +233,115 @@ describe("QueueScreen", () => {
     fireEvent.click(restoreButtons[0]!);
     await waitFor(() => {
       expect(mockApiPost.mock.calls.some(([p]) => p === "/api/actions/d1/restore")).toBe(true);
+    });
+  });
+
+  it("(f-cal) a calendar card shows its proposed time on the master-list + detail, and the conflict badge", async () => {
+    const calCluster = {
+      task_id: "cal1",
+      unit_key: "cal1",
+      title: "Q3预算评审会",
+      actions: [
+        makeAction({
+          id: "cal1",
+          action_type: "calendar",
+          headline: "Q3预算评审会",
+          draft: null,
+          summary: "",
+          target: { platform: "calendar", personaKey: null },
+          params: {
+            title: "Q3预算评审（望京SOHO T3）",
+            start: "2026-08-05T15:00:00+08:00",
+            end: "2026-08-05T16:00:00+08:00",
+            location: "望京SOHO T3",
+          },
+        }),
+      ],
+      plan: { tier: "A", rank: 0, why: "" },
+      done: 0,
+      total: 1,
+    };
+    mockApiGet.mockImplementation((path: string) => {
+      if (path.startsWith("/api/actions/cal1/calendar-conflicts")) {
+        return Promise.resolve({ conflicts: [{ event: { summary: "Existing standup" } }] });
+      }
+      return Promise.resolve({ ...makeState(), clusters: [calCluster], suggested: [] });
+    });
+    const { container } = renderQueue();
+    await waitFor(() => expect(container.querySelectorAll(".task-card")).toHaveLength(1));
+
+    // The time line is timezone-robust: build the expected local rendering the
+    // same way the component does, then assert it appears on card + detail.
+    const s = new Date("2026-08-05T15:00:00+08:00");
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const expectedTime = `${s.getMonth() + 1}/${s.getDate()} ${pad(s.getHours())}:${pad(s.getMinutes())}`;
+    expect(screen.getAllByText(new RegExp(expectedTime)).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/望京SOHO T3/).length).toBeGreaterThan(0);
+
+    // The selected calendar card's conflict pre-check resolves → badge shows.
+    await screen.findByText(/Conflicts: Existing standup/);
+    expect(screen.queryByText("No conflict")).toBeNull();
+  });
+
+  it("(f-done) mark-done circle is a cursor-pointer button; non-task circles are muted glyphs", async () => {
+    const { container } = renderQueue();
+    await waitFor(() => expect(screen.getByTestId("detail-title").textContent).toBe("Numbers for Bob"));
+
+    // t2 is a Me·reminder task → its row circle is the clickable "Mark done" button.
+    fireEvent.click(container.querySelector('.task-card[data-task="t2"]')!);
+    await waitFor(() => expect(screen.getByTestId("detail-title").textContent).toBe("Water the plants"));
+    const doneBtn = screen.getByTitle("Mark done");
+    expect(doneBtn.className).toContain("cursor-pointer");
+
+    // t1 is a suggested slack reply → NOT done-able: no Mark-done button, the
+    // circle is a muted glyph (opacity), so a click does nothing meaningful.
+    fireEvent.click(container.querySelector('.task-card[data-task="t1"]')!);
+    await waitFor(() => expect(screen.getByTestId("detail-title").textContent).toBe("Numbers for Bob"));
+    expect(screen.queryByTitle("Mark done")).toBeNull();
+    // A suggested reply row shows a muted REPLY icon, not a circle/button.
+    const muted = container.querySelector("span.opacity-40 svg.lucide-reply");
+    expect(muted).toBeTruthy();
+  });
+
+  it("(f-retime) the calendar card's 改时间 editor POSTs the instruction to re-time", async () => {
+    const calCluster = {
+      task_id: "cal1",
+      unit_key: "cal1",
+      title: "Q3预算评审会",
+      actions: [
+        makeAction({
+          id: "cal1",
+          action_type: "calendar",
+          headline: "Q3预算评审会",
+          draft: null,
+          summary: "",
+          target: { platform: "calendar", personaKey: null },
+          params: {
+            title: "Q3预算评审（望京SOHO T3）",
+            start: "2026-08-05T15:00:00+08:00",
+            end: "2026-08-05T16:00:00+08:00",
+            location: "望京SOHO T3",
+          },
+        }),
+      ],
+      plan: { tier: "A", rank: 0, why: "" },
+      done: 0,
+      total: 1,
+    };
+    mockApiGet.mockResolvedValue({ ...makeState(), clusters: [calCluster], suggested: [] });
+    mockApiPost.mockResolvedValue({ ok: true });
+    const { container } = renderQueue();
+    await waitFor(() => expect(container.querySelectorAll(".task-card")).toHaveLength(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "Re-time" }));
+    const input = screen.getByLabelText("re-time instruction") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "extend by 30 min" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+    await waitFor(() => {
+      const call = mockApiPost.mock.calls.find(([p]) => p === "/api/actions/cal1/re-time");
+      expect(call).toBeTruthy();
+      expect(call![1]).toEqual({ instruction: "extend by 30 min" });
     });
   });
 });

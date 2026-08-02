@@ -32,6 +32,8 @@ export type ActivityKind =
   | "edit"
   | "restore"
   | "mark-done"
+  // AI re-timed a calendar card's proposed start/end
+  | "re-time"
   // anything that failed: a dropped commit, an executor throw
   | "error";
 
@@ -62,6 +64,7 @@ export const ACTIVITY_KINDS: ReadonlySet<string> = new Set<ActivityKind>([
   "edit",
   "restore",
   "mark-done",
+  "re-time",
   "error",
 ]);
 

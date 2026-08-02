@@ -16,6 +16,15 @@ import {
 import { ANTHROPIC_KEY_ACCOUNT, ANTHROPIC_KEY_SERVICE } from "../io/anthropic-api.js";
 import { DEEPSEEK_KEY_ACCOUNT, DEEPSEEK_KEY_SERVICE } from "../io/deepseek-api.js";
 import { markExecuted, withReceipt, type ActionItem } from "../core/action-item.js";
+import { type TaskCluster, type TaskPlan } from "../core/tasks.js";
+import type { JsonLlmCaller } from "../proc/llm-claude-cli.js";
+
+// getState enriches each core cluster with the cockpit's `unit_key` + `plan`
+// (getState's declared type is the pre-enrichment core TaskCluster).
+type EnrichedCluster = TaskCluster & { unit_key?: string; plan?: TaskPlan & { tierManual?: boolean } };
+function clustersOf(api: CockpitApi): EnrichedCluster[] {
+  return api.getState().clusters as EnrichedCluster[];
+}
 
 let dir: string;
 let statePath: string;
@@ -158,6 +167,55 @@ describe("getState", () => {
     expect(byId.get("p1")).toBe("Michael Dobosz");
     expect(byId.get("n1")).toBe("Zack");
     expect(byId.get("r1")).toBe("U_RAW");
+  });
+
+  // Regression: three ungrouped cards drafted from the SAME sender in one batch
+  // used to share the conversation-derived unit_key (`__ungrouped_<hash>`), so
+  // clicking one card selected — and highlighted — all three. unit_key is the
+  // select/re-tier IDENTITY and must be UNIQUE per cluster; the conversation-
+  // stable key is the plan/override key only.
+  it("same-conversation ungrouped cards get DISTINCT unit_keys", () => {
+    seed([action({ id: "u1" }), action({ id: "u2" }), action({ id: "u3" })]);
+    const api = mkApi(sendingExecutor);
+    const keys = clustersOf(api).map((c) => c.unit_key);
+    expect(keys).toHaveLength(3);
+    expect(new Set(keys).size).toBe(3);
+    // each keys by its own action id, not the shared conversation hash
+    expect(keys).toEqual(["__ungrouped_u1", "__ungrouped_u2", "__ungrouped_u3"]);
+  });
+});
+
+describe("setTier", () => {
+  // The frontend drags with the cluster identity key (task_id / unique
+  // __ungrouped_<actionId>); the override stores under the STABLE conversation
+  // key so getState's plan lookup finds it. A drag on one ungrouped card
+  // re-tiers its same-conversation siblings together — they are one planning
+  // unit (that is the P1 supersede-stable contract, not a bug).
+  it("resolves an ungrouped identity key to the stable conversation key", () => {
+    seed([action({ id: "u1" }), action({ id: "u2" })]);
+    const api = mkApi(sendingExecutor);
+    const u1 = clustersOf(api).find((c) => c.actions[0]!.id === "u1")!;
+    api.setTier(u1.unit_key!, "A");
+    const tiers = clustersOf(api).map((c) => c.plan?.tier);
+    expect(tiers).toEqual(["A", "A"]);
+  });
+
+  it("a task_id identity passes through unchanged", () => {
+    seed([action({ id: "t1", task_id: "task_a" })], {
+      tasks: { task_a: { title: "Chicago trip", created_at: "2026-06-08T00:00:00Z" } },
+    });
+    const api = mkApi(sendingExecutor);
+    api.setTier("task_a", "B");
+    expect(clustersOf(api)[0]!.plan?.tier).toBe("B");
+  });
+
+  it("tier null clears the override (back to the AI rank)", () => {
+    seed([action({ id: "u1" })]);
+    const api = mkApi(sendingExecutor);
+    const u1 = clustersOf(api).find((c) => c.actions[0]!.id === "u1")!;
+    api.setTier(u1.unit_key!, "A");
+    api.setTier(u1.unit_key!, null);
+    expect(clustersOf(api)[0]!.plan?.tier).toBeUndefined();
   });
 });
 
@@ -671,5 +729,128 @@ describe("calendar double-booking guard", () => {
     expect(state.actions.find((a) => a.id === "c2")!.status).toBe("rejected");
     // different start → untouched
     expect(state.actions.find((a) => a.id === "c3")!.status).toBe("suggested");
+  });
+});
+
+describe("calendarConflicts (pre-check — the card's 有无冲突 line)", () => {
+  // A calendar card with an explicit mailbox (tests have no identity.json, so
+  // resolveCalendarMailbox returns params.mailbox without touching the keychain).
+  const cal = (id: string, start: string, end: string) =>
+    action({
+      id,
+      action_type: "calendar",
+      draft: undefined,
+      target: {},
+      params: { title: id, start, end, mailbox: "leo@gmail.com" },
+    });
+
+  it("returns conflicts when the proposed window overlaps a busy event", async () => {
+    seed([cal("c1", "2026-08-05T15:00:00+08:00", "2026-08-05T16:00:00+08:00")]);
+    const api = new CockpitApi({
+      statePath,
+      personaDir,
+      executor: sendingExecutor,
+      calendarLister: () => async () => [
+        { id: "evt", summary: "Existing standup", status: "confirmed",
+          start: { dateTime: "2026-08-05T15:30:00+08:00" }, end: { dateTime: "2026-08-05T16:30:00+08:00" } },
+      ],
+    });
+    const { conflicts } = await api.calendarConflicts("c1");
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0]!.event.summary).toBe("Existing standup");
+  });
+
+  it("returns [] when the window is clear", async () => {
+    seed([cal("c1", "2026-08-05T15:00:00+08:00", "2026-08-05T16:00:00+08:00")]);
+    const api = new CockpitApi({
+      statePath,
+      personaDir,
+      executor: sendingExecutor,
+      calendarLister: () => async () => [
+        { id: "evt", summary: "Earlier", status: "confirmed",
+          start: { dateTime: "2026-08-05T13:00:00+08:00" }, end: { dateTime: "2026-08-05T14:00:00+08:00" } },
+      ],
+    });
+    expect((await api.calendarConflicts("c1")).conflicts).toEqual([]);
+  });
+
+  it("rejects a non-calendar action and an unknown id", async () => {
+    seed([action({ id: "r1" })]); // a slack reply
+    const api = new CockpitApi({ statePath, personaDir, executor: sendingExecutor });
+    await expect(api.calendarConflicts("r1")).rejects.toThrow(/only for calendar/);
+    await expect(api.calendarConflicts("nope")).rejects.toThrow(/unknown action/);
+  });
+});
+
+describe("reTime (AI calendar re-time)", () => {
+  const cal = (id: string, start: string, end: string) =>
+    action({
+      id,
+      action_type: "calendar",
+      draft: undefined,
+      target: {},
+      params: { title: id, start, end },
+    });
+
+  it("rewrites start/end from the LLM's parsed instruction and persists", async () => {
+    seed([cal("c1", "2026-08-05T15:00:00+08:00", "2026-08-05T16:00:00+08:00")]);
+    const jsonLlm: JsonLlmCaller = async () => ({
+      start: "2026-08-07T15:00:00+08:00",
+      end: "2026-08-07T16:00:00+08:00",
+    });
+    const api = new CockpitApi({ statePath, personaDir, executor: sendingExecutor, jsonLlm });
+    const updated = await api.reTime("c1", "改到8月7号下午15:00-16:00");
+    expect(updated.params.start).toBe("2026-08-07T15:00:00+08:00");
+    expect(updated.params.end).toBe("2026-08-07T16:00:00+08:00");
+    expect(loadState(statePath).actions.find((a) => a.id === "c1")!.params.start).toBe(
+      "2026-08-07T15:00:00+08:00",
+    );
+  });
+
+  it("normalizes a bare datetime to RFC3339 with the +08:00 default offset", async () => {
+    seed([cal("c1", "2026-08-05T15:00:00+08:00", "2026-08-05T16:00:00+08:00")]);
+    const jsonLlm: JsonLlmCaller = async () => ({
+      start: "2026-08-07T15:00",
+      end: "2026-08-07T16:30",
+    });
+    const api = new CockpitApi({ statePath, personaDir, executor: sendingExecutor, jsonLlm });
+    const updated = await api.reTime("c1", "延长半小时");
+    expect(updated.params.start).toBe("2026-08-07T15:00:00+08:00");
+    expect(updated.params.end).toBe("2026-08-07T16:30:00+08:00");
+  });
+
+  it("rejects unparseable LLM output without touching the card", async () => {
+    seed([cal("c1", "2026-08-05T15:00:00+08:00", "2026-08-05T16:00:00+08:00")]);
+    const api = new CockpitApi({
+      statePath,
+      personaDir,
+      executor: sendingExecutor,
+      jsonLlm: async () => ({ start: "not-a-time", end: "nope" }),
+    });
+    await expect(api.reTime("c1", "改成x")).rejects.toThrow(/couldn't parse/);
+    expect(loadState(statePath).actions.find((a) => a.id === "c1")!.params.start).toBe(
+      "2026-08-05T15:00:00+08:00",
+    );
+  });
+
+  it("rejects end ≤ start", async () => {
+    seed([cal("c1", "2026-08-05T15:00:00+08:00", "2026-08-05T16:00:00+08:00")]);
+    const api = new CockpitApi({
+      statePath,
+      personaDir,
+      executor: sendingExecutor,
+      jsonLlm: async () => ({
+        start: "2026-08-07T16:00:00+08:00",
+        end: "2026-08-07T15:00:00+08:00",
+      }),
+    });
+    await expect(api.reTime("c1", "改")).rejects.toThrow(/after start/);
+  });
+
+  it("rejects a non-calendar action and an empty instruction", async () => {
+    seed([action({ id: "r1" })]); // a slack reply
+    const api = new CockpitApi({ statePath, personaDir, executor: sendingExecutor });
+    await expect(api.reTime("r1", "x")).rejects.toThrow(/only for calendar/);
+    await expect(api.reTime("c1", "   ")).rejects.toThrow(/empty/);
   });
 });

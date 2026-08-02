@@ -32,7 +32,7 @@ import {
   type ExecutionReceipt,
 } from "../core/action-item.js";
 import { groupByTask, type TaskCluster } from "../core/tasks.js";
-import { unitKey } from "../core/unit-key.js";
+import { resolvePlanKey, unitKey } from "../core/unit-key.js";
 import { computeGate, type GateResult } from "../core/metrics.js";
 import { canAutoExecute } from "../core/executors.js";
 import { provenanceFor, evidenceFor } from "../core/persona-v3.js";
@@ -83,6 +83,16 @@ import {
   TOKEN_KEYCHAIN_SERVICE,
 } from "../io/google-oauth.js";
 import type { ExecuteResult } from "../proc/execute.js";
+import {
+  checkCalendarConflicts as coreCheckCalendarConflicts,
+  resolveCalendarMailbox,
+  toRfc3339,
+} from "../proc/execute.js";
+import type { Conflict } from "../core/calendar-conflict.js";
+import type { JsonLlmCaller } from "../proc/llm-claude-cli.js";
+import { createClaudeCliJsonCaller } from "../proc/llm-claude-cli.js";
+import { createAnthropicJsonCaller } from "../proc/llm-anthropic.js";
+import { createDeepseekJsonCaller } from "../proc/llm-deepseek.js";
 import { CalendarClient, type CalendarEvent } from "../io/calendar-api.js";
 
 // The executor the cockpit calls on approve. The server injects the real
@@ -113,6 +123,10 @@ export interface CockpitApiOptions {
   // real Keychain-backed CalendarClient; tests inject a stub so no OAuth or
   // network is touched.
   calendarLister?: (email: string) => CalendarEventsLister;
+  // AI re-time: the LLM that rewrites a calendar card's start/end from a
+  // natural-language instruction (e.g. "move to 8/7 15:00-16:00", "extend by 30 min").
+  // Defaults to the daemon's LLM (settings.llm.mode); tests inject a stub.
+  jsonLlm?: JsonLlmCaller;
 }
 
 // ─── read model ──────────────────────────────────────────────────────
@@ -231,16 +245,22 @@ export class CockpitApi {
     const TIER_ORDER: Record<string, number> = { A: 0, B: 1, C: 2, D: 3 };
     const clusters = clustersRaw
       .map((c) => {
-        // The plan/override key + the unit key handed to the frontend (so it
-        // never re-derives it). Stable across supersede — core/unit-key.ts.
-        const key = c.task_id ?? (c.actions[0] ? unitKey(c.actions[0]) : undefined);
-        const plan = key ? plans[key] : undefined;
-        const ov = key ? overrides[key] : undefined;
+        // Two distinct identities. The `unit_key` handed to the frontend is
+        // the select/re-tier target and must be UNIQUE per cluster: task_id,
+        // else `__ungrouped_<actionId>`. A conversation-derived shared key
+        // would make several same-sender ungrouped cards select (highlight)
+        // together. Plans and tier overrides attach to the STABLE
+        // conversation key instead (`unitKey` — core/unit-key.ts) so a
+        // supersede keeps them.
+        const identityKey = c.task_id ?? (c.actions[0] ? `__ungrouped_${c.actions[0].id}` : undefined);
+        const planKey = c.task_id ?? (c.actions[0] ? unitKey(c.actions[0]) : undefined);
+        const plan = planKey ? plans[planKey] : undefined;
+        const ov = planKey ? overrides[planKey] : undefined;
         // A manual drag wins over the computed tier; keep the AI rank/why/entities.
         const effPlan = ov
           ? { ...(plan ?? { rank: 999, why: "" }), tier: ov, tierManual: true }
           : plan;
-        return { ...c, unit_key: key, plan: effPlan };
+        return { ...c, unit_key: identityKey, plan: effPlan };
       })
       .sort((a, b) => {
         const ta = a.plan ? TIER_ORDER[a.plan.tier] ?? 8 : 9;
@@ -439,6 +459,110 @@ export class CockpitApi {
         ...(e.htmlLink ? { htmlLink: e.htmlLink } : {}),
       }));
     return { events };
+  }
+
+  // Read-only conflict pre-check for ONE calendar card — the Queue's
+  // conflict line. Runs the SAME conflict logic the approve path uses
+  // (execute.ts checkCalendarConflicts) against the live calendar, but
+  // never inserts: the card shows what approve would block on, before the
+  // click. Modeled on getCalendarEvents — resolves the mailbox, lists
+  // events in the proposed window, finds overlaps. No state lock is held
+  // across the network call: state is read once up front.
+  async calendarConflicts(id: string): Promise<{ conflicts: Conflict[] }> {
+    const state = loadState(this.opts.statePath);
+    const action = state.actions.find((a) => a.id === id);
+    if (!action) throw new CockpitBadRequestError(`unknown action: ${id}`);
+    if (action.action_type !== "calendar") {
+      throw new CockpitBadRequestError("conflict pre-check is only for calendar actions");
+    }
+    const mailbox = resolveCalendarMailbox(action);
+    if (!mailbox) {
+      throw new CockpitBadRequestError("no calendar mailbox configured for this card");
+    }
+    const list =
+      this.opts.calendarLister?.(mailbox) ??
+      ((o: { timeMin: string; timeMax: string }) =>
+        new CalendarClient({ email: mailbox }).listAllEvents(o));
+    const conflicts = await coreCheckCalendarConflicts(action, list);
+    return { conflicts };
+  }
+
+  // AI re-time: the user types a natural-language instruction on a calendar
+  // card (e.g. "move to 8/7 15:00-16:00", "extend by 30 min") and the LLM
+  // rewrites the proposed start/end. The instruction is the user's OWN input
+  // (trusted); the
+  // LLM OUTPUT is untrusted and deterministically validated — RFC 3339,
+  // start<end — before it touches the card. Uses the daemon's LLM mode unless
+  // a caller injected `jsonLlm` (tests).
+  async reTime(id: string, instruction: string): Promise<ActionItem> {
+    const trimmed = instruction.trim();
+    if (!trimmed) throw new CockpitBadRequestError("empty instruction");
+
+    const state = loadState(this.opts.statePath);
+    const action = state.actions.find((a) => a.id === id);
+    if (!action) throw new CockpitBadRequestError(`unknown action: ${id}`);
+    if (action.action_type !== "calendar") {
+      throw new CockpitBadRequestError("re-time is only for calendar actions");
+    }
+    const p = action.params;
+
+    const llm = this.opts.jsonLlm ?? (await this.buildJsonLlm());
+    const result = await llm({
+      system:
+        "You re-time a Google Calendar event for a personal assistant. Given the event's " +
+        "current times and a user instruction, output ONLY a single JSON object " +
+        '{"start":"...","end":"..."} with RFC 3339 start/end using the +08:00 offset ' +
+        '(e.g. 2026-08-07T15:00:00+08:00). Interpret RELATIVE instructions (e.g. "extend by ' +
+        '30 minutes", "move earlier by 1 hour") from the CURRENT start/end. Keep the offset ' +
+        "unless the instruction says otherwise. If no current time is set, the instruction " +
+        "must supply it absolutely. Never change the event title. No prose.",
+      userText:
+        `Event title: ${typeof p.title === "string" ? p.title : "(untitled)"}\n` +
+        `Current start: ${typeof p.start === "string" ? p.start : "(not set)"}\n` +
+        `Current end: ${typeof p.end === "string" ? p.end : "(not set)"}\n` +
+        `User instruction: ${trimmed}`,
+      toolInputSchema: {
+        type: "object",
+        properties: {
+          start: { type: "string", description: "RFC 3339 start with +08:00 offset" },
+          end: { type: "string", description: "RFC 3339 end with +08:00 offset" },
+        },
+        required: ["start", "end"],
+      },
+    });
+
+    const obj = (result ?? null) as { start?: unknown; end?: unknown } | null;
+    const start = typeof obj?.start === "string" ? toRfc3339(obj.start) : null;
+    const end = typeof obj?.end === "string" ? toRfc3339(obj.end) : null;
+    if (!start || !end || isNaN(Date.parse(start)) || isNaN(Date.parse(end))) {
+      throw new CockpitBadRequestError(
+        'AI couldn\'t parse a valid time — try e.g. "move to 8/7 15:00-16:00"',
+      );
+    }
+    if (new Date(end).getTime() <= new Date(start).getTime()) {
+      throw new CockpitBadRequestError("end must be after start");
+    }
+
+    return this.withLock((state) => {
+      const current = state.actions.find((a) => a.id === id);
+      if (!current) throw new CockpitBadRequestError(`unknown action: ${id}`);
+      const updated = { ...current, params: { ...current.params, start, end } };
+      this.replace(state, updated);
+      saveState(this.opts.statePath, state);
+      this.activity(
+        "re-time",
+        `re-timed calendar "${CockpitApi.headlineOf(updated)}" → ${start}–${end}`,
+        { id, action_type: updated.action_type },
+      );
+      return updated;
+    });
+  }
+
+  private async buildJsonLlm(): Promise<JsonLlmCaller> {
+    const mode = loadSettings(this.opts.statePath).llm.mode;
+    if (mode === "anthropic") return createAnthropicJsonCaller();
+    if (mode === "deepseek") return createDeepseekJsonCaller();
+    return createClaudeCliJsonCaller();
   }
 
   // ─── settings (Settings screen, S3) ───────────────────────────────
@@ -872,13 +996,17 @@ export class CockpitApi {
   }
 
   // Manual tier override from a drag in the Today list. tier null clears it (back
-  // to the AI ranking). Keyed by the task unit key (task_id / stable
-  // __ungrouped_<hash> — survives supersede, core/unit-key.ts).
+  // to the AI ranking). The frontend sends the cluster identity key (task_id /
+  // __ungrouped_<actionId>); the override stores under the STABLE conversation
+  // key (core/unit-key.ts resolvePlanKey) so getState's plan lookup finds it —
+  // and a drag on one ungrouped card re-tiers its same-conversation siblings
+  // together (they are one planning unit).
   setTier(key: string, tier: "A" | "B" | "C" | "D" | null): { key: string; tier: string | null } {
     return this.withLock((state) => {
+      const planKey = resolvePlanKey(key, state.actions);
       const ov = state.planOverrides ?? (state.planOverrides = {});
-      if (tier) ov[key] = tier;
-      else delete ov[key];
+      if (tier) ov[planKey] = tier;
+      else delete ov[planKey];
       saveState(this.opts.statePath, state);
       return { key, tier };
     });

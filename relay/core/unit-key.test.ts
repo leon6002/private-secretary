@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { clusterKey, stableHash, unitKey, inheritSupersededTaskIds } from "./unit-key.js";
+import {
+  clusterKey,
+  stableHash,
+  unitKey,
+  resolvePlanKey,
+  inheritSupersededTaskIds,
+} from "./unit-key.js";
 import type { ActionItem } from "./action-item.js";
 
 function card(id: string, over: Partial<ActionItem> = {}): ActionItem {
@@ -54,6 +60,25 @@ describe("unitKey", () => {
 
   it("no sender → falls back to the action id (never supersedes anyway)", () => {
     expect(unitKey(card("a", { context: undefined }))).toBe("__ungrouped_a");
+  });
+});
+
+describe("resolvePlanKey", () => {
+  it("task_id passes through", () => {
+    expect(resolvePlanKey("t9", [card("a")])).toBe("t9");
+  });
+
+  it("an ungrouped identity resolves to the stable conversation key (not the action id)", () => {
+    const a = card("a");
+    const identity = `__ungrouped_${a.id}`;
+    const stable = `__ungrouped_${stableHash("wechat::张工")}`;
+    expect(resolvePlanKey(identity, [a])).toBe(stable);
+    // distinct from the identity itself — the shared conversation key, not the per-card id
+    expect(resolvePlanKey(identity, [a])).not.toBe(identity);
+  });
+
+  it("an unknown identity falls back to itself (defensive)", () => {
+    expect(resolvePlanKey("__ungrouped_ghost", [card("a")])).toBe("__ungrouped_ghost");
   });
 });
 

@@ -274,6 +274,17 @@ export function createCockpitServer(opts: CockpitServerOptions): {
       return;
     }
 
+    // Read-only conflict pre-check for ONE calendar card (the Queue's
+    // conflict line). Same conflict logic as approve, never inserts.
+    if (method === "GET") {
+      const conflictMatch = path.match(/^\/api\/actions\/([^/]+)\/calendar-conflicts$/);
+      if (conflictMatch) {
+        const id = decodeURIComponent(conflictMatch[1]!);
+        sendJson(res, 200, await api.calendarConflicts(id));
+        return;
+      }
+    }
+
     // Settings screen (S3). Read is free-form; both writes validate the body
     // here (shape) and inside CockpitApi (enum/whitelist → 400). Key values
     // pass straight through to the Keychain — they are never logged.
@@ -386,6 +397,14 @@ export function createCockpitServer(opts: CockpitServerOptions): {
         }
         case "done":
           sendJson(res, 200, { action: api.markDone(id) });
+          return;
+        case "re-time":
+          sendJson(res, 200, {
+            action: await api.reTime(
+              id,
+              typeof body.instruction === "string" ? body.instruction : "",
+            ),
+          });
           return;
         case "restore":
           sendJson(res, 200, { action: api.restore(id) });

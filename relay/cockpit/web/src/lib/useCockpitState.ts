@@ -57,6 +57,7 @@ export interface QueueAction {
     // screen overlays these on the real Google Calendar week).
     start?: string;
     end?: string;
+    location?: string;
     _edited?: boolean;
     execution_receipt?: { kind: string; at?: string };
   };
@@ -93,7 +94,7 @@ export interface TaskPlan {
 
 export interface TaskCluster {
   task_id: string | null;
-  unit_key?: string; // stable across supersede; THE identity for select/re-tier
+  unit_key?: string; // unique per cluster; THE identity for select/re-tier
   title: string | null;
   actions: QueueAction[]; // ready → needs-info → approved → terminal
   plan?: TaskPlan;
