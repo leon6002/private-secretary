@@ -344,4 +344,40 @@ describe("QueueScreen", () => {
       expect(call![1]).toEqual({ instruction: "extend by 30 min" });
     });
   });
+
+  it("(f-tool) a tool card shows its tool/project/assignee line, a picker, and a Create ticket button", async () => {
+    const toolCluster = {
+      task_id: "j1",
+      unit_key: "j1",
+      title: "Homepage breaks on iOS",
+      actions: [
+        makeAction({
+          id: "j1",
+          action_type: "tool",
+          headline: "Homepage breaks on iOS",
+          draft: null,
+          summary: "",
+          target: { platform: "jira", personaKey: null },
+          params: {
+            tool: "jira",
+            project: "BKO",
+            summary: "Homepage breaks on iOS",
+            description: "Repro in the 2.4 build",
+            assignee: "leo",
+          },
+        }),
+      ],
+      plan: { tier: "B", rank: 1, why: "" },
+      done: 0,
+      total: 1,
+    };
+    mockApiGet.mockResolvedValue({ ...makeState(), clusters: [toolCluster], suggested: [] });
+    const { container } = renderQueue();
+    await waitFor(() => expect(container.querySelectorAll(".task-card")).toHaveLength(1));
+
+    expect(screen.getByText(/jira · BKO · → leo/)).toBeTruthy();
+    // the processing-tool picker is present and defaults to the card's tool
+    expect((screen.getByLabelText("processing tool") as HTMLSelectElement).value).toBe("jira");
+    expect(screen.getAllByRole("button", { name: /Create ticket/ }).length).toBeGreaterThan(0);
+  });
 });

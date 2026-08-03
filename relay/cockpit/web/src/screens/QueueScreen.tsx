@@ -51,8 +51,10 @@ import {
   Reply,
   Send,
   Shapes,
+  Ticket,
   TriangleAlert,
   User,
+  Wrench,
   Zap,
   type LucideIcon,
 } from "lucide-react";
@@ -127,6 +129,21 @@ function calendarTimeLine(a: QueueAction): string {
   }
   return loc ? `${range} · ${loc}` : range;
 }
+
+// A tool card's line: tool key · project · assignee (assignee only when the
+// message named the owner — never guess).
+function toolLine(a: QueueAction): string {
+  const p = a.params;
+  const tool = typeof p?.tool === "string" ? p.tool : "";
+  const project = typeof p?.project === "string" ? p.project : "";
+  const assignee = typeof p?.assignee === "string" ? p.assignee : "";
+  if (!tool && !project && !assignee) return "";
+  return [tool, project, assignee && `→ ${assignee}`].filter(Boolean).join(" · ");
+}
+
+// The MCP tools the cockpit lets the user route a tool card to. Mirrors
+// core/tool-registry.ts — keep in sync when a tool is added/removed.
+const TOOL_OPTIONS = [{ key: "jira", label: "Jira" }];
 
 // Conflict pre-check result for one calendar card (GET
 // /api/actions/:id/calendar-conflicts → {conflicts: Conflict[]}). The API
@@ -208,6 +225,11 @@ const TIERS = [
 // AI-executable action types + the one-click button label (per platform).
 function execLabel(a: QueueAction): { assignee: "ai" | "me"; label: string | null; icon: LucideIcon } {
   if (a.action_type === "calendar") return { assignee: "ai", label: "Create event", icon: Calendar };
+  if (a.action_type === "tool") {
+    return a.params?.tool === "jira"
+      ? { assignee: "ai", label: "Create ticket", icon: Ticket }
+      : { assignee: "ai", label: `Run ${a.params?.tool ?? "tool"}`, icon: Wrench };
+  }
   if (a.action_type === "reply" || a.action_type === "relay" || a.action_type === "forward") {
     return a.target?.platform === "gmail"
       ? { assignee: "ai", label: "Prepare draft", icon: FilePen }
@@ -229,6 +251,8 @@ function actionTypeIcon(a: QueueAction): LucideIcon {
       return Repeat;
     case "forward":
       return Forward;
+    case "tool":
+      return Wrench;
     default:
       return Circle;
   }
@@ -352,6 +376,11 @@ export default function QueueScreen() {
 
   const allClusters = state?.clusters ?? [];
   const clusters = liveClusters(allClusters);
+  // The "via" picker lists the effective MCP registry (getState attaches it),
+  // falling back to the built-in list when state hasn't loaded.
+  const toolOptions = state?.tools
+    ? Object.entries(state.tools).map(([key, s]) => ({ key, label: s.label ?? key }))
+    : TOOL_OPTIONS;
 
   // The selected task's calendar cards → their ids, as a stable key for the
   // conflict pre-check effect (re-fetch only when the selected task changes).
@@ -533,6 +562,19 @@ export default function QueueScreen() {
       toast(errMsg(e), true);
     } finally {
       setReTimeBusy(false);
+    }
+  }
+
+  // Route a tool card through a different connected MCP (params.tool). The
+  // user picks the tool freely; approve dispatches to whichever is selected.
+  async function setTool(tool: string, id: string) {
+    if (!tool) return;
+    try {
+      await apiPost(`/api/actions/${encodeURIComponent(id)}/edit`, { params: { tool } });
+      await refresh();
+      toast(`Processing via ${tool}`);
+    } catch (e) {
+      toast(errMsg(e), true);
     }
   }
 
@@ -981,6 +1023,29 @@ export default function QueueScreen() {
               >
                 {reTimeBusy ? "Applying…" : "Apply"}
               </button>
+            </div>
+          )}
+          {a.action_type === "tool" && (
+            <div className="mt-1 flex items-center gap-2 text-label-xs text-on-surface-variant flex-wrap">
+              <span className="inline-flex items-center gap-1">
+                <Wrench size={12} strokeWidth={1.75} />
+                {toolLine(a)}
+              </span>
+              <label className="inline-flex items-center gap-1">
+                <span className="text-on-surface-variant">via</span>
+                <select
+                  value={a.params?.tool ?? ""}
+                  aria-label="processing tool"
+                  onChange={(e) => void setTool(e.target.value, a.id)}
+                  className="bg-surface border border-outline rounded px-1 py-0.5 text-label-xs text-on-surface"
+                >
+                  {toolOptions.map((t) => (
+                    <option key={t.key} value={t.key}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
           )}
           {renderProvenance(a)}

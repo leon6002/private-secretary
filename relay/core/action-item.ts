@@ -10,6 +10,7 @@
 //                             │ immediately after approve, then markExecuted
 
 import { AUTO_SEND_PLATFORMS, type Attachment, type Platform } from "./types.js";
+import { DEFAULT_TOOL_SPECS, type ToolSpec } from "./tool-registry.js";
 
 // Scan interval: a single constant. Override with the SCAN_INTERVAL_MINUTES env var
 // at the call site if needed. No config system (V1 hard decision).
@@ -21,7 +22,8 @@ export type ActionType =
   | "forward"
   | "calendar"
   | "task"
-  | "ignore";
+  | "ignore"
+  | "tool";
 // Every action — reply included — is human-in-the-loop: nothing executes until the
 // user approves. After approval it executes (sends/creates). The approval gate is
 // the guarantee, not "never send".
@@ -31,8 +33,8 @@ export type ActionStatus = "suggested" | "approved" | "executed" | "rejected";
 // terminal transition; on retry, a present receipt means skip the API call and go
 // straight to terminal — so replaying an approved action never double-sends.
 export interface ExecutionReceipt {
-  kind: "sent" | "calendar_event" | "local";
-  ref: string; // message_link / event_id / "local"
+  kind: "sent" | "calendar_event" | "local" | "tool_result";
+  ref: string; // message_link / event_id / tool result key / "local"
   at: string; // ISO timestamp
 }
 
@@ -103,6 +105,7 @@ const ACTION_TYPES: ReadonlySet<string> = new Set([
   "calendar",
   "task",
   "ignore",
+  "tool",
 ]);
 const STATUSES: ReadonlySet<string> = new Set([
   "suggested",
@@ -113,7 +116,10 @@ const STATUSES: ReadonlySet<string> = new Set([
 
 // Missing required info per action_type. A non-empty result blocks approval —
 // the engine is not allowed to guess (spec hard rule).
-export function missingInfo(a: ActionItem): string[] {
+export function missingInfo(
+  a: ActionItem,
+  registry: Record<string, ToolSpec> = DEFAULT_TOOL_SPECS,
+): string[] {
   const missing: string[] = [];
   const p = a.params ?? {};
   const needRecipient = (): void => {
@@ -158,6 +164,19 @@ export function missingInfo(a: ActionItem): string[] {
       if (typeof p.category !== "string" || p.category === "")
         missing.push("params.category");
       break;
+    case "tool": {
+      // A tool card needs a tool key + the tool's required params (from the
+      // registry). Per-tool missing params are flagged so a card the LLM
+      // drafted without them is Needs-info, not approvable.
+      const tool = typeof p.tool === "string" ? p.tool : "";
+      if (!tool) missing.push("params.tool");
+      else {
+        for (const k of registry[tool]?.requiredParams ?? []) {
+          if (typeof p[k] !== "string" || p[k] === "") missing.push(`params.${k}`);
+        }
+      }
+      break;
+    }
   }
   return missing;
 }
@@ -289,9 +308,12 @@ export function requiresManualExecution(a: ActionItem): boolean {
   return platform != null && !AUTO_SEND_PLATFORMS.has(platform);
 }
 
-export function approveAction(a: ActionItem): ActionItem {
+export function approveAction(
+  a: ActionItem,
+  registry: Record<string, ToolSpec> = DEFAULT_TOOL_SPECS,
+): ActionItem {
   if (a.status !== "suggested") throw new InvalidActionTransition("approve", a.status);
-  const missing = missingInfo(a);
+  const missing = missingInfo(a, registry);
   if (missing.length > 0)
     throw new InvalidActionTransition(
       "approve",

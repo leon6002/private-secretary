@@ -73,6 +73,14 @@ export interface CalendarInserter {
   }): Promise<CalendarEvent>;
 }
 
+// A connected task-processing MCP tool. Jira is one example; the registry is
+// extensible (core/tool-registry.ts). Real MCP clients are NOT wired yet —
+// production injects STUB runners that return a synthetic ref, and the
+// receipt (kind "tool_result") makes the card terminal + non-restorable.
+export interface ToolRunner {
+  run(params: Record<string, unknown>): Promise<{ ref: string }>;
+}
+
 export interface ExecuteDeps {
   // Slack send target. One workspace in v1.
   slack?: SlackSender;
@@ -80,6 +88,9 @@ export interface ExecuteDeps {
   gmail?: Record<string, GmailDrafter>;
   // Calendar inserters keyed by mailbox email.
   calendar?: Record<string, CalendarInserter>;
+  // Task-processing MCP tools, keyed by core/tool-registry key (stubbed until
+  // each real MCP client lands).
+  tools?: Record<string, ToolRunner>;
   // Clock. Receipts + execution_started_at use this.
   now: () => string;
   // Called with the markExecuting'd action BEFORE the side effect fires, so
@@ -143,6 +154,11 @@ export async function executeAction(
   // calendar — conflict-check, then insert (blocks on conflict).
   if (action.action_type === "calendar") {
     return executeCalendar(action, deps);
+  }
+
+  // tool — process the card via a connected MCP tool (jira/notion/…, stubbed).
+  if (action.action_type === "tool") {
+    return executeTool(action, deps);
   }
 
   // reply / relay / forward.
@@ -256,6 +272,26 @@ async function executeCalendar(action: ActionItem, deps: ExecuteDeps): Promise<E
   const receipt: ExecutionReceipt = {
     kind: "calendar_event",
     ref: created.id ?? created.htmlLink ?? "(created)",
+    at: deps.now(),
+  };
+  return { action: markExecuted(withReceipt(claimed, receipt)), receipt, awaitingManual: false };
+}
+
+async function executeTool(action: ActionItem, deps: ExecuteDeps): Promise<ExecuteResult> {
+  const toolKey = typeof action.params.tool === "string" ? action.params.tool : "";
+  const runner = toolKey ? deps.tools?.[toolKey] : undefined;
+  if (!runner) {
+    throw new ExecutorMisconfiguredError(`no runner configured for tool "${toolKey || "(none)"}"`);
+  }
+
+  // Claim before the external side effect (crash-safe, same as the other executors).
+  const claimed = markExecuting(action, deps.now());
+  await deps.persistClaim?.(claimed);
+
+  const result = await runner.run(action.params);
+  const receipt: ExecutionReceipt = {
+    kind: "tool_result",
+    ref: result.ref,
     at: deps.now(),
   };
   return { action: markExecuted(withReceipt(claimed, receipt)), receipt, awaitingManual: false };

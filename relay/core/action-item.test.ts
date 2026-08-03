@@ -247,6 +247,47 @@ describe("missingInfo", () => {
     expect(missingInfo(cal)).toEqual([]);
   });
 
+  it("tool needs a tool key + the tool's required params; assignee optional", () => {
+    const tool = item({
+      action_type: "tool",
+      target: { platform: "jira", personaKey: null },
+      params: { tool: "jira", project: "BKO" },
+      draft: undefined,
+    });
+    const missing = missingInfo(tool);
+    expect(missing).toContain("params.summary");
+    expect(missing).toContain("params.description");
+    expect(missing).not.toContain("params.project");
+    // unassigned is valid — never guessed
+    expect(missing).not.toContain("params.assignee");
+
+    // a missing tool key is flagged too
+    expect(missingInfo(item({ action_type: "tool", params: {}, draft: undefined }))).toContain(
+      "params.tool",
+    );
+
+    const complete = item({
+      action_type: "tool",
+      target: { platform: "jira", personaKey: null },
+      params: { tool: "jira", project: "BKO", summary: "Homepage breaks on iOS", description: "Repro in the 2.4 build" },
+      draft: undefined,
+    });
+    expect(missingInfo(complete)).toEqual([]);
+  });
+
+  it("tool validation honors a CUSTOM registry (a user-configured tool's required params)", () => {
+    const registry = {
+      jira: { key: "jira", label: "Jira", requiredParams: ["project"] },
+      notion: { key: "notion", label: "Notion", requiredParams: ["title", "content"] },
+    };
+    const t = item({ action_type: "tool", target: {}, params: { tool: "notion" }, draft: undefined });
+    expect(missingInfo(t, registry)).toContain("params.title");
+    expect(missingInfo(t, registry)).toContain("params.content");
+    expect(
+      missingInfo({ ...t, params: { tool: "notion", title: "x", content: "y" } }, registry),
+    ).toEqual([]);
+  });
+
   it("task needs title; ignore needs category", () => {
     expect(missingInfo(item({ action_type: "task", params: {} }))).toEqual(["params.title"]);
     expect(missingInfo(item({ action_type: "ignore", params: {} }))).toEqual(["params.category"]);

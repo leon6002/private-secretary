@@ -7,15 +7,16 @@
 //
 // Mirror of wire-executor.ts; the only difference is the injected clients.
 
-import { executeAction, type ExecuteDeps } from "../proc/execute.js";
+import { executeAction, type ExecuteDeps, type ToolRunner } from "../proc/execute.js";
 import { buildRawMimeMessage } from "../sources/gmail-direct.js";
 import { KNOWN_MAILBOXES } from "../io/google-oauth.js";
+import { effectiveToolSpecs } from "../io/tools.js";
 import type { CockpitExecutor } from "./api.js";
 import type { ActionItem } from "../core/action-item.js";
 
 // Stub senders: no network. They return plausible refs so receipts look
 // real in the UI, and an empty calendar so conflict-check always clears.
-function stubDeps(now: () => string): Omit<ExecuteDeps, "persistClaim"> {
+function stubDeps(now: () => string): Omit<ExecuteDeps, "persistClaim" | "tools"> {
   const gmail = Object.fromEntries(
     KNOWN_MAILBOXES.map((email) => [
       email,
@@ -45,13 +46,23 @@ function stubDeps(now: () => string): Omit<ExecuteDeps, "persistClaim"> {
   };
 }
 
+// Stub MCP tools: approve runs the full flow, no real side effect.
+function toolStubs(statePath: string): Record<string, ToolRunner> {
+  const stubs: Record<string, ToolRunner> = {};
+  for (const key of Object.keys(effectiveToolSpecs(statePath))) {
+    stubs[key] = { run: async () => ({ ref: `DRY-RUN-${key.toUpperCase()}` }) };
+  }
+  return stubs;
+}
+
 export function createDryExecutor(
+  statePath: string,
   now: () => string = () => new Date().toISOString(),
 ): CockpitExecutor {
   const base = stubDeps(now);
   return async (action: ActionItem, persistClaim) => {
     const prepared = ensureGmailRaw(action);
-    return executeAction(prepared, { ...base, persistClaim });
+    return executeAction(prepared, { ...base, tools: toolStubs(statePath), persistClaim });
   };
 }
 

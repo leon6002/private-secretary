@@ -316,6 +316,23 @@ export function createCockpitServer(opts: CockpitServerOptions): {
     // inside CockpitApi — like the API keys, it is never logged. authorize
     // validates the mailbox against the identity config before it reaches
     // the spawned consent script's argv.
+    if (path === "/api/settings/tools" && method === "GET") {
+      sendJson(res, 200, await api.getToolsConfig());
+      return;
+    }
+    if (path === "/api/settings/tools" && method === "POST") {
+      const body = (await readBody(req)) as { tools?: Record<string, unknown> };
+      sendJson(res, 200, api.setToolsConfig({ tools: body.tools }));
+      return;
+    }
+    // OAuth connect for a URL-based MCP tool (Settings → Tools "Connect"). Runs
+    // the browser flow; the request holds until the token is stored.
+    const authorizeMatch = path.match(/^\/api\/settings\/tools\/([^/]+)\/authorize$/);
+    if (authorizeMatch && method === "POST") {
+      const toolKey = decodeURIComponent(authorizeMatch[1]!);
+      sendJson(res, 200, await api.authorizeTool(toolKey));
+      return;
+    }
     if (path === "/api/settings/google" && method === "GET") {
       sendJson(res, 200, await api.getGoogleSetup());
       return;

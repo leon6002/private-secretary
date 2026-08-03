@@ -44,6 +44,9 @@ export interface DraftDeps {
   // handle (senderHandle / email) → persona, or null for a new contact.
   resolvePersona: (senderHandle: string) => Persona | null;
   knownPersonaKeys: string[];
+  // Connected MCP tool keys the model may pick for params.tool (defaults +
+  // user config). Absent → the prompt falls back to its built-in jira hint.
+  toolKeys?: string[];
   // Decode a message's image attachments to local file paths the LLM can read
   // (WeChat: decode_image; Slack: download url_private). Injected so draft.ts
   // stays I/O-free. A decode that throws is skipped — the draft still proceeds
@@ -207,6 +210,7 @@ export async function draftActions(
       persona,
       messages: batch,
       knownPersonaKeys: deps.knownPersonaKeys,
+      toolKeys: deps.toolKeys,
       leoProfile: deps.leoProfile,
       projectContext,
       projectCatalog,

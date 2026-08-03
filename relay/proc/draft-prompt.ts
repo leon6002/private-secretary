@@ -57,7 +57,7 @@ export const ACTION_ITEM_TOOL_SCHEMA: Record<string, unknown> = {
         properties: {
           action_type: {
             type: "string",
-            enum: ["reply", "calendar", "task", "ignore"],
+            enum: ["reply", "calendar", "task", "ignore", "tool"],
           },
           target: {
             type: "object",
@@ -72,7 +72,7 @@ export const ACTION_ITEM_TOOL_SCHEMA: Record<string, unknown> = {
           params: {
             type: "object",
             description:
-              "per-type: calendar needs {title,start,end,attendees,location?,description?} (location = the place name/address; put a Google Maps search link in description); task needs {title}; ignore needs {category}; brief = {brief:true,title}",
+              "per-type: calendar needs {title,start,end,attendees,location?,description?} (location = the place name/address; put a Google Maps search link in description); task needs {title}; ignore needs {category}; tool needs {tool,mcp_tool?,project,summary,description,assignee?} (tool = the MCP key, e.g. \"jira\"; mcp_tool = the specific MCP server tool to call, e.g. \"create_page\" for a URL-based MCP); brief = {brief:true,title}",
           },
           draft: { type: "string", description: "the message text for a reply" },
           headline: {
@@ -153,6 +153,12 @@ ACTION TYPES (a sender's batch may yield several, or none):
   make a task out of ordinary conversation. Also use a task (NOT a reply) when
   something should be passed to a DIFFERENT person — cross-platform forwarding is
   disabled; flag it as a task for Leo to route.
+- tool: process a tracked item through a connected MCP tool — a reported bug,
+  feature request, or backlog item. params {tool (the tool key, e.g. "notion"),
+  mcp_tool (the specific MCP server tool to call, e.g. "notion-create-pages"
+  for Notion / "jira_create_issue" for Jira — use the tool's real name),
+  project, summary, description, assignee?}. A reported bug/feature is a tool
+  card, NOT a plain task.
 - ignore: newsletter / automated / already-handled. params {category}.
 
 MULTI-STEP SCENARIOS (orchestrate, don't flatten): a real exchange is often a
@@ -318,6 +324,9 @@ export function buildDraftRequest(opts: {
   projectContext?: string;
   projectCatalog?: string;
   relatedContext?: string;
+  // The connected MCP tools the model may pick for params.tool (built-ins +
+  // the user's config). Absent → the built-in jira hint still applies.
+  toolKeys?: string[];
   // The model's clock anchor: `now` = current time as ISO UTC, `nowLocal` =
   // the same instant in the machine's local timezone (Leo's senders share it).
   // WHY: without an anchor the model resolves relative dates ("晚上9点",
@@ -357,11 +366,17 @@ export function buildDraftRequest(opts: {
       ? `\n\nPROJECT CATALOG — set project_id to the BEST-FITTING id below by topic/domain (the message need not name it); "MISC" only if none genuinely fit:\n${opts.projectCatalog.trim()}`
       : "";
   const userText = `${timeLine}${personaBlock}${projectBlock}${catalogBlock}${relatedBlock}\n\nNEW MESSAGES FROM THIS SENDER:\n${msgBlock}${recipientHint}\n\nDecide the action items and call ${TOOL_NAME}.`;
+  // The connected MCP tools the model may route a tool card to.
+  const toolHint =
+    opts.toolKeys && opts.toolKeys.length > 0
+      ? `\n\nCONNECTED MCP TOOLS (for params.tool — pick from these keys): ${opts.toolKeys.join(", ")}`
+      : "";
   // Leo profile conditions HOW to decide (priorities, delegation, decision style,
   // hard rules) so the action is the one LEO would take.
+  const base = systemBase() + toolHint;
   const system = opts.leoProfile && opts.leoProfile.trim()
-    ? `${systemBase()}\n\n## HOW LEO DECIDES (decide as Leo would — his priorities, delegation, style, hard rules; do NOT override the HARD RULES above):\n${opts.leoProfile.trim()}`
-    : systemBase();
+    ? `${base}\n\n## HOW LEO DECIDES (decide as Leo would — his priorities, delegation, style, hard rules; do NOT override the HARD RULES above):\n${opts.leoProfile.trim()}`
+    : base;
   return {
     system,
     userText,

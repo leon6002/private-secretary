@@ -66,6 +66,14 @@ import {
 } from "../io/activity-log.js";
 import { LLM_MODES, loadSettings, saveSettings, type LlmMode } from "../io/settings.js";
 import {
+  effectiveToolSpecs,
+  loadToolsConfig,
+  saveToolsConfig,
+  type ToolsConfig,
+} from "../io/tools.js";
+import { DEFAULT_TOOL_SPECS, type ToolSpec } from "../core/tool-registry.js";
+import { authorizeMcpTool, mcpAuthServiceFor } from "../io/mcp-tool.js";
+import {
   ANTHROPIC_KEY_ACCOUNT,
   ANTHROPIC_KEY_SERVICE,
   resolveAnthropicKey,
@@ -161,6 +169,9 @@ export interface CockpitState {
     tasks: number; // distinct task clusters with a pending member
     awaitingManual: number;
   };
+  // The effective MCP tool registry (built-ins + user config) — the Queue's
+  // "via" picker lists these.
+  tools: Record<string, { label: string }>;
 }
 
 export class CockpitApi {
@@ -206,6 +217,7 @@ export class CockpitApi {
 
   getState(): CockpitState {
     const state = loadState(this.opts.statePath);
+    const tools = effectiveToolSpecs(this.opts.statePath);
     const resolveName = this.buildNameResolver();
     const resolveProject = this.buildProjectResolver();
     // Attach resolved display names (sender + recipient) + project name so the UI
@@ -219,7 +231,7 @@ export class CockpitApi {
     });
     const suggested = state.actions
       .filter((a) => a.status === "suggested")
-      .map((a) => named({ ...a, missing_info: missingInfo(a) }));
+      .map((a) => named({ ...a, missing_info: missingInfo(a, tools) }));
     const awaitingManual = state.actions.filter(
       (a) => a.status === "approved" && requiresManualExecution(a),
     );
@@ -236,7 +248,7 @@ export class CockpitApi {
     // flat `suggested` array isn't what the Queue master list renders from).
     const live = state.actions
       .filter((a) => a.status === "suggested" || a.status === "approved")
-      .map((a) => named({ ...a, missing_info: missingInfo(a) }));
+      .map((a) => named({ ...a, missing_info: missingInfo(a, tools) }));
     const clustersRaw = groupByTask(live, state.tasks);
     // Attach the daily-plan (tier / rank / why / entities) to each cluster and
     // order the Today list A→D then by rank. Unplanned clusters sink to the end.
@@ -285,6 +297,7 @@ export class CockpitApi {
         tasks: pendingTaskIds.size,
         awaitingManual: awaitingManual.length,
       },
+      tools,
     };
   }
 
@@ -294,9 +307,10 @@ export class CockpitApi {
   getProjects(): { projects: Array<Record<string, unknown>>; misc: Array<Record<string, unknown>> } {
     const projects = loadProjects(this.projectsDir());
     const resolveName = this.buildNameResolver();
+    const tools = effectiveToolSpecs(this.opts.statePath);
     const live = loadState(this.opts.statePath).actions
       .filter((a) => a.status === "suggested" || a.status === "approved")
-      .map((a) => ({ ...a, missing_info: missingInfo(a) }));
+      .map((a) => ({ ...a, missing_info: missingInfo(a, tools) }));
     const cardLite = (a: ActionItem & { missing_info: string[] }): Record<string, unknown> => ({
       id: a.id,
       action_type: a.action_type,
@@ -565,6 +579,69 @@ export class CockpitApi {
     return createClaudeCliJsonCaller();
   }
 
+  // ─── MCP tools (Settings → Tools) ─────────────────────────────────
+  // The user's connected task-processing MCPs live in config/tools.json
+  // (relay/io/tools.ts) — built-in defaults are never written, only merged.
+  async getToolsConfig(): Promise<{
+    tools: ToolsConfig["tools"];
+    effective: Record<string, ToolSpec>;
+    defaults: string[];
+    // For URL-based MCP tools: whether a Keychain OAuth token already exists
+    // (so the Settings page can show "Connected" instead of "Connect").
+    authorized: Record<string, boolean>;
+  }> {
+    const effective = effectiveToolSpecs(this.opts.statePath);
+    const authorized: Record<string, boolean> = {};
+    for (const [key, spec] of Object.entries(effective)) {
+      const cfg = spec.config ?? {};
+      if (cfg.type === "mcp" && cfg.url) {
+        authorized[key] = await hasSecret(mcpAuthServiceFor(key, cfg.authService), cfg.url);
+      }
+    }
+    return {
+      tools: loadToolsConfig(this.opts.statePath).tools,
+      effective,
+      defaults: Object.keys(DEFAULT_TOOL_SPECS),
+      authorized,
+    };
+  }
+
+  // Trigger the OAuth flow for a URL-based MCP tool — the Settings page's
+  // "Connect" button. Opens the browser, stores the token, returns when done.
+  async authorizeTool(toolKey: string): Promise<{ ok: true; service: string }> {
+    const spec = effectiveToolSpecs(this.opts.statePath)[toolKey];
+    if (!spec) throw new CockpitBadRequestError(`unknown tool: ${toolKey}`);
+    const cfg = spec.config ?? {};
+    if (cfg.type !== "mcp" || !cfg.url) {
+      throw new CockpitBadRequestError(
+        `${toolKey} is not a URL-based MCP tool (needs config.type="mcp" and a url)`,
+      );
+    }
+    const service = mcpAuthServiceFor(toolKey, cfg.authService);
+    await authorizeMcpTool(cfg.url, service);
+    return { ok: true, service };
+  }
+
+  setToolsConfig(config: { tools?: Record<string, unknown> }): { tools: ToolsConfig["tools"] } {
+    const clean: ToolsConfig = { tools: {} };
+    for (const [key, raw] of Object.entries(config.tools ?? {})) {
+      const spec = (raw ?? {}) as Partial<ToolSpec>;
+      clean.tools[key] = {
+        key,
+        label: typeof spec.label === "string" && spec.label ? spec.label : key,
+        requiredParams: Array.isArray(spec.requiredParams)
+          ? spec.requiredParams.filter((p): p is string => typeof p === "string")
+          : [],
+        ...(spec.config && typeof spec.config === "object"
+          ? { config: spec.config as Record<string, string> }
+          : {}),
+      };
+    }
+    saveToolsConfig(this.opts.statePath, clean);
+    this.activity("edit", "settings: MCP tools updated");
+    return { tools: clean.tools };
+  }
+
   // ─── settings (Settings screen, S3) ───────────────────────────────
   // Non-secret LLM config lives in config/secretary-settings.json (relay/io/
   // settings.ts); the API keys themselves live ONLY in the macOS Keychain.
@@ -803,7 +880,9 @@ export class CockpitApi {
       let state = loadState(this.opts.statePath);
       const action = this.findOrThrow(state, id);
       // approveAction throws on missing-info — surfaced as 400 by the server.
-      const approved = approveAction(action);
+      // Uses the EFFECTIVE tool registry so a user-configured tool's required
+      // params gate approval too, not just the built-in ones.
+      const approved = approveAction(action, effectiveToolSpecs(this.opts.statePath));
       this.replace(state, approved);
       saveState(this.opts.statePath, state); // persist approval before execute
 
@@ -895,10 +974,15 @@ export class CockpitApi {
         }
         if (siblings.length > 0) saveState(this.opts.statePath, state);
       }
+      // A tool execution's result ref (e.g. the stub ticket key) goes on the
+      // approve line so the Activity page shows WHAT the tool produced — the
+      // user shouldn't have to hunt the terminal for it.
+      const toolRef =
+        result.receipt?.kind === "tool_result" ? ` → ${result.receipt.ref}` : "";
       this.activity(
         "approve",
-        `approved ${approved.action_type} "${CockpitApi.headlineOf(approved)}" → ${result.action.status}${result.awaitingManual ? " (awaiting manual)" : ""}`,
-        { id, action_type: approved.action_type, status: result.action.status },
+        `approved ${approved.action_type} "${CockpitApi.headlineOf(approved)}" → ${result.action.status}${toolRef}${result.awaitingManual ? " (awaiting manual)" : ""}`,
+        { id, action_type: approved.action_type, status: result.action.status, ...(toolRef ? { ref: result.receipt?.ref } : {}) },
       );
       return {
         ok: true,

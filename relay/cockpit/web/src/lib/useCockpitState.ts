@@ -58,6 +58,12 @@ export interface QueueAction {
     start?: string;
     end?: string;
     location?: string;
+    // tool cards: which MCP tool processes it + the tool-specific payload.
+    tool?: string;
+    project?: string;
+    summary?: string;
+    description?: string;
+    assignee?: string;
     _edited?: boolean;
     execution_receipt?: { kind: string; at?: string };
   };
@@ -111,6 +117,9 @@ export interface CockpitStateData {
   sourceErrors?: Record<string, SourceError>;
   gate?: unknown;
   counts?: { pending: number; tasks: number; awaitingManual: number };
+  // The effective MCP tool registry (built-ins + user config) — the Queue's
+  // "via" picker lists these.
+  tools?: Record<string, { label: string }>;
 }
 
 // See the header comment: the Queue screen's draft-edit flag, readable by the

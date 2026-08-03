@@ -52,7 +52,7 @@ async function main(): Promise<void> {
     personaDir: args.personaDir,
     projectsDir: args.projectsDir,
     port: args.port,
-    executor: args.dryRun ? createDryExecutor() : createWiredExecutor(),
+    executor: args.dryRun ? createDryExecutor(args.statePath) : createWiredExecutor(args.statePath),
   });
   console.log(`[cockpit] serving ${cockpit.url}`);
   console.log(`[cockpit] state=${args.statePath}`);

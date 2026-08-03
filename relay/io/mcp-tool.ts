@@ -1,0 +1,273 @@
+// Real MCP tool runner built on the official @modelcontextprotocol/sdk — not a
+// hand-rolled protocol. A tool with `config.type: "mcp"` + `config.url`
+// connects over Streamable HTTP; OAuth (the Notion-style flow) is handled by
+// the SDK's auth layer with a Keychain-backed provider + a loopback callback:
+//
+//   1. connect with any stored token (Keychain, per authService)
+//   2. expired → the provider silently refreshes; refresh fails or no token →
+//      the SDK calls redirectToAuthorization (we open the browser) and throws
+//      UnauthorizedError
+//   3. the loopback server captures the auth code → transport.finishAuth(code)
+//   4. reconnect → client.callTool({ name: params.mcp_tool ?? defaultTool })
+//
+// The tool's Keychain token lives at service `authService` (default
+// `taiv-secretary-mcp-<key>`), account = the tool key.
+
+import { spawn } from "node:child_process";
+import { createServer, type Server } from "node:http";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { OAuthClientProvider, UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
+import type {
+  OAuthClientInformationMixed,
+  OAuthClientMetadata,
+  OAuthTokens,
+} from "@modelcontextprotocol/sdk/shared/auth.js";
+import { getJSON, setJSON, deleteSecret } from "./keychain.js";
+import type { ToolRunner } from "../proc/execute.js";
+
+// ─── the OAuth client provider (Keychain-backed) ────────────────────
+
+// A provider instance is bound to one authService (the Keychain slot holding
+// that tool's OAuth tokens) and one redirectUrl (the loopback callback).
+class McpOAuthProvider implements OAuthClientProvider {
+  private pendingCode: string | null = null;
+  private pendingVerifier: string | null = null;
+  private clientInfo: OAuthClientInformationMixed | undefined;
+
+  constructor(
+    private readonly authService: string,
+    private readonly account: string,
+    private readonly redirect: URL,
+  ) {}
+
+  // The registered client info (dynamic registration) persists in Keychain so
+  // a later run reuses the same client_id instead of re-registering.
+  private clientInfoService(): string {
+    return `${this.authService}-client`;
+  }
+
+  async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
+    if (this.clientInfo) return this.clientInfo;
+    return getJSON<OAuthClientInformationMixed>(this.clientInfoService(), this.account).catch(
+      () => undefined,
+    );
+  }
+
+  async saveClientInformation(info: OAuthClientInformationMixed): Promise<void> {
+    this.clientInfo = info;
+    await setJSON(this.clientInfoService(), this.account, info);
+  }
+
+  async clearClientInformation(): Promise<void> {
+    this.clientInfo = undefined;
+    await deleteSecret(this.clientInfoService(), this.account);
+  }
+
+  get redirectUrl(): URL {
+    return this.redirect;
+  }
+
+  get clientMetadata(): OAuthClientMetadata {
+    return {
+      redirect_uris: [this.redirect.toString()],
+      grant_types: ["authorization_code", "refresh_token"],
+      token_endpoint_auth_method: "none",
+      client_name: "Private Secretary",
+    };
+  }
+
+  state(): string {
+    return crypto.randomUUID();
+  }
+
+  async tokens(): Promise<OAuthTokens | undefined> {
+    return getJSON<OAuthTokens>(this.authService, this.account).catch(() => undefined);
+  }
+
+  async saveTokens(tokens: OAuthTokens): Promise<void> {
+    await setJSON(this.authService, this.account, tokens);
+  }
+
+  async redirectToAuthorization(url: URL): Promise<void> {
+    this.pendingCode = null;
+    // macOS `open`; other platforms fall through (the URL is also returned).
+    spawn("open", [url.toString()], { detached: true, stdio: "ignore" }).unref();
+  }
+
+  async saveCodeVerifier(codeVerifier: string): Promise<void> {
+    this.pendingVerifier = codeVerifier;
+  }
+
+  async codeVerifier(): Promise<string> {
+    return this.pendingVerifier ?? "";
+  }
+}
+
+// ─── connect + auth retry loop ───────────────────────────────────────
+
+interface McpConnection {
+  transport: StreamableHTTPClientTransport;
+  client: Client;
+}
+
+// Start a loopback server that captures the OAuth authorization code.
+function startCallbackServer(): Promise<{
+  server: Server;
+  redirectUrl: URL;
+  waitForCode: () => Promise<string>;
+}> {
+  return new Promise((resolve) => {
+    let resolveCode: (code: string) => void = () => {};
+    const codePromise = new Promise<string>((r) => {
+      resolveCode = r;
+    });
+    const server = createServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      const code = url.searchParams.get("code") ?? "";
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end("<h1>Authorized — you can close this tab.</h1>");
+      resolveCode(code);
+      server.close();
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      const port = typeof addr === "object" && addr ? addr.port : 0;
+      const redirectUrl = new URL(`http://127.0.0.1:${port}/callback`);
+      resolve({ server, redirectUrl, waitForCode: () => codePromise });
+    });
+  });
+}
+
+// The browser OAuth dance should finish in well under two minutes. If it
+// doesn't (no popup, user closed the tab, discovery failed), fail loudly
+// instead of hanging the "Connect" button on "Authorizing…" forever.
+const OAUTH_CALLBACK_TIMEOUT_MS = 120_000;
+
+async function connect(url: string, authService: string, account: string): Promise<McpConnection> {
+  const { server, redirectUrl, waitForCode } = await startCallbackServer();
+  const provider = new McpOAuthProvider(authService, account, redirectUrl);
+  const transport = new StreamableHTTPClientTransport(new URL(url), {
+    authProvider: provider,
+  });
+  const client = new Client({ name: "private-secretary", version: "1.0.0" });
+
+  try {
+    await client.connect(transport);
+    // Already authorized (token present) — the callback server was only for the
+    // OAuth code; close it so it doesn't keep the process alive.
+    server.close();
+  } catch (e) {
+    // The SDK threw UnauthorizedError after redirectToAuthorization opened the
+    // browser. Wait for the loopback callback to capture the code, finish the
+    // auth handshake, then reconnect once. A timeout so a failed flow doesn't
+    // hang the caller forever. (The callback handler closes the server.)
+    if (e instanceof UnauthorizedError) {
+      console.log(`[mcp] ${url}: OAuth needed — browser should open for ${redirectUrl}`);
+      const code = await Promise.race([
+        waitForCode(),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `OAuth authorization timed out (${OAUTH_CALLBACK_TIMEOUT_MS / 1000}s) — the browser flow did not complete.`,
+                ),
+              ),
+            OAUTH_CALLBACK_TIMEOUT_MS,
+          ),
+        ),
+      ]);
+      await transport.finishAuth(code);
+      await client.connect(transport);
+    } else {
+      console.error(`[mcp] ${url}: connect failed: ${(e as Error).message ?? String(e)}`);
+      server.close();
+      throw e;
+    }
+  }
+  return { transport, client };
+}
+
+// ─── the ToolRunner ─────────────────────────────────────────────────
+
+export interface McpToolOptions {
+  url: string;
+  authService: string;
+  defaultTool?: string;
+}
+
+// Build a real-MCP ToolRunner for a URL-based (OAuth) server. The tool to call
+// is `params.mcp_tool` (the LLM names it), falling back to config.defaultTool.
+export function createMcpToolRunner(opts: McpToolOptions): ToolRunner {
+  return {
+    run: async (params: Record<string, unknown>) => {
+      const toolName =
+        (typeof params.mcp_tool === "string" && params.mcp_tool) || opts.defaultTool || "";
+      if (!toolName) {
+        throw new Error(`no mcp_tool in params and no defaultTool for ${opts.url}`);
+      }
+      // Strip our own envelope keys before they leak into the tool arguments.
+      const { mcp_tool: _t, ...args } = params;
+
+      const { client } = await connect(opts.url, opts.authService, opts.url);
+      try {
+        const res = await client.callTool({ name: toolName, arguments: args });
+        const text = callResultText(res);
+        return { ref: extractRef(text, toolName) };
+      } finally {
+        await client.close().catch(() => {});
+      }
+    },
+  };
+}
+
+// Concatenate a callTool result's text blocks (or JSON.stringify the rest).
+function callResultText(res: unknown): string {
+  const content = (res as { content?: unknown } | null)?.content;
+  if (Array.isArray(content)) {
+    const parts = content.map((c) => {
+      const obj = c as { text?: unknown };
+      return typeof obj?.text === "string" ? obj.text : JSON.stringify(c);
+    });
+    return parts.join("\n");
+  }
+  return JSON.stringify(res);
+}
+
+// Trigger ONLY the OAuth handshake for a URL-based MCP tool (no tool call) —
+// the Settings page's "Connect" button. Runs the browser flow, stores the
+// token in Keychain, then disconnects. A tool whose token already exists
+// returns immediately (already authorized).
+export async function authorizeMcpTool(url: string, authService: string): Promise<void> {
+  const { client } = await connect(url, authService, url);
+  await client.close().catch(() => {});
+}
+
+// Debug / introspection: list the MCP server's tool names (to learn which
+// tool a card's params.mcp_tool should name).
+export async function listMcpTools(url: string, authService: string): Promise<string[]> {
+  const { client } = await connect(url, authService, url);
+  try {
+    const res = await client.listTools();
+    return res.tools.map((t) => t.name);
+  } finally {
+    await client.close().catch(() => {});
+  }
+}
+
+// A short stable ref for the receipt: the server's text first line, trimmed.
+function extractRef(text: string, toolName: string): string {
+  const first = text.split("\n")[0]?.trim().slice(0, 80) ?? "";
+  return first ? `${toolName}: ${first}` : `${toolName}: ok`;
+}
+
+// The keychain service for a tool key's OAuth tokens, unless configured.
+export function mcpAuthServiceFor(toolKey: string, configured?: string): string {
+  return configured || `taiv-secretary-mcp-${toolKey}`;
+}
+
+// Debug / manual revoke: drop a tool's stored OAuth tokens.
+export async function clearMcpTokens(authService: string, account: string): Promise<void> {
+  await deleteSecret(authService, account);
+}

@@ -10,6 +10,7 @@ export const ALWAYS_CONFIRM: ReadonlySet<ActionType> = new Set([
   "reply",
   "relay",
   "forward",
+  "tool",
 ]);
 
 // Auto-execute threshold for low-risk types — IGNORE ONLY. Hard-coded

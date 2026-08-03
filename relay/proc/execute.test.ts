@@ -309,6 +309,61 @@ describe("executeAction — local types", () => {
   });
 });
 
+describe("executeAction — tool (connected MCP, stubbed runner)", () => {
+  it("dispatches to the tool's runner and marks executed with a tool_result receipt", async () => {
+    const run = vi.fn(async () => ({ ref: "BKO-123" }));
+    const r = await executeAction(
+      action({
+        action_type: "tool",
+        target: { platform: "jira", personaKey: null },
+        params: {
+          tool: "jira",
+          project: "BKO",
+          summary: "Homepage breaks on iOS",
+          description: "Repro in the 2.4 build",
+          assignee: "leo",
+        },
+        draft: undefined,
+      }),
+      deps({ tools: { jira: { run } } }),
+    );
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tool: "jira",
+        project: "BKO",
+        summary: "Homepage breaks on iOS",
+        assignee: "leo",
+      }),
+    );
+    expect(r.receipt).toEqual({ kind: "tool_result", ref: "BKO-123", at: NOW });
+    expect(r.action.status).toBe("executed");
+    expect(r.awaitingManual).toBe(false);
+  });
+
+  it("errors clearly when no runner is configured for the selected tool", async () => {
+    await expect(
+      executeAction(
+        action({
+          action_type: "tool",
+          target: { platform: "jira", personaKey: null },
+          params: { tool: "jira", project: "BKO", summary: "x", description: "y" },
+          draft: undefined,
+        }),
+        deps({}),
+      ),
+    ).rejects.toThrow(/no runner configured for tool "jira"/);
+  });
+
+  it("errors when the card has no tool key at all", async () => {
+    await expect(
+      executeAction(
+        action({ action_type: "tool", target: {}, params: {}, draft: undefined }),
+        deps({ tools: { jira: { run: async () => ({ ref: "X-1" }) } } }),
+      ),
+    ).rejects.toThrow(/no runner configured for tool "\(none\)"/);
+  });
+});
+
 describe("toRfc3339 — datetime normalization (Calendar HTTP 400 guard)", () => {
   it("adds the default offset to a bare local datetime", () => {
     expect(toRfc3339("2026-08-05T09:00:00")).toBe("2026-08-05T09:00:00+08:00");

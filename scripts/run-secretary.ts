@@ -20,6 +20,7 @@ import { runScanTick } from "../relay/proc/scan-loop.js";
 import { notify } from "../relay/proc/notify.js";
 import { loadPersonas } from "../relay/io/personas.js";
 import { buildPersonaResolver, type DraftDeps } from "../relay/proc/draft.js";
+import { effectiveToolSpecs } from "../relay/io/tools.js";
 import { createAnthropicLlmCaller } from "../relay/proc/llm-anthropic.js";
 import { createClaudeCliLlmCaller } from "../relay/proc/llm-claude-cli.js";
 import { createDeepseekLlmCaller } from "../relay/proc/llm-deepseek.js";
@@ -99,7 +100,13 @@ async function buildDraft(args: Args): Promise<DraftDeps | undefined> {
       loadPersonas(args.personaDir),
     );
     console.log(`[secretary] drafting enabled via ${mode} (${keys.length} personas indexed)`);
-    return { llm, resolvePersona, knownPersonaKeys: keys };
+    return {
+      llm,
+      resolvePersona,
+      knownPersonaKeys: keys,
+      // Connected MCP tools the LLM may route tool cards to.
+      toolKeys: Object.keys(effectiveToolSpecs(args.statePath)),
+    };
   } catch (e) {
     console.log(
       `[secretary] drafting DISABLED — ${(e as Error).message.split("\n")[0]}. Running scan-only.` +

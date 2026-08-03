@@ -854,3 +854,42 @@ describe("reTime (AI calendar re-time)", () => {
     await expect(api.reTime("c1", "   ")).rejects.toThrow(/empty/);
   });
 });
+
+describe("tools config (Settings → Tools)", () => {
+  // Same isolation trick as the settings tests: the api needs a state file
+  // nested in a state/ dir so toolsPathFor resolves the config dir TWO levels
+  // up into the per-test temp dir — not $TMPDIR (which would leak the config
+  // across tests / test files).
+  let toolsStatePath: string;
+  beforeEach(() => {
+    mkdirSync(join(dir, "state"), { recursive: true });
+    toolsStatePath = join(dir, "state", "loop-state.json");
+    writeFileSync(
+      toolsStatePath,
+      JSON.stringify({ version: 2, marks: {}, actions: [], outcomes: [], sourceErrors: {}, tasks: {} }),
+    );
+  });
+  const toolsApi = () =>
+    new CockpitApi({
+      statePath: toolsStatePath,
+      personaDir,
+      executor: sendingExecutor,
+      now: () => "2026-06-14T12:00:00Z",
+    });
+
+  it("getToolsConfig returns user overrides + the effective merged registry", async () => {
+    const cfg = await toolsApi().getToolsConfig();
+    expect(cfg.tools).toEqual({}); // no config file → no overrides
+    expect(cfg.effective.jira).toBeDefined(); // built-in jira always present
+  });
+
+  it("setToolsConfig persists overrides; effective includes them", async () => {
+    toolsApi().setToolsConfig({
+      tools: { notion: { key: "notion", label: "Notion", requiredParams: ["title"] } },
+    });
+    const cfg = await toolsApi().getToolsConfig();
+    expect(cfg.tools.notion?.label).toBe("Notion");
+    expect(cfg.effective.notion?.label).toBe("Notion");
+    expect(cfg.effective.jira).toBeDefined(); // built-ins survive the merge
+  });
+});

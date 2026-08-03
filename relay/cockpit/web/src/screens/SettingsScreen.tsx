@@ -12,7 +12,9 @@
 // /api/settings is fetched once by the screen and shared by the Model + Keys
 // tabs; Key saves call reload() so the status dots/previews refresh.
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { Info, Plus } from "lucide-react";
 import Button from "../components/Button";
+import { Textarea } from "../components/ui/textarea";
 import Tabs from "../components/Tabs";
 import { apiGet, apiPost } from "../lib/api";
 import { cn } from "../lib/cn";
@@ -631,6 +633,173 @@ function ActivityTab() {
   );
 }
 
+// ─── MCP Tools ───────────────────────────────────────────────────────
+// The connected task-processing MCPs (config/tools.json). Built-in tools
+// (jira) are always available; this tab manages ADDITIONAL / override tools
+// the user wired. Saving POSTs the user config; the effective registry
+// (built-ins merged) shows up in the Queue's "via" picker.
+
+interface ToolConfigEntry {
+  label: string;
+  requiredParams: string[];
+  config?: Record<string, string>;
+}
+type EffectiveTool = { label: string; requiredParams: string[]; config?: Record<string, string> };
+
+// A raw-JSON editor for the MCP tools config (config/tools.json) — the same
+// shape mainstream clients use: a map of tool-key → spec. Simpler and more
+// flexible than a per-field form; invalid JSON is caught before save.
+function ToolsTab() {
+  const [jsonText, setJsonText] = useState("");
+  const [effective, setEffective] = useState<Record<string, EffectiveTool>>({});
+  const [authorized, setAuthorized] = useState<Record<string, boolean>>({});
+  const [saving, setSaving] = useState(false);
+  const [authorizingKey, setAuthorizingKey] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(() => {
+    apiGet<{
+      tools: Record<string, ToolConfigEntry>;
+      effective: Record<string, EffectiveTool>;
+      authorized: Record<string, boolean>;
+    }>("/api/settings/tools")
+      .then((d) => {
+        setJsonText(JSON.stringify(d.tools ?? {}, null, 2));
+        setEffective(d.effective ?? {});
+        setAuthorized(d.authorized ?? {});
+      })
+      .catch((e) => toast(e instanceof Error ? e.message : String(e), true));
+  }, []);
+  useEffect(reload, [reload]);
+
+  const connectTool = async (key: string) => {
+    setAuthorizingKey(key);
+    try {
+      await apiPost(`/api/settings/tools/${encodeURIComponent(key)}/authorize`, {});
+      toast(`${key} connected`);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setAuthorizingKey(null);
+      reload();
+    }
+  };
+
+  // URL-based MCP tools (the ones that need OAuth) → the "Connect" list.
+  const mcpTools = Object.entries(effective).filter(
+    ([, s]) => s.config?.type === "mcp" && s.config?.url,
+  );
+
+  const save = async () => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch (e) {
+      setError(`Invalid JSON — ${(e as Error).message}`);
+      return;
+    }
+    setError(null);
+    setSaving(true);
+    try {
+      await apiPost("/api/settings/tools", { tools: parsed });
+      toast("Tools saved");
+      reload();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const activeTools = Object.entries(effective)
+    .map(([k, s]) => `${s.label} (${k})`)
+    .join(", ");
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <h2 className="text-body-large text-on-surface font-medium">MCP tools</h2>
+        <p className="text-label-sm text-on-surface-variant mt-1 max-w-[60ch] leading-relaxed">
+          Edit config/tools.json as JSON — the same shape mainstream clients use (a map of tool key →
+          spec). Approve runs a stub until each tool's real MCP runner is wired.
+        </p>
+      </div>
+
+      <Textarea
+        value={jsonText}
+        onChange={(e) => setJsonText(e.target.value)}
+        aria-label="MCP tools JSON config"
+        spellCheck={false}
+        className="min-h-[240px] w-full font-mono text-label-sm leading-relaxed resize-y"
+        placeholder={`{
+  "notion": {
+    "label": "Notion",
+    "requiredParams": ["title", "content"],
+    "config": {
+      "type": "mcp",
+      "url": "https://mcp.notion.com/mcp",
+      "defaultTool": "notion-create-pages"
+    }
+  }
+}`}
+      />
+
+      {error && <div className="text-red-600 text-label-sm">{error}</div>}
+
+      {/* OAuth connections for URL-based MCP tools — connect directly here. */}
+      {mcpTools.length > 0 && (
+        <div className="rounded-xl border border-outline overflow-hidden bg-surface">
+          <div className="px-4 py-2.5 border-b border-outline text-label-sm text-on-surface-variant">
+            Connections
+          </div>
+          {mcpTools.map(([key, s]) => {
+            const connected = authorized[key];
+            const url = s.config?.url ?? "";
+            return (
+              <div
+                key={key}
+                className="px-4 py-2.5 flex items-center justify-between gap-3 border-b border-outline last:border-b-0"
+              >
+                <div className="min-w-0">
+                  <div className="text-body-medium text-on-surface truncate">
+                    {s.label} <code className="text-label-xs font-mono text-on-surface-variant">({key})</code>
+                  </div>
+                  <div className="text-label-xs text-on-surface-variant truncate">{url}</div>
+                </div>
+                {connected ? (
+                  <span className="text-label-sm text-emerald-600 flex-shrink-0">✓ Connected</span>
+                ) : (
+                  <Button
+                    variant="primary"
+                    disabled={authorizingKey === key}
+                    onClick={() => void connectTool(key)}
+                    className="text-label-sm flex-shrink-0"
+                  >
+                    {authorizingKey === key ? "Authorizing…" : "Connect"}
+                  </Button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="rounded-lg border border-outline bg-surface-variant/60 px-3.5 py-2.5 text-label-sm text-on-surface-variant">
+        <span className="font-medium text-on-surface">Active:</span> {activeTools || "—"}
+      </div>
+
+      <div className="flex items-center justify-end gap-3">
+        <p className="text-label-sm text-on-surface-variant">
+          The Queue "via" picker and missing-info checks pick this up immediately after save.
+        </p>
+        <Button variant="primary" disabled={saving} onClick={() => void save()}>
+          {saving ? "Saving…" : "Save changes"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ─── screen ──────────────────────────────────────────────────────────
 
 const TABS = [
@@ -638,6 +807,7 @@ const TABS = [
   { id: "model", label: "Model" },
   { id: "keys", label: "Keys" },
   { id: "google", label: "Google" },
+  { id: "tools", label: "Tools" },
   { id: "activity", label: "Activity" },
 ];
 
@@ -666,6 +836,7 @@ export default function SettingsScreen() {
           {tab === "model" && settings && <ModelTab llm={settings.llm} />}
           {tab === "keys" && settings && <KeysTab keys={settings.keys} onChanged={reload} />}
           {tab === "google" && <GoogleTab />}
+          {tab === "tools" && <ToolsTab />}
           {tab === "activity" && <ActivityTab />}
         </div>
       </div>

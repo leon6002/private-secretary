@@ -27,6 +27,25 @@ export default {
         "on-surface": "var(--on-surface)",
         "on-surface-variant": "var(--on-surface-variant)",
         error: "var(--error)",
+        // shadcn/ui component vocabulary — mapped onto the cockpit tokens so
+        // vendored shadcn components pick up the same palette. bg-background,
+        // text-foreground, border-border, bg-primary, text-muted-foreground…
+        // all resolve here; nothing needs a second HSL variable system.
+        foreground: "var(--on-surface)",
+        card: "var(--surface)",
+        "card-foreground": "var(--on-surface)",
+        "primary-foreground": "#ffffff",
+        secondary: "var(--surface-variant)",
+        "secondary-foreground": "var(--on-surface)",
+        muted: "var(--surface-variant)",
+        "muted-foreground": "var(--on-surface-variant)",
+        accent: "var(--surface-variant)",
+        "accent-foreground": "var(--on-surface)",
+        destructive: "var(--error)",
+        "destructive-foreground": "#ffffff",
+        border: "var(--outline)",
+        input: "var(--outline)",
+        ring: "rgb(var(--primary) / <alpha-value>)",
       },
       borderRadius: { DEFAULT: "6px", lg: "6px", xl: "11px", sm: "4px" },
       fontFamily: {
@@ -44,5 +63,5 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [require("tailwindcss-animate")],
 };

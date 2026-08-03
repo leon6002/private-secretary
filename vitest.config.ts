@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 // Keep vitest scoped to this working tree's source. .claude/worktrees/* are
@@ -8,6 +9,11 @@ import { defineConfig } from "vitest/config";
 // opt into jsdom per-file via a `// @vitest-environment jsdom` docblock, so
 // the Node-side tests see no environment change.
 export default defineConfig({
+  // Resolve the cockpit web app's "@" alias (components import @/lib/cn etc.)
+  // so its jsdom tests build like the app does.
+  resolve: {
+    alias: { "@": fileURLToPath(new URL("./relay/cockpit/web/src", import.meta.url)) },
+  },
   test: {
     include: ["relay/**/*.test.{ts,tsx}"],
     exclude: ["node_modules/**", ".claude/worktrees/**"],
