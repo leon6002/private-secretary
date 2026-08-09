@@ -168,12 +168,10 @@ function slackRow(
       status: `reconnect within ${Math.max(1, Math.ceil(left / 86_400_000))} days`,
     };
   }
-  return {
-    identity: conn.team ? `${conn.account} · ${conn.team}` : conn.account,
-    access,
-    state: "ok",
-    status: "connected",
-  };
+  // Account only, no workspace name. Which workspace the app itself lives in is
+  // our implementation detail, not something the row has to spell out — the
+  // account is what identifies the connection to the person looking at it.
+  return { identity: conn.account, access, state: "ok", status: "connected" };
 }
 
 function ActionButton({

@@ -105,10 +105,13 @@ describe("ConnectionsScreen", () => {
     expect(container.querySelector("table")).toBeTruthy();
   });
 
-  it("shows the connected account and workspace on the Slack row", async () => {
+  // The account identifies the connection; which workspace the app itself is
+  // registered in is an implementation detail the row should not spell out.
+  it("shows the connected account, without the workspace name", async () => {
     stubApi({ sourceErrors: {} }, PKCE_OK);
     render(<ConnectionsScreen />);
-    await screen.findByText("me@example.com · leotest");
+    await screen.findByText("me@example.com");
+    expect(screen.queryByText(/leotest/)).toBeNull();
     expect(within(row("Slack")).getByRole("button", { name: "Reconnect" })).toBeTruthy();
   });
 
