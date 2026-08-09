@@ -155,24 +155,53 @@ bash scripts/launchagent/install.sh || abort "launchd agent install failed"
 # ── 5. Claude Code skills (/relay etc.) ──────────────────────────
 # The runtime is a Claude Code skill — for a fresh user to get /relay, the
 # repo's .claude/skills must be linked into their user-level ~/.claude/skills.
+#
+# ONLY the runtime skills below. .claude/skills also holds development skills
+# (git-workflow, impeccable) that exist to build this product, not to run it —
+# an end user has no business getting /git-workflow in their Claude Code from
+# installing a secretary. Add a skill here only when the SECRETARY needs it.
+RUNTIME_SKILLS=(relay owner-voice persona-bootstrap)
+
 ui_stage "[4/5] Linking Claude Code skills (/relay, /persona-bootstrap…)"
 CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
 mkdir -p "$CLAUDE_SKILLS_DIR"
 linked=0
-for skill_dir in "$INSTALL_DIR/.claude/skills"/*/; do
-    name="$(basename "$skill_dir")"
+for name in "${RUNTIME_SKILLS[@]}"; do
+    skill_dir="$INSTALL_DIR/.claude/skills/$name"
     target="$CLAUDE_SKILLS_DIR/$name"
-    if [[ -L "$target" && "$(readlink "$target")" == "${skill_dir%/}" ]]; then
+    if [[ ! -d "$skill_dir" ]]; then
+        ui_warn "runtime skill '$name' missing from the checkout — skipping"
+        continue
+    fi
+    if [[ -L "$target" && "$(readlink "$target")" == "$skill_dir" ]]; then
         continue  # already linked to this checkout
     fi
     if [[ -e "$target" && ! -L "$target" ]]; then
         ui_warn "~/.claude/skills/$name exists (not ours) — leaving it untouched"
         continue
     fi
-    ln -sfn "${skill_dir%/}" "$target"
+    ln -sfn "$skill_dir" "$target"
     linked=$((linked + 1))
 done
+
+# Earlier installers linked EVERY skill dir, so existing users have dev skills
+# (git-rebase, impeccable…) pointing into this checkout. Retract those. Only
+# symlinks we own — resolving into $INSTALL_DIR — are touched; a user's own
+# skill of the same name is a real dir or points elsewhere, and is left alone.
+unlinked=0
+for target in "$CLAUDE_SKILLS_DIR"/*; do
+    [[ -L "$target" ]] || continue
+    name="$(basename "$target")"
+    [[ "$(readlink "$target")" == "$INSTALL_DIR/.claude/skills/"* ]] || continue
+    for keep in "${RUNTIME_SKILLS[@]}"; do
+        [[ "$name" == "$keep" ]] && continue 2
+    done
+    rm -f "$target"
+    unlinked=$((unlinked + 1))
+done
+
 ui_success "Skills linked into ~/.claude/skills ($linked new)"
+[[ $unlinked -gt 0 ]] && ui_info "Removed $unlinked non-runtime skill link(s) from an older install" || true
 if ! command -v claude &>/dev/null; then
     ui_warn "Claude Code CLI not on PATH — /relay only runs inside Claude Code."
     echo "  Install it: https://claude.com/claude-code"
