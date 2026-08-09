@@ -18,7 +18,9 @@
 #   PRIVATE_SECRETARY_REF    branch/tag to install (default: dev — the main
 #                            branch is still the initial commit; flip the default
 #                            to main once dev is merged)
-#   PRIVATE_SECRETARY_HOME   install directory (default: ~/private-secretary)
+#   PRIVATE_SECRETARY_HOME   install directory (default: ~/.private-secretary —
+#                            hidden, so it never collides with a development
+#                            checkout at ~/private-secretary or anywhere else)
 
 set -euo pipefail
 
@@ -35,7 +37,11 @@ NC='\033[0m'
 REPO_URL="${PRIVATE_SECRETARY_REPO:-https://github.com/LeoTaivDev/private-secretary.git}"
 # main is still the initial commit — everything real lives on dev for now.
 REPO_REF="${PRIVATE_SECRETARY_REF:-dev}"
-INSTALL_DIR="${PRIVATE_SECRETARY_HOME:-$HOME/private-secretary}"
+# Hidden dir by default (OpenClaw convention): a visible ~/private-secretary is
+# almost always someone's DEVELOPMENT checkout — pulling/building/launchd-ing it
+# would run whatever half-edited state it happens to be in. The installer owns
+# this hidden copy; developers keep their own visible checkout elsewhere.
+INSTALL_DIR="${PRIVATE_SECRETARY_HOME:-$HOME/.private-secretary}"
 NODE_MIN_MAJOR=20
 
 ui_info()    { echo -e "${INFO}·${NC} $*"; }
@@ -125,7 +131,8 @@ if [[ -d "$INSTALL_DIR/.git" ]]; then
     fi
 elif [[ -e "$INSTALL_DIR" ]]; then
     abort "$INSTALL_DIR exists but is not a git checkout" \
-          "Move it aside or set PRIVATE_SECRETARY_HOME to a different directory."
+          "Move it aside, or set PRIVATE_SECRETARY_HOME to a different directory." \
+          "Note: a development checkout at ~/private-secretary is NOT touched — the installer uses ~/.private-secretary."
 else
     git clone --branch "$REPO_REF" "$REPO_URL" "$INSTALL_DIR" || abort "git clone failed: $REPO_URL (ref: $REPO_REF)" \
         "Check network/GitHub access, or override: PRIVATE_SECRETARY_REPO=<url> PRIVATE_SECRETARY_REF=<branch> bash install.sh"

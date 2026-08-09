@@ -304,8 +304,10 @@ install_homebrew() {
     <div class="step-body">
       <h2>Clone / update + build <span class="stag">[2/4]</span><span class="tag us">ours</span></h2>
       <p class="what">
-        Lands the code at <code>~/private-secretary</code> (override with
-        <code>PRIVATE_SECRETARY_HOME</code>) and makes it runnable.
+        Lands the code at the hidden <code>~/.private-secretary</code> (override with
+        <code>PRIVATE_SECRETARY_HOME</code>) and makes it runnable. Hidden by design —
+        the OpenClaw convention — so it never collides with a visible development
+        checkout at <code>~/private-secretary</code>.
       </p>
       <div class="sub">
         <h3>Idempotent checkout</h3>
@@ -321,20 +323,23 @@ install_homebrew() {
       <details class="code">
         <summary>View source</summary>
         <pre>REPO_URL=<span class="s">"${PRIVATE_SECRETARY_REPO:-https://github.com/LeoTaivDev/private-secretary.git}"</span>
-INSTALL_DIR=<span class="s">"${PRIVATE_SECRETARY_HOME:-$HOME/private-secretary}"</span>
+REPO_REF=<span class="s">"${PRIVATE_SECRETARY_REF:-dev}"</span>
+<span class="c"># Hidden dir: never collides with a dev checkout at ~/private-secretary</span>
+INSTALL_DIR=<span class="s">"${PRIVATE_SECRETARY_HOME:-$HOME/.private-secretary}"</span>
 
 <span class="k">if</span> [[ -d <span class="s">"$INSTALL_DIR/.git"</span> ]]; <span class="k">then</span>
-    <span class="c"># Update: never clobber a dirty checkout.</span>
+    <span class="c"># Update: never clobber a dirty checkout; switch ref if needed.</span>
     <span class="k">if</span> [[ -n <span class="s">"$(git -C "</span>$INSTALL_DIR<span class="s">" status --porcelain)"</span> ]]; <span class="k">then</span>
         ui_warn <span class="s">"Local changes present — skipping git pull"</span>
     <span class="k">else</span>
+        git -C <span class="s">"$INSTALL_DIR"</span> fetch origin <span class="s">"$REPO_REF"</span>
+        git -C <span class="s">"$INSTALL_DIR"</span> checkout <span class="s">"$REPO_REF"</span>
         git -C <span class="s">"$INSTALL_DIR"</span> pull --ff-only
     <span class="k">fi</span>
 <span class="k">elif</span> [[ -e <span class="s">"$INSTALL_DIR"</span> ]]; <span class="k">then</span>
     abort <span class="s">"$INSTALL_DIR exists but is not a git checkout"</span>
 <span class="k">else</span>
-    git clone <span class="s">"$REPO_URL"</span> <span class="s">"$INSTALL_DIR"</span> || abort <span class="s">"git clone failed: $REPO_URL"</span> \
-        <span class="s">"Check network/GitHub access, or override: PRIVATE_SECRETARY_REPO=&lt;url&gt;"</span>
+    git clone --branch <span class="s">"$REPO_REF"</span> <span class="s">"$REPO_URL"</span> <span class="s">"$INSTALL_DIR"</span>
 <span class="k">fi</span>
 
 <span class="k">cd</span> <span class="s">"$INSTALL_DIR"</span>
@@ -478,8 +483,8 @@ linked=0
   <div class="files">
     <h2>Everything this script creates or modifies</h2>
     <table>
-      <tr><td><code>~/private-secretary/</code><span class="chip write">write</span></td>
-          <td>The full checkout + node_modules + built cockpit bundle.</td></tr>
+      <tr><td><code>~/.private-secretary/</code><span class="chip write">write</span></td>
+          <td>The full checkout + node_modules + built cockpit bundle. Hidden, so a dev checkout at ~/private-secretary is never touched.</td></tr>
       <tr><td><code>~/Library/LaunchAgents/tv.taiv.secretary.plist</code><span class="chip write">write</span></td>
           <td>24/7 scan daemon (KeepAlive, RunAtLoad, 30s throttle).</td></tr>
       <tr><td><code>~/Library/LaunchAgents/tv.taiv.secretary.cockpit.plist</code><span class="chip write">write</span></td>

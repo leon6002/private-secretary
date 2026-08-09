@@ -19,11 +19,12 @@ Runs entirely on your machine. Inference goes through the Claude Code CLI
 curl -fsSL https://raw.githubusercontent.com/LeoTaivDev/private-secretary/main/scripts/install.sh | bash
 ```
 
-One line installs Node.js if needed (via Homebrew), clones into
-`~/private-secretary`, builds the cockpit, starts the 24/7 daemon + the triage
-UI (`http://127.0.0.1:4317`) as launchd agents, and links the `/relay` skill
-into `~/.claude/skills`. Re-running it updates to the latest version. Then open
-the cockpit → Connections to link your accounts.
+One line installs Node.js if needed (via Homebrew), clones into the hidden
+`~/.private-secretary` (so it never collides with your own dev checkout),
+builds the cockpit, starts the 24/7 daemon + the triage UI
+(`http://127.0.0.1:4317`) as launchd agents, and links the `/relay` skill into
+`~/.claude/skills`. Re-running it updates to the latest version. Then open the
+cockpit → Connections to link your accounts.
 
 ## What it does
 
