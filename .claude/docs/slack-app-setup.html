@@ -112,10 +112,10 @@
     border-radius: 10px; padding: 12px 15px; margin: 14px 0 0;
     background: var(--surface); border: 1px solid var(--outline);
   }
-  .note.warn { border-left: 3px solid var(--warn); }
-  .note.err  { border-left: 3px solid var(--err); }
-  .note.ok   { border-left: 3px solid var(--ok); }
-  .note.violet { border-left: 3px solid var(--violet); }
+  .note.warn { border-color: color-mix(in srgb, var(--warn) 40%, var(--outline)); }
+  .note.err  { border-color: color-mix(in srgb, var(--err) 40%, var(--outline)); }
+  .note.ok   { border-color: color-mix(in srgb, var(--ok) 40%, var(--outline)); }
+  .note.violet { border-color: color-mix(in srgb, var(--violet) 40%, var(--outline)); }
   .note p { font-size: 13.5px; }
   .tag {
     display: inline-block; font-size: 10.5px; font-weight: 600;

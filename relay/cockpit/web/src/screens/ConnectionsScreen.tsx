@@ -168,10 +168,15 @@ function slackRow(
       status: `reconnect within ${Math.max(1, Math.ceil(left / 86_400_000))} days`,
     };
   }
-  // Account only, no workspace name. Which workspace the app itself lives in is
-  // our implementation detail, not something the row has to spell out — the
-  // account is what identifies the connection to the person looking at it.
-  return { identity: conn.account, access, state: "ok", status: "connected" };
+  // The workspace shown here is the USER's own — the one they picked on Slack's
+  // consent screen, which is also the workspace their rate-limit bucket belongs
+  // to. It is never the workspace our app happens to be registered in.
+  return {
+    identity: conn.team ? `${conn.account} · ${conn.team}` : conn.account,
+    access,
+    state: "ok",
+    status: "connected",
+  };
 }
 
 function ActionButton({

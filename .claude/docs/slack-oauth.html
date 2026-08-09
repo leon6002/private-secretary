@@ -88,9 +88,9 @@
     border-radius: 11px; padding: 14px 16px;
   }
   .card p { font-size: 13.5px; }
-  .card.ok { border-left: 3px solid var(--ok); }
-  .card.err { border-left: 3px solid var(--err); }
-  .card.warn { border-left: 3px solid var(--warn); }
+  .card.ok { border-color: color-mix(in srgb, var(--ok) 40%, var(--outline)); }
+  .card.err { border-color: color-mix(in srgb, var(--err) 40%, var(--outline)); }
+  .card.warn { border-color: color-mix(in srgb, var(--warn) 40%, var(--outline)); }
   .tag {
     display: inline-block; font-size: 10.5px; font-weight: 600;
     letter-spacing: 0.06em; text-transform: uppercase;
@@ -118,7 +118,7 @@
   .files span { color: var(--on-surface-variant); }
   .callout {
     background: var(--surface); border: 1px solid var(--outline);
-    border-left: 3px solid var(--violet);
+    border-color: color-mix(in srgb, var(--violet) 40%, var(--outline));
     border-radius: 11px; padding: 14px 16px; margin-top: 16px;
   }
 </style>
@@ -310,7 +310,62 @@
     </div>
   </div>
 
-  <h2><span class="n">4</span>One-time setup, on our side only</h2>
+  <h2><span class="n">4</span>Rate limits — the real ceiling</h2>
+  <p class="sec-lede">
+    Nothing caps how many people may install this. What is capped is how fast it can read, and
+    activating public distribution is what put us in the slowest bucket. This is a product
+    constraint, not a tuning detail.
+  </p>
+  <table>
+    <thead><tr><th>App type</th><th><code>conversations.history</code> / <code>.replies</code></th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>Distributed, not on the Marketplace</b><br><span style="color:var(--err)">← what we are now</span></td>
+        <td><b>1 request per minute, max 15 objects per request</b></td>
+      </tr>
+      <tr><td>Internal / custom app (not distributed)</td><td>50+ per minute, up to 1000 objects</td></tr>
+      <tr><td>Marketplace-approved</td><td>Unchanged — the old tier limits</td></tr>
+    </tbody>
+  </table>
+  <p style="margin-top:14px">
+    In force since 2025‑05‑29 and scoped to those two methods only; <code>conversations.list</code>,
+    <code>users.info</code> and the rest keep their normal tiers.
+  </p>
+
+  <h3 style="font-size:15px;font-weight:600;margin:26px 0 6px">Whose workspace the quota belongs to</h3>
+  <p class="sec-lede">
+    The bucket is <b>(app, the installing user's workspace)</b> — Slack's wording is “per API method
+    per workspace/team per app”. The workspace our app is <i>registered</i> in never enters into it,
+    so users at different companies never contend with each other. Colleagues do.
+  </p>
+  <div class="grid">
+    <div class="card ok">
+      <span class="tag ok">Independent</span>
+      <h3>Users at different companies</h3>
+      <p>Each install is its own bucket. Ten customers in ten workspaces get 1 request per minute
+        <b>each</b>. Nothing is shared globally, and our own workspace is not a bottleneck.</p>
+    </div>
+    <div class="card err">
+      <span class="tag err">Shared</span>
+      <h3>Colleagues in one workspace</h3>
+      <p>Slack: “If your app has 10 user tokens … belonging to a single workspace, all 11 tokens draw
+        from the rate limit pool.” Ten teammates share <b>one</b> request per minute between them.</p>
+    </div>
+  </div>
+  <div class="callout">
+    <span class="tag violet">What it costs us</span>
+    <p><code>relay/sources/slack-direct.ts</code> makes one history call per conversation and asks for
+      <code>limit: 200</code> — a number Slack now silently caps at 15. One round over N
+      conversations therefore takes roughly <b>N minutes</b>, against a 30-minute scan interval, and
+      a backlog drains 15 messages at a time.</p>
+    <p style="margin-top:8px">The hand-pasted <code>xoxp-</code> setup this replaced was an internal
+      custom app, so it sat in the exempt row. One-click onboarding was bought with read
+      throughput — worth knowing plainly, because the shared-bucket case above is the one that
+      decides whether a team can use this at all. Marketplace listing is the only path that
+      restores the old limits.</p>
+  </div>
+
+  <h2><span class="n">5</span>One-time setup, on our side only</h2>
   <p class="sec-lede">
     Done once, by us, forever. Slack issues tokens only to a registered app — the app is a
     registration record, not a server, and no data ever passes through it.
@@ -328,7 +383,7 @@
     </tbody>
   </table>
 
-  <h2><span class="n">5</span>Where it lives</h2>
+  <h2><span class="n">6</span>Where it lives</h2>
   <div class="files">
     <div><code>relay/io/slack-oauth.ts</code><span>PKCE, authorize URL, code exchange, refresh, Keychain read/write</span></div>
     <div><code>scripts/auth/slack-oauth.ts</code><span>The consent run: loopback listener, browser, state check, verify, store</span></div>

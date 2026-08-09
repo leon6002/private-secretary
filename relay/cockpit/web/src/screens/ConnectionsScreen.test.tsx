@@ -105,13 +105,12 @@ describe("ConnectionsScreen", () => {
     expect(container.querySelector("table")).toBeTruthy();
   });
 
-  // The account identifies the connection; which workspace the app itself is
-  // registered in is an implementation detail the row should not spell out.
-  it("shows the connected account, without the workspace name", async () => {
+  // The workspace is the USER's own, chosen on Slack's consent screen — worth
+  // showing, and not to be confused with the workspace our app is registered in.
+  it("shows the connected account and the user's own workspace", async () => {
     stubApi({ sourceErrors: {} }, PKCE_OK);
     render(<ConnectionsScreen />);
-    await screen.findByText("me@example.com");
-    expect(screen.queryByText(/leotest/)).toBeNull();
+    await screen.findByText("me@example.com · leotest");
     expect(within(row("Slack")).getByRole("button", { name: "Reconnect" })).toBeTruthy();
   });
 
