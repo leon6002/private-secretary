@@ -84,7 +84,7 @@ done
 
 node_major() { node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/'; }
 
-ui_stage "[1/4] Checking environment"
+ui_stage "[1/5] Checking environment"
 
 if ! command -v git &>/dev/null; then
     ui_info "Git not found"
@@ -112,7 +112,7 @@ else
 fi
 
 # ── 3. Clone / update + build ────────────────────────────────────
-ui_stage "[2/4] Installing Private Secretary"
+ui_stage "[2/5] Installing Private Secretary"
 
 if [[ -d "$INSTALL_DIR/.git" ]]; then
     ui_info "Existing checkout found at $INSTALL_DIR — updating"
@@ -180,22 +180,33 @@ fi
 
 # ── 6. Done ──────────────────────────────────────────────────────
 ui_stage "[5/5] Verifying"
-sleep 2  # give launchd a beat to spawn the cockpit
-if curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:4317/; then
+# launchd spawns the cockpit as `npx tsx run-cockpit.ts` — npx resolution plus the
+# TS transpile regularly takes longer than a few seconds on a cold cache, so poll
+# instead of curling once after a fixed sleep (that reported a false failure on an
+# install that was in fact fine).
+cockpit_up=false
+for _ in $(seq 1 20); do
+    if curl -fsS -o /dev/null --max-time 2 http://127.0.0.1:4317/; then
+        cockpit_up=true
+        break
+    fi
+    sleep 1
+done
+if $cockpit_up; then
     ui_success "Cockpit is up at http://127.0.0.1:4317"
 else
-    ui_warn "Cockpit didn't answer yet — check: tail -F ~/Library/Logs/taiv-secretary/cockpit.err.log"
+    ui_warn "Cockpit didn't answer within 20s — check: tail -F ~/Library/Logs/taiv-secretary/cockpit.err.log"
 fi
 
-cat <<EOF
-
-${SUCCESS}${BOLD}Private Secretary installed.${NC}
+# printf, not a heredoc: heredocs do not interpret the \033 escapes in $SUCCESS/$BOLD.
+printf '
+%b%bPrivate Secretary installed.%b
 
   Cockpit (triage UI) : http://127.0.0.1:4317
   Daemon + UI logs    : ~/Library/Logs/taiv-secretary/
-  Checkout            : $INSTALL_DIR
+  Checkout            : %s
 
 Next: open the cockpit → Connections to link Slack / Gmail / Jira.
 Re-run this script any time to update to the latest version.
 
-EOF
+' "$SUCCESS" "$BOLD" "$NC" "$INSTALL_DIR"

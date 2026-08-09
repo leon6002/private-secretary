@@ -50,7 +50,7 @@ install_agent "tv.taiv.secretary.cockpit"
 echo
 echo "   daemon logs : ${LOG_DIR}/secretary.{out,err}.log   (heartbeat: notify-heartbeat.json)"
 echo "   cockpit logs: ${LOG_DIR}/cockpit.{out,err}.log"
-echo "   cockpit URL : http://127.0.0.1:4317  (dry-run)"
+echo "   cockpit URL : http://127.0.0.1:4317"
 echo
 echo "   tail -F ${LOG_DIR}/secretary.out.log"
 echo "   launchctl unload ~/Library/LaunchAgents/tv.taiv.secretary.plist"
