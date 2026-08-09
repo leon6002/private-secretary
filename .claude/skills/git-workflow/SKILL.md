@@ -104,7 +104,7 @@ This checkout tracks two GitHub remotes:
 | remote | repo | role |
 | --- | --- | --- |
 | `fork` | `leon6002/private-secretary` | the owner's personal fork — **push here first** |
-| `origin` | `LeoTaivDev/private-secretary` (redirects to `noobsplzwin/private-secretary`) | upstream — **push only after basic functionality testing** |
+| `origin` | `noobsplzwin/private-secretary` | upstream — **push only after basic functionality testing** |
 
 Despite `origin` being the conventional name for upstream, the day-to-day flow
 is fork-first:

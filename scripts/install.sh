@@ -1,6 +1,6 @@
 #!/bin/bash
 # Private Secretary one-liner installer for macOS.
-# Usage: curl -fsSL https://raw.githubusercontent.com/LeoTaivDev/private-secretary/main/scripts/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/noobsplzwin/private-secretary/main/scripts/install.sh | bash
 #
 # What it does:
 #   1. Ensures Node.js (>= 20) + Git (installs via Homebrew; installs Homebrew if missing)
@@ -34,7 +34,7 @@ NC='\033[0m'
 
 # ── Configuration — override via environment if the repo moves ────
 # e.g. PRIVATE_SECRETARY_REPO=git@github.com:myfork/private-secretary.git bash install.sh
-REPO_URL="${PRIVATE_SECRETARY_REPO:-https://github.com/LeoTaivDev/private-secretary.git}"
+REPO_URL="${PRIVATE_SECRETARY_REPO:-https://github.com/noobsplzwin/private-secretary.git}"
 # main is still the initial commit — everything real lives on dev for now.
 REPO_REF="${PRIVATE_SECRETARY_REF:-dev}"
 # Hidden dir by default (OpenClaw convention): a visible ~/private-secretary is
