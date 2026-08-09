@@ -150,20 +150,54 @@ next. The same goes for anything that rewrites published history: always
 
 # Rebasing and conflicts
 
+## Why we rebase here
+
+`dev` is the integration branch and **its history must read as one straight
+line** — no merge bubbles. That is the whole reason this half of the skill
+exists. Feature work happens on `feat/*` / `fix/*` / `refactor/*` cut from
+`dev`; those branches may have any messy internal history, because they get
+rebased before they land.
+
+The house integration procedure:
+
+```bash
+git checkout feat/thing
+git rebase dev                 # resolve conflicts HERE, on the feature branch
+npm run typecheck && npm test  # green before it touches dev
+git checkout dev
+git merge --ff-only feat/thing # fast-forward — cannot create a merge commit
+```
+
+`--ff-only` is the enforcement: if the merge would need a merge commit, it
+**fails** rather than making one. A failure means the rebase wasn't finished —
+go back and rebase, don't reach for a plain `git merge`.
+
+Never `git merge --no-ff` or a bare `git merge` into `dev`.
+
+Check the invariant any time:
+
+```bash
+git log --merges --oneline dev   # anything after 2026-07-31 is a mistake
+```
+
+The 7 merge commits before 2026-07-31 predate the rule. They are history —
+do not rewrite them.
+
 ## Quick start
 
 For most rebases with multiple commits, squash first so conflicts resolve once:
 
 ```bash
-bash scripts/pre-rebase-backup.sh                      # 1. backup
-git rebase -i $(git merge-base HEAD origin/main)       # 2. squash
-git rebase origin/main                                 # 3. rebase onto target
+bash scripts/pre-rebase-backup.sh                  # 1. backup
+git rebase -i $(git merge-base HEAD dev)           # 2. squash
+git rebase dev                                     # 3. rebase onto dev
 # 4. resolve conflicts once, then: git rebase --continue
-git push origin $(git rev-parse --abbrev-ref HEAD) --force-with-lease
+npm run typecheck && npm test                      # 5. green
+git checkout dev && git merge --ff-only -          # 6. land it, linear
 ```
 
-Note: with two remotes here, rebase onto whichever you actually track —
-`origin/dev` is the usual target, not `origin/main`.
+The target is `dev`, not `main` — `main` here is still the initial commit.
+Use `origin/dev` instead when you're syncing with what's actually published.
 
 ## Workflow
 
@@ -175,7 +209,7 @@ Note: with two remotes here, rebase onto whichever you actually track —
 - [ ] 5. Apply conflict resolutions
 - [ ] 6. Validate merged code
 - [ ] 7. Run tests
-- [ ] 8. Force push safely
+- [ ] 8. Land it — ff-only into dev (force push only if already published)
 ```
 
 ### 1. Safety backup
@@ -250,7 +284,19 @@ mandatory regression tests named in `CLAUDE.md` — if a rebase drops
 `R1-manual-survives-llm-update`, or `round-commit-without-task_id-unchanged`,
 the resolution is wrong, not the test.
 
-### 8. Force push safely
+### 8. Land it
+
+For a local feature branch — the normal case — there is no force push at all,
+just the fast-forward:
+
+```bash
+git checkout dev
+git merge --ff-only feat/thing
+git branch -d feat/thing
+```
+
+Force push only enters when the rebased branch was **already published** to a
+remote, since the rewrite makes local and remote histories disagree:
 
 ```bash
 git push fork $(git rev-parse --abbrev-ref HEAD) --force-with-lease
@@ -259,7 +305,7 @@ git push fork $(git rev-parse --abbrev-ref HEAD) --force-with-lease
 `--force-with-lease` refuses to overwrite commits you haven't seen; `--force`
 does not. If the lease fails, someone pushed — coordinate, don't override. Per
 the push order above, a rewritten branch goes to `fork` first and only reaches
-`origin` after testing.
+`origin` after testing. Never rewrite `dev` itself once it is pushed.
 
 ## Common scenarios
 
@@ -282,6 +328,10 @@ pushing to the same branch · conflicts you don't understand.
 
 **Default to merge if uncertain.** Rebase when it's a solo feature branch and
 clean history matters.
+
+> **Reading the references:** they are the upstream generic docs and use
+> `origin/main` as the rebase target throughout. Here that is the initial
+> commit — substitute `dev` (or `origin/dev`) everywhere they say `main`.
 
 ## Bundled scripts
 
