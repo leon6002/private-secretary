@@ -146,12 +146,17 @@
   <div class="step">
     <div class="badge">1</div>
     <div>
-      <h2>Create the app from a manifest</h2>
+      <h2>Create the app, then paste the manifest</h2>
       <div class="nav">
-        <b>api.slack.com/apps</b><i>→</i>Create New App<i>→</i><b>From a manifest</b><i>→</i>pick the Taiv workspace
+        <b>api.slack.com/apps</b><i>→</i>Create New App<i>→</i><b>From scratch</b><i>→</i>name it<i>→</i>Create App
       </div>
-      <p>The manifest sets all twelve scopes in one paste, instead of twelve dropdown selections.
-        Choose YAML and replace the contents with:</p>
+      <p><b>From scratch</b>, not <i>From a manifest</i> — the manifest route ends in a
+        <i>Create and Install</i> dialog that installs the app into the workspace, and that step
+        fails for this app (see the note below). Creating from scratch registers the app without
+        installing anything.</p>
+      <div class="nav">app settings<i>→</i><b>App Manifest</b><i>→</i>replace the YAML<i>→</i>Save Changes</div>
+      <p>The manifest still does the useful part: all twelve scopes in one paste instead of twelve
+        dropdown selections.</p>
       <pre><span class="k">display_information</span>:
   <span class="k">name</span>: <span class="v">Private Secretary</span>
   <span class="k">description</span>: <span class="v">Local assistant that drafts replies from your messages</span>
@@ -181,6 +186,20 @@
         <p>No <code>redirect_urls</code> in this manifest on purpose — they go in at step 3, after
           PKCE is on. The app name here is what every user reads on the consent screen, so it is
           worth getting right now.</p>
+      </div>
+      <div class="note warn">
+        <span class="tag warn">“Installation was not completed”</span>
+        <p>If you took the manifest route and hit this on <i>Create and Install</i>, ignore it —
+          <b>the app does not need to be installed</b>. The Client ID exists the moment the app
+          record does, and real installs happen through our own OAuth flow on each user's machine,
+          never through this button. Check <code>api.slack.com/apps</code>: if the app is listed,
+          go straight to step 2.</p>
+        <p style="margin-top:8px">Two likely causes, neither worth fighting. The workspace may
+          require admin approval for app installs, or you may not be an admin there — try a
+          workspace you own, since for a distributed app the home workspace does not matter. Or:
+          this app has <b>zero bot scopes</b> (“What it can respond to in Slack (0)”), and the
+          console's install path expects a bot to install. Nothing to install is not a failure
+          here.</p>
       </div>
     </div>
   </div>
@@ -308,6 +327,10 @@ npx tsx scripts/smoke-slack-direct.ts         <span class="c"># lists your DM ch
       <tr>
         <td>Browser opens, callback never arrives</td>
         <td>All three ports busy. The consent script says which; free one and rerun</td>
+      </tr>
+      <tr>
+        <td>“Installation was not completed” on Create and Install</td>
+        <td>Not a blocker — the app needs no install. Confirm it exists at api.slack.com/apps and carry on from step 2</td>
       </tr>
       <tr>
         <td>Works for you, fails for an outside workspace</td>
