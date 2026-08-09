@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Slack PKCE OAuth — one-click connect, nothing through our servers</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --surface: #12161f;
+    --surface-variant: #1a1f2b;
+    --outline: #262c3a;
+    --on-surface: #e6e8ec;
+    --on-surface-variant: #9aa3b2;
+    --primary: #60a5fa;
+    --primary-soft: #1e3a5f;
+    --ok: #34d399;
+    --ok-soft: #064e3b;
+    --warn: #fbbf24;
+    --warn-soft: #451a03;
+    --err: #f87171;
+    --err-soft: #450a0a;
+    --violet: #a78bfa;
+    --violet-soft: #2e1065;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--on-surface);
+    padding: 40px 24px 64px; line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  .eyebrow {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--primary); margin-bottom: 10px;
+  }
+  h1 {
+    font-size: 30px; font-weight: 600; letter-spacing: -0.02em;
+    line-height: 1.15; text-wrap: balance; margin-bottom: 10px;
+  }
+  .lede {
+    font-size: 15px; color: var(--on-surface-variant);
+    max-width: 68ch; margin-bottom: 30px; text-wrap: pretty;
+  }
+  h2 {
+    font-size: 19px; font-weight: 600; letter-spacing: -0.01em;
+    margin: 44px 0 6px; padding-top: 22px; border-top: 1px solid var(--outline);
+  }
+  h2:first-of-type { border-top: none; padding-top: 0; }
+  h2 .n {
+    display: inline-block; width: 24px; height: 24px; line-height: 24px;
+    text-align: center; border-radius: 7px; font-size: 12px;
+    background: var(--primary-soft); color: var(--primary); margin-right: 9px;
+    vertical-align: 2px;
+  }
+  h3 { font-size: 14px; font-weight: 600; margin-bottom: 3px; }
+  p { font-size: 14px; color: var(--on-surface-variant); max-width: 72ch; text-wrap: pretty; }
+  .sec-lede { margin-bottom: 18px; }
+  code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px;
+    background: var(--surface-variant); border: 1px solid var(--outline);
+    padding: 1px 5px; border-radius: 5px; color: #cbd5e1; white-space: nowrap;
+  }
+  .diagram {
+    background: var(--surface); border: 1px solid var(--outline);
+    border-radius: 14px; padding: 18px 16px 10px; margin: 22px 0 26px;
+    overflow-x: auto;
+  }
+  .diagram svg { display: block; width: 100%; min-width: 640px; height: auto; }
+  ol.steps { list-style: none; counter-reset: s; margin: 4px 0 0; }
+  ol.steps li {
+    counter-increment: s; position: relative;
+    padding: 0 0 15px 40px; font-size: 14px; color: var(--on-surface-variant);
+    max-width: 72ch;
+  }
+  ol.steps li::before {
+    content: counter(s); position: absolute; left: 0; top: 0;
+    width: 25px; height: 25px; line-height: 24px; text-align: center;
+    border-radius: 50%; font-size: 12px; font-weight: 600;
+    background: var(--primary-soft); color: var(--primary);
+    border: 1px solid #2c4f7c;
+  }
+  ol.steps li b { color: var(--on-surface); font-weight: 600; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--outline);
+    border-radius: 11px; padding: 14px 16px;
+  }
+  .card p { font-size: 13.5px; }
+  .card.ok { border-left: 3px solid var(--ok); }
+  .card.err { border-left: 3px solid var(--err); }
+  .card.warn { border-left: 3px solid var(--warn); }
+  .tag {
+    display: inline-block; font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 2px 7px; border-radius: 5px; margin-bottom: 7px;
+  }
+  .tag.ok { background: var(--ok-soft); color: var(--ok); }
+  .tag.err { background: var(--err-soft); color: var(--err); }
+  .tag.warn { background: var(--warn-soft); color: var(--warn); }
+  .tag.violet { background: var(--violet-soft); color: var(--violet); }
+  table { border-collapse: collapse; width: 100%; margin-top: 14px; font-size: 13.5px; }
+  th, td {
+    text-align: left; padding: 9px 12px;
+    border-bottom: 1px solid var(--outline); vertical-align: top;
+  }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--on-surface-variant); font-weight: 600; }
+  td { color: var(--on-surface-variant); }
+  td:first-child { color: var(--on-surface); white-space: nowrap; }
+  .files { margin-top: 14px; }
+  .files div {
+    display: flex; gap: 14px; padding: 8px 0;
+    border-bottom: 1px solid var(--outline); font-size: 13.5px;
+  }
+  .files div:last-child { border-bottom: none; }
+  .files code { flex: none; }
+  .files span { color: var(--on-surface-variant); }
+  .callout {
+    background: var(--surface); border: 1px solid var(--outline);
+    border-left: 3px solid var(--violet);
+    border-radius: 11px; padding: 14px 16px; margin-top: 16px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="eyebrow">Authorization design</div>
+  <h1>Slack connect: one click, and nothing passes through our servers</h1>
+  <p class="lede">
+    The old setup asked every user to create their own Slack app, tick twelve scopes and paste an
+    <code>xoxp-</code> token into Keychain by hand. This replaces all of it with a single
+    <b>Connect</b> click — while keeping the property that matters: no Taiv server sits anywhere
+    in the path, because there is no Taiv server at all.
+  </p>
+
+  <h2><span class="n">1</span>The flow</h2>
+  <p class="sec-lede">
+    Three participants, and a fourth that is conspicuously absent. Every arrow below is either
+    inside the user's own machine or a direct call to slack.com.
+  </p>
+
+  <div class="diagram">
+    <svg viewBox="0 0 860 500" role="img" aria-label="Sequence diagram of the Slack PKCE flow">
+      <defs>
+        <marker id="ah" markerWidth="9" markerHeight="9" refX="8" refY="3.2" orient="auto">
+          <path d="M0,0 L8,3.2 L0,6.4 z" fill="#60a5fa"/>
+        </marker>
+        <marker id="ah-g" markerWidth="9" markerHeight="9" refX="8" refY="3.2" orient="auto">
+          <path d="M0,0 L8,3.2 L0,6.4 z" fill="#34d399"/>
+        </marker>
+      </defs>
+
+      <!-- lane headers -->
+      <g font-family="IBM Plex Sans, sans-serif" font-size="12" font-weight="600">
+        <rect x="30" y="16" width="170" height="34" rx="8" fill="#1a1f2b" stroke="#34d399"/>
+        <text x="115" y="32" fill="#e6e8ec" text-anchor="middle">This Mac · cockpit</text>
+        <text x="115" y="45" fill="#34d399" text-anchor="middle" font-size="10" font-weight="500">127.0.0.1</text>
+
+        <rect x="255" y="16" width="160" height="34" rx="8" fill="#1a1f2b" stroke="#262c3a"/>
+        <text x="335" y="37" fill="#e6e8ec" text-anchor="middle">Browser</text>
+
+        <rect x="475" y="16" width="160" height="34" rx="8" fill="#1a1f2b" stroke="#262c3a"/>
+        <text x="555" y="37" fill="#e6e8ec" text-anchor="middle">slack.com</text>
+
+        <rect x="690" y="16" width="150" height="34" rx="8" fill="#0f1219" stroke="#3a2530" stroke-dasharray="4 3"/>
+        <text x="765" y="32" fill="#6b5560" text-anchor="middle">Taiv servers</text>
+        <text x="765" y="45" fill="#6b5560" text-anchor="middle" font-size="10" font-weight="500">never contacted</text>
+      </g>
+
+      <!-- lifelines -->
+      <g stroke="#262c3a" stroke-width="1">
+        <line x1="115" y1="54" x2="115" y2="470"/>
+        <line x1="335" y1="54" x2="335" y2="470"/>
+        <line x1="555" y1="54" x2="555" y2="470"/>
+      </g>
+      <line x1="765" y1="54" x2="765" y2="470" stroke="#2a1d24" stroke-width="1" stroke-dasharray="4 5"/>
+
+      <g font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="#9aa3b2">
+        <!-- 0. local PKCE generation -->
+        <rect x="40" y="72" width="215" height="26" rx="7" fill="#12161f" stroke="#2c4f7c"/>
+        <circle cx="56" cy="85" r="8" fill="#1e3a5f"/>
+        <text x="56" y="89" fill="#60a5fa" font-size="10" font-weight="700" text-anchor="middle">1</text>
+        <text x="70" y="89" fill="#cbd5e1">generate verifier + challenge</text>
+
+        <!-- 1 open authorize url -->
+        <line x1="115" y1="124" x2="329" y2="124" stroke="#60a5fa" stroke-width="1.6" marker-end="url(#ah)"/>
+        <circle cx="140" cy="112" r="8" fill="#1e3a5f"/>
+        <text x="140" y="116" fill="#60a5fa" font-size="10" font-weight="700" text-anchor="middle">2</text>
+        <text x="156" y="116">open authorize URL</text>
+
+        <!-- 2 allow -->
+        <line x1="335" y1="164" x2="549" y2="164" stroke="#60a5fa" stroke-width="1.6" marker-end="url(#ah)"/>
+        <circle cx="360" cy="152" r="8" fill="#1e3a5f"/>
+        <text x="360" y="156" fill="#60a5fa" font-size="10" font-weight="700" text-anchor="middle">3</text>
+        <text x="376" y="156">user clicks Allow</text>
+
+        <!-- 3 redirect back -->
+        <line x1="555" y1="204" x2="341" y2="204" stroke="#60a5fa" stroke-width="1.6" marker-end="url(#ah)"/>
+        <text x="376" y="196">302 → localhost:4318</text>
+
+        <!-- 4 code hits loopback -->
+        <line x1="335" y1="244" x2="121" y2="244" stroke="#60a5fa" stroke-width="1.6" marker-end="url(#ah)"/>
+        <circle cx="160" cy="232" r="8" fill="#1e3a5f"/>
+        <text x="160" y="236" fill="#60a5fa" font-size="10" font-weight="700" text-anchor="middle">4</text>
+        <text x="176" y="236">?code=… lands here</text>
+
+        <!-- 5 exchange -->
+        <line x1="115" y1="292" x2="549" y2="292" stroke="#60a5fa" stroke-width="1.6" marker-end="url(#ah)"/>
+        <circle cx="140" cy="280" r="8" fill="#1e3a5f"/>
+        <text x="140" y="284" fill="#60a5fa" font-size="10" font-weight="700" text-anchor="middle">5</text>
+        <rect x="152" y="273" width="352" height="15" fill="#12161f"/>
+        <text x="156" y="284">POST oauth.v2.access · code + verifier · no client_secret</text>
+
+        <!-- 6 tokens back -->
+        <line x1="555" y1="336" x2="121" y2="336" stroke="#34d399" stroke-width="1.6" marker-end="url(#ah-g)"/>
+        <circle cx="160" cy="324" r="8" fill="#064e3b"/>
+        <text x="160" y="328" fill="#34d399" font-size="10" font-weight="700" text-anchor="middle">6</text>
+        <rect x="172" y="317" width="176" height="15" fill="#12161f"/>
+        <text x="176" y="328" fill="#8fd7bb">access_token + refresh_token</text>
+
+        <!-- 7 keychain -->
+        <path d="M115,368 L205,368 L205,394 L121,394" fill="none" stroke="#34d399" stroke-width="1.6" marker-end="url(#ah-g)"/>
+        <circle cx="230" cy="381" r="8" fill="#064e3b"/>
+        <text x="230" y="385" fill="#34d399" font-size="10" font-weight="700" text-anchor="middle">7</text>
+        <text x="246" y="385" fill="#8fd7bb">stored in macOS Keychain</text>
+
+        <!-- 8 steady state -->
+        <line x1="115" y1="440" x2="549" y2="440" stroke="#a78bfa" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ah)"/>
+        <rect x="152" y="421" width="330" height="15" fill="#12161f"/>
+        <text x="156" y="432" fill="#b9a5f0">from now on: read messages directly, token from Keychain</text>
+      </g>
+    </svg>
+  </div>
+
+  <ol class="steps">
+    <li><b>PKCE pair is generated locally.</b> A random <code>code_verifier</code>, and its SHA-256
+      hash as the <code>code_challenge</code>. The verifier never leaves this process — that is the
+      whole trick.</li>
+    <li><b>Browser opens the authorize URL</b> carrying the public <code>client_id</code>, the
+      challenge, a CSRF <code>state</code>, and <code>user_scope</code>. Not <code>scope</code>:
+      Slack forbids bot scopes on desktop redirects, and asking for one fails with an opaque error.</li>
+    <li><b>The user clicks Allow</b> — the only thing they ever have to do.</li>
+    <li><b>Slack redirects to <code>http://localhost:4318/slack/callback</code></b>, a listener
+      inside the cockpit. This hop happens entirely inside the user's machine. It is also why no
+      server is needed to receive the callback.</li>
+    <li><b>The code is exchanged directly with slack.com</b>, sending the <code>code_verifier</code>
+      instead of a <code>client_secret</code>. Only the process that started the flow holds the
+      verifier, so an intercepted code is worthless.</li>
+    <li><b>Slack returns the user token</b> plus a refresh token.</li>
+    <li><b>Verified, then stored.</b> <code>auth.test</code> runs before the write — a stored-but-dead
+      credential is worse than none, because the daemon only discovers it mid-scan.</li>
+  </ol>
+
+  <h2><span class="n">2</span>Why there is no client_secret</h2>
+  <p class="sec-lede">
+    A <code>client_id</code> shipped inside a desktop app is readable by anyone, so it cannot prove
+    identity on its own. PKCE replaces that proof with a per-attempt secret that never travels.
+  </p>
+  <div class="grid">
+    <div class="card err">
+      <span class="tag err">Without PKCE</span>
+      <h3>Needs a server</h3>
+      <p>The token exchange requires a <code>client_secret</code>. Embedding it in a downloadable app
+        leaks it, so the exchange has to happen on a backend — which then handles every user's
+        tokens, and becomes exactly the third-party hop this design refuses.</p>
+    </div>
+    <div class="card ok">
+      <span class="tag ok">With PKCE</span>
+      <h3>No server, no secret</h3>
+      <p>The challenge goes out at authorize time; the verifier only at exchange time. Slack:
+        refreshes “do not require a <code>client_secret</code> because they are intended to be used
+        on a public client.” Enabled 2026‑03‑30.</p>
+    </div>
+  </div>
+  <div class="callout">
+    <span class="tag violet">Consequence</span>
+    <p>Staying serverless is not only a privacy stance. Google's CASA security assessment applies to
+      apps that can reach restricted data “from or through a third-party server”. A local-only
+      design should avoid a paid annual assessment on the Gmail side — adding a token broker would
+      forfeit that.</p>
+  </div>
+
+  <h2><span class="n">3</span>What rotates, and what breaks</h2>
+  <p class="sec-lede">
+    The hand-pasted token never expired. A PKCE token does, and that is the one real regression to
+    design around.
+  </p>
+  <table>
+    <thead><tr><th>Credential</th><th>Lifetime</th><th>On expiry</th></tr></thead>
+    <tbody>
+      <tr><td>access_token</td><td>~12 hours</td><td>Refreshed silently inside a 60s buffer by <code>readSlackToken()</code></td></tr>
+      <tr><td>refresh_token</td><td>30 days</td><td>Full re-consent. The cockpit must surface a Reconnect state, not fail mid-scan</td></tr>
+      <tr><td>legacy <code>xoxp-</code></td><td>never</td><td>Returned untouched, no network call — existing installs keep working</td></tr>
+    </tbody>
+  </table>
+  <div class="grid">
+    <div class="card warn">
+      <span class="tag warn">Edge case</span>
+      <h3>A laptop closed for a month</h3>
+      <p>Comes back with a dead refresh token and needs the user to click Connect again. Detect it
+        and show it; silence here reads as a broken product.</p>
+    </div>
+    <div class="card">
+      <span class="tag violet">Undocumented</span>
+      <h3>Refresh response shape</h3>
+      <p>Slack documents the nested <code>authed_user</code> shape for the initial exchange but not
+        for a user-token refresh. The parser accepts nested or top-level, and both are tested.</p>
+    </div>
+  </div>
+
+  <h2><span class="n">4</span>One-time setup, on our side only</h2>
+  <p class="sec-lede">
+    Done once, by us, forever. Slack issues tokens only to a registered app — the app is a
+    registration record, not a server, and no data ever passes through it.
+  </p>
+  <table>
+    <thead><tr><th>Step</th><th>Where</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>Create the app</td><td>api.slack.com/apps</td><td>Its name is what users see on the consent screen</td></tr>
+      <tr><td>Add 12 user scopes</td><td>OAuth &amp; Permissions</td><td><b>User</b> Token Scopes, not Bot</td></tr>
+      <tr><td>Enable PKCE</td><td>App settings</td><td>Irreversible without Slack support</td></tr>
+      <tr><td>Register redirect URLs</td><td>OAuth &amp; Permissions</td><td>Ports 4318 / 4319 / 4320 — Slack matches registered URLs only</td></tr>
+      <tr><td>Public distribution</td><td>Manage Distribution</td><td>App Directory listing not required</td></tr>
+      <tr><td>Ship the Client ID</td><td>this repo</td><td>Public value; the secret is never used</td></tr>
+    </tbody>
+  </table>
+
+  <h2><span class="n">5</span>Where it lives</h2>
+  <div class="files">
+    <div><code>relay/io/slack-oauth.ts</code><span>PKCE, authorize URL, code exchange, refresh, Keychain read/write</span></div>
+    <div><code>scripts/auth/slack-oauth.ts</code><span>The consent run: loopback listener, browser, state check, verify, store</span></div>
+    <div><code>relay/io/slack-api.ts</code><span>One line — every Slack caller funnels through <code>createSlackClientFromKeychain</code></span></div>
+    <div><code>relay/io/slack-oauth.test.ts</code><span>14 tests, incl. the RFC 7636 vector and the legacy-token regression</span></div>
+  </div>
+
+</div>
+</body>
+</html>
