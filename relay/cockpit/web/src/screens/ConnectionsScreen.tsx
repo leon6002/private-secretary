@@ -14,7 +14,7 @@
 //
 // No new motion: DESIGN.md allows exactly two product-wide motions and neither
 // is here. Colour transitions on hover only, matching Tabs and the buttons.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import ConnectorIcon, { type ConnectorId } from "../components/ConnectorIcon";
 import Tabs from "../components/Tabs";
 import { apiGet, apiPost } from "../lib/api";
@@ -51,6 +51,25 @@ const DOT_CLS: Record<RowState, string> = {
   manual: "bg-slate-300 dark:bg-slate-600",
 };
 
+interface ToolSpec {
+  key: string;
+  label: string;
+  config?: { type?: string; url?: string };
+}
+
+interface ToolsConfig {
+  effective: Record<string, ToolSpec>;
+  authorized: Record<string, boolean>;
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
 interface ConnectorRow {
   id: ConnectorId;
   name: string;
@@ -61,6 +80,36 @@ interface ConnectorRow {
   state: RowState;
   status: string;
   actions?: React.ReactNode;
+  /** Expandable plain-language explanation of what granting access means. */
+  note?: React.ReactNode;
+}
+
+// What a user actually agrees to when they click Allow. Written out because
+// "read your messages" is the part people hesitate over, and the honest answer
+// is reassuring — except for the AI provider line, which is the one thing a
+// privacy note must not omit. Claiming nothing leaves the Mac would be false.
+function SlackPrivacyNote() {
+  const rows: Array<[string, string]> = [
+    ["Can read", "your DMs, group DMs, channel messages and files — as you"],
+    ["Can send", "as you, and only after you approve a specific draft"],
+    ["Token stored", "in this Mac's Keychain; it is never transmitted anywhere"],
+    [
+      "Message text goes",
+      "to this Mac, and to the AI provider you configured — with your own API key, billed to you",
+    ],
+    ["We receive", "nothing. There is no server in this product to receive it"],
+    ["Revoke", "any time at slack.com/apps — this app stops reading immediately"],
+  ];
+  return (
+    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-label-sm">
+      {rows.map(([k, v]) => (
+        <div key={k} className="contents">
+          <dt className="text-on-surface whitespace-nowrap">{k}</dt>
+          <dd className="text-on-surface-variant">{v}</dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
 // Parse the failing Gmail mailboxes out of the gmail:direct sourceError
@@ -165,6 +214,31 @@ export default function ConnectionsScreen() {
   const [slackConn, setSlackConn] = useState<SlackConnection | null>(null);
   const [slackPending, setSlackPending] = useState(false);
   const [filter, setFilter] = useState("all");
+  const [tools, setTools] = useState<ToolsConfig | null>(null);
+  const [pendingTool, setPendingTool] = useState<string | null>(null);
+  const [openNote, setOpenNote] = useState<string | null>(null);
+
+  const loadTools = useCallback(() => {
+    apiGet<ToolsConfig>("/api/settings/tools")
+      .then(setTools)
+      .catch(() => setTools(null));
+  }, []);
+  useEffect(loadTools, [loadTools]);
+
+  // Unlike the Slack connect (which spawns and returns), the MCP authorize
+  // endpoint holds the request until the browser dance finishes — so this
+  // await IS the completion signal and no polling is needed.
+  async function connectTool(key: string) {
+    setPendingTool(key);
+    try {
+      await apiPost(`/api/settings/tools/${encodeURIComponent(key)}/authorize`, {});
+      loadTools();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setPendingTool(null);
+    }
+  }
 
   // One-shot read, not part of the cockpit poll: the credential only changes
   // when the user acts, so re-fetch after a connect rather than every tick.
@@ -212,6 +286,37 @@ export default function ConnectionsScreen() {
     }
   }
 
+  // Jira and Notion authorize through the MCP OAuth that Settings → Tools
+  // already drives, so these rows are generated from the same registry rather
+  // than hardcoded: adding an MCP tool there makes it appear here too.
+  const mcpRows: ConnectorRow[] = useMemo(
+    () =>
+      Object.values(tools?.effective ?? {})
+        .filter((t) => t.config?.type === "mcp" && t.config?.url)
+        .map((t) => {
+          const authorized = !!tools?.authorized[t.key];
+          return {
+            id: t.key as ConnectorId,
+            name: t.label,
+            identity: hostOf(t.config!.url!),
+            // Not a source: these never originate action items, they are looked
+            // up for context and written to when a card is approved.
+            access: "context lookup · create after approval",
+            state: authorized ? ("ok" as const) : ("manual" as const),
+            status: authorized ? "connected" : "not connected",
+            actions: (
+              <ActionButton
+                disabled={pendingTool === t.key}
+                onClick={() => void connectTool(t.key)}
+              >
+                {pendingTool === t.key ? "Opening browser…" : authorized ? "Reconnect" : "Connect"}
+              </ActionButton>
+            ),
+          };
+        }),
+    [tools, pendingTool],
+  );
+
   const rows: ConnectorRow[] = useMemo(() => {
     const slack = slackRow(slackConn, !!slackErr);
     return [
@@ -219,6 +324,7 @@ export default function ConnectionsScreen() {
         id: "slack",
         name: "Slack",
         ...slack,
+        note: <SlackPrivacyNote />,
         actions: (
           <ActionButton disabled={slackPending} onClick={() => void connectSlack()}>
             {slackPending ? "Opening browser…" : slackConn?.connected ? "Reconnect" : "Connect"}
@@ -253,15 +359,13 @@ export default function ConnectionsScreen() {
         state: "ok",
         status: "connected · conflict-checked before booking",
       },
-      {
-        id: "wechat",
-        name: "WeChat",
-        access: "read via local decrypt · send by paste",
-        state: "manual",
-        status: "manual by design — no API to connect",
-      },
+      // WeChat is deliberately absent: integration is not on the near roadmap,
+      // and a permanently grey "manual by design" row is noise on a screen
+      // whose job is showing what needs acting on. relay/io/wechat-cli.ts and
+      // the specs stay — this only hides the row.
+      ...mcpRows,
     ];
-  }, [slackConn, slackErr, slackPending, gmailErr, pendingMailbox]);
+  }, [slackConn, slackErr, slackPending, gmailErr, pendingMailbox, mcpRows]);
 
   const visible = rows.filter((r) =>
     filter === "connected" ? r.state === "ok" : filter === "attention" ? r.state === "attention" : true,
@@ -300,7 +404,8 @@ export default function ConnectionsScreen() {
             </thead>
             <tbody>
               {visible.map((r) => (
-                <tr key={r.id} className="border-t border-outline align-top">
+                <Fragment key={r.id}>
+                <tr className="border-t border-outline align-top">
                   <td className="py-3.5 pr-4">
                     <div className="flex items-start gap-2.5">
                       <span
@@ -321,6 +426,19 @@ export default function ConnectionsScreen() {
                         <div className="md:hidden text-label-sm text-on-surface-variant opacity-70 mt-0.5">
                           {r.access}
                         </div>
+                        {r.note && (
+                          <button
+                            type="button"
+                            aria-expanded={openNote === r.id}
+                            onClick={() => setOpenNote(openNote === r.id ? null : r.id)}
+                            className={cn(
+                              "text-label-sm text-primary mt-1 transition-colors hover:underline",
+                              "focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary",
+                            )}
+                          >
+                            {openNote === r.id ? "Hide details" : "What access means"}
+                          </button>
+                        )}
                       </div>
                     </div>
                   </td>
@@ -341,6 +459,17 @@ export default function ConnectionsScreen() {
                     </div>
                   </td>
                 </tr>
+                {/* The disclosure spans the full width directly under its own
+                    row rather than squeezing into the name cell — it is prose,
+                    not a column. */}
+                {r.note && openNote === r.id && (
+                  <tr>
+                    <td colSpan={3} className="pb-4 pl-[30px] pr-4">
+                      <div className="bg-surface-variant rounded p-3.5">{r.note}</div>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>
