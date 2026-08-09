@@ -78,8 +78,18 @@ export interface SlackTokenBundle {
   team_name: string;
   user_id: string;
   granted_at: number;
+  // ms epoch of the last successful issue/refresh. The refresh_token's 30-day
+  // clock restarts every time it is used, so THIS — not expires_at — is what
+  // says whether the connection is about to need human re-consent. Absent on
+  // bundles written before this field existed; callers fall back to granted_at.
+  refreshed_at?: number;
   client_id: string;
 }
+
+// A Slack refresh_token dies 30 days after it was issued. Every refresh mints a
+// new one, so a daemon that runs at all keeps the window open indefinitely; the
+// case this matters for is a machine that sat closed.
+export const SLACK_REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 // Refresh this far ahead of expiry so a scan round never dies mid-flight on a
 // token that expired between the check and the call.
@@ -218,6 +228,7 @@ function bundleFrom(
     team_name: json.team?.name ?? previous?.team_name ?? "",
     user_id: f.user_id || previous?.user_id || "",
     granted_at: previous?.granted_at ?? now,
+    refreshed_at: now,
     client_id: clientId,
   };
 }

@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getSecret } from "../io/keychain.js";
 import { SLACK_TOKEN_ACCOUNT } from "../io/slack-api.js";
-import { parseStoredToken, SLACK_TOKEN_SERVICE } from "../io/slack-oauth.js";
+import { parseStoredToken, SLACK_REFRESH_TTL_MS, SLACK_TOKEN_SERVICE } from "../io/slack-oauth.js";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const CONSENT_SCRIPT = join(REPO_ROOT, "scripts", "auth", "slack-oauth.ts");
@@ -46,7 +46,14 @@ export interface SlackConnectionStatus {
   connected: boolean;
   team?: string;
   // ms epoch of ACCESS token expiry; 0 when the credential does not expire.
+  // Machinery, not a user-facing deadline — it is ~12h out by design and the
+  // runtime refreshes it silently. Surfacing it as a warning would mean the
+  // row is red permanently.
   expiresAt: number;
+  // ms epoch when re-consent becomes necessary: the refresh_token's 30-day
+  // window, restarted by every refresh. THIS is the one worth showing, and it
+  // only closes on a machine that stopped running.
+  reconnectBy: number;
   detail: string;
 }
 
@@ -62,6 +69,7 @@ export async function slackConnectionStatus(
       kind: "none",
       connected: false,
       expiresAt: 0,
+      reconnectBy: 0,
       detail: "not connected",
     };
   }
@@ -72,6 +80,7 @@ export async function slackConnectionStatus(
       kind: "legacy",
       connected: true,
       expiresAt: 0,
+      reconnectBy: 0,
       detail: "connected · legacy token (no expiry)",
     };
   }
@@ -81,6 +90,8 @@ export async function slackConnectionStatus(
     connected: true,
     team: stored.team_name || stored.team_id || undefined,
     expiresAt: stored.expires_at,
+    // Pre-refreshed_at bundles fall back to the original consent time.
+    reconnectBy: (stored.refreshed_at ?? stored.granted_at) + SLACK_REFRESH_TTL_MS,
     detail: stored.team_name ? `connected · ${stored.team_name}` : "connected",
   };
 }

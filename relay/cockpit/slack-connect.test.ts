@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { __setRunner as __setKeychainRunner } from "../io/keychain.js";
-import { SLACK_TOKEN_SERVICE } from "../io/slack-oauth.js";
+import { SLACK_REFRESH_TTL_MS, SLACK_TOKEN_SERVICE } from "../io/slack-oauth.js";
 import { slackConnectionStatus, startSlackConnect } from "./slack-connect.js";
 
 const ACCOUNT = "me@example.com";
@@ -57,6 +57,21 @@ describe("slackConnectionStatus", () => {
     expect(s.team).toBe("leotest");
     expect(s.expiresAt).toBe(1_800_000);
     expect(s.detail).toContain("leotest");
+  });
+
+  // The re-consent deadline rides on the LAST refresh, not the first consent —
+  // a daemon that keeps refreshing pushes it forward forever.
+  it("derives reconnectBy from refreshed_at, not granted_at", async () => {
+    keychain(bundle({ granted_at: 1_000, refreshed_at: 500_000 }));
+    const s = await slackConnectionStatus(ACCOUNT);
+    expect(s.reconnectBy).toBe(500_000 + SLACK_REFRESH_TTL_MS);
+  });
+
+  // Bundles written before refreshed_at existed must still produce a deadline.
+  it("falls back to granted_at when refreshed_at is absent", async () => {
+    keychain(bundle({ granted_at: 7_000, refreshed_at: undefined }));
+    const s = await slackConnectionStatus(ACCOUNT);
+    expect(s.reconnectBy).toBe(7_000 + SLACK_REFRESH_TTL_MS);
   });
 
   // The status read must never surface the credential itself — this object is
