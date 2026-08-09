@@ -364,11 +364,31 @@
   </div>
 
   <h3 class="sec">Verifying it works</h3>
-  <p>Once the Client ID is in place, one command runs the real flow end to end — browser opens,
-    click Allow, token lands in Keychain:</p>
+  <p>The cockpit's Connections screen has a <b>Connect Slack</b> button that drives exactly this
+    flow — the commands below are the same thing without the UI, useful when something needs
+    debugging:</p>
   <pre>npx tsx scripts/auth/slack-oauth.ts consent
 npx tsx scripts/auth/slack-oauth.ts show      <span class="c"># scopes + expiry of what got stored</span>
 npx tsx scripts/smoke-slack-direct.ts         <span class="c"># lists your DM channels using it</span></pre>
+
+  <figure>
+    <img src="img/auth.png" alt="Slack's consent screen for Private Secretary, listing what it can view and do, with Allow and Cancel" />
+    <figcaption>
+      <b>What the end user sees — the entire setup burden.</b> One screen, one Allow. Slack groups
+      the twelve scopes into four plain-language lines and names the workspace. “Perform actions as
+      you” is <code>chat:write</code>: the engine sends as the user, which is the point, and never
+      without approval. Nothing here asks them to create an app or copy a token.
+    </figcaption>
+  </figure>
+  <figure>
+    <img src="img/auth-success.png" alt="A plain page reading Connected — Slack is linked, you can close this tab" />
+    <figcaption>
+      The redirect target, served by the local listener on <code>localhost:4318</code> — not a page
+      on the internet. Reaching it at all proves the callback stayed on the machine. By this point
+      the token has already been exchanged, checked with <code>auth.test</code>, and written to
+      Keychain.
+    </figcaption>
+  </figure>
 
   <h3 class="sec">When something goes wrong</h3>
   <table>
