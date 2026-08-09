@@ -10,8 +10,8 @@
 //   the same lifecycle: disabled + "Opening browser…" while in flight, and on
 //   SUCCESS it stays that way until the next poll drops the sourceError (the
 //   legacy code likewise only re-enabled the button on failure).
-import { useState } from "react";
-import { apiPost } from "../lib/api";
+import { useCallback, useEffect, useState } from "react";
+import { apiGet, apiPost } from "../lib/api";
 import { cn } from "../lib/cn";
 import { toast } from "../lib/toast";
 import { useCockpitState, type SourceError } from "../lib/useCockpitState";
@@ -34,6 +34,61 @@ function failingGmailMailboxes(msg: string | undefined): string[] {
   const out = new Set<string>();
   for (const m of (msg ?? "").matchAll(/mailbox=([^\s:]+@[^\s:]+)/g)) out.add(m[1]!);
   return [...out];
+}
+
+interface SlackConnection {
+  account: string;
+  kind: "none" | "legacy" | "pkce";
+  connected: boolean;
+  team?: string;
+  expiresAt: number;
+  detail: string;
+}
+
+// A PKCE refresh token lasts 30 days. A laptop closed longer than that comes
+// back needing full re-consent, so warn while it is still fixable instead of
+// letting the next scan be the thing that discovers it.
+const EXPIRY_WARN_MS = 3 * 24 * 60 * 60 * 1000;
+
+function slackCardCopy(
+  conn: SlackConnection | null,
+  hasError: boolean,
+): { detail: string; dot: Dot; sub: string } {
+  if (hasError) {
+    return {
+      detail: "token issue — cursor frozen, nothing lost",
+      dot: "red",
+      sub: "reconnect to resume · read · send (after approval)",
+    };
+  }
+  // Anything that is not a kind we recognise counts as not connected. Falling
+  // through to the connected branch would render an undefined detail.
+  if (!conn || (conn.kind !== "legacy" && conn.kind !== "pkce")) {
+    return {
+      detail: "not connected",
+      dot: "gray",
+      sub: "connect once — no Slack app to create, nothing to paste",
+    };
+  }
+  if (conn.kind === "legacy") {
+    return {
+      detail: conn.detail,
+      dot: "green",
+      sub: "hand-pasted token · reconnect to move to the one-click flow",
+    };
+  }
+  const left = conn.expiresAt - Date.now();
+  if (conn.expiresAt && left <= 0) {
+    return { detail: "session expired", dot: "red", sub: "reconnect to resume" };
+  }
+  if (conn.expiresAt && left < EXPIRY_WARN_MS) {
+    return {
+      detail: conn.detail,
+      dot: "red",
+      sub: "access expires soon — it renews on its own while the daemon runs",
+    };
+  }
+  return { detail: conn.detail, dot: "green", sub: "read · send (after approval)" };
 }
 
 function StatusCard({
@@ -65,6 +120,34 @@ function StatusCard({
 export default function ConnectionsScreen() {
   const { state } = useCockpitState();
   const [pendingMailbox, setPendingMailbox] = useState<string | null>(null);
+  const [slackConn, setSlackConn] = useState<SlackConnection | null>(null);
+  const [slackPending, setSlackPending] = useState(false);
+
+  // One-shot read, not part of the cockpit poll: the credential only changes
+  // when the user acts, so re-fetch after a connect rather than every tick.
+  const loadSlack = useCallback(() => {
+    apiGet<SlackConnection>("/api/connections/slack")
+      .then(setSlackConn)
+      .catch(() => setSlackConn(null));
+  }, []);
+  useEffect(loadSlack, [loadSlack]);
+
+  // The browser flow finishes out of band, so re-read a few seconds later —
+  // the card turns green without the user reloading the page.
+  async function connectSlack() {
+    setSlackPending(true);
+    try {
+      const r = await apiPost<{ detail?: string }>("/api/connections/slack/connect", {});
+      toast(r.detail || "Opening the browser…");
+      setTimeout(() => {
+        loadSlack();
+        setSlackPending(false);
+      }, 8000);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), true);
+      setSlackPending(false);
+    }
+  }
 
   // Legacy default: no state yet (first poll in flight or failing) renders
   // the same as "no source errors" — cards green/gray, no alarm.
@@ -113,10 +196,27 @@ export default function ConnectionsScreen() {
       <div className="flex-1 bg-background overflow-y-auto p-6 flex justify-center">
         <div className="w-full max-w-[640px] flex flex-col gap-2">
           <StatusCard
-            name="Slack · Taiv"
-            detail={slackErr ? "token issue — cursor frozen, nothing lost" : "connected · direct API · IMs + group DMs"}
-            dot={slackErr ? "red" : "green"}
-            sub="read · send (after approval)"
+            name="Slack"
+            {...slackCardCopy(slackConn, !!slackErr)}
+            extra={
+              <div className="mt-2">
+                <button
+                  type="button"
+                  disabled={slackPending}
+                  onClick={() => void connectSlack()}
+                  className={cn(
+                    "text-label-sm text-primary border border-primary/40 bg-primary/5 rounded px-2 py-1",
+                    "hover:bg-primary/10 transition-colors disabled:opacity-50 disabled:pointer-events-none",
+                  )}
+                >
+                  {slackPending
+                    ? "Opening browser…"
+                    : slackConn?.connected
+                      ? "Reconnect Slack"
+                      : "Connect Slack"}
+                </button>
+              </div>
+            }
           />
           <StatusCard
             name="Gmail · 4 mailboxes"

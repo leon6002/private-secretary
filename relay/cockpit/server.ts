@@ -43,6 +43,7 @@ import {
 } from "./api.js";
 import { checkRequest, loadOrMintCsrfToken } from "./security.js";
 import { startGmailReauth } from "./reauth.js";
+import { slackConnectionStatus, startSlackConnect } from "./slack-connect.js";
 import { InvalidActionTransition } from "../core/action-item.js";
 import {
   EXISTENCE_VERDICTS,
@@ -368,6 +369,24 @@ export function createCockpitServer(opts: CockpitServerOptions): {
         return;
       }
       const result = await startGmailReauth(mailbox);
+      sendJson(res, result.started ? 200 : 400, result);
+      return;
+    }
+
+    // Slack credential status — drives the Connections card between "not
+    // connected" (first run), a legacy hand-pasted token, and a rotating PKCE
+    // bundle with an expiry.
+    if (path === "/api/connections/slack" && method === "GET") {
+      sendJson(res, 200, await slackConnectionStatus());
+      return;
+    }
+
+    // Connect / reconnect Slack. Same shape as the Gmail reauth above: spawn
+    // the consent flow (opens the browser) and answer immediately.
+    if (path === "/api/connections/slack/connect" && method === "POST") {
+      const body = (await readBody(req)) as Record<string, unknown>;
+      const account = typeof body.account === "string" ? body.account.trim() : "";
+      const result = account ? startSlackConnect(account) : startSlackConnect();
       sendJson(res, result.started ? 200 : 400, result);
       return;
     }
