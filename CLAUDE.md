@@ -29,7 +29,9 @@ relay/sources/   MessageSource contract + normalize() pure fns. Sources ORIGINAT
                  action items, so they are messaging channels ONLY (slack-channels now;
                  Phase 2 adds multi-account via Claude API mcp_servers). Jira/Notion are
                  NOT sources — they are analysis-time context lookups + executor targets.
-relay/io/        persona loader (v3 + legacy), persona-store (THE persona write
+relay/io/        identity (+ identity-store: the cockpit's first-run writer),
+                 slack-oauth (PKCE + rotation, THE Slack token chokepoint),
+                 persona loader (v3 + legacy), persona-store (THE persona write
                  chokepoint — R1 enforced here only), bootstrap-progress,
                  loop-state.json v2 + lockfile. fs only.
 relay/cli.ts     bridge: npm run relay <personas|normalize|filter|resolve|gate|
@@ -61,6 +63,10 @@ message is never understood from text alone (the GST25A12 lesson).
 - `npm run relay personas` — load + print personas
 - `npm run relay queue state/loop-state.json` — show the pending queue
 - `npm run relay gate state/loop-state.json` — compute the validation gate
+- First run needs `config/identity.json` (gitignored, so a fresh clone has
+  none). The cockpit's Connections screen asks for it and writes it; without it
+  nothing polls and the Slack Connect button is inert, because the Keychain
+  account key it writes to is the empty string.
 - Pipe JSON into the CLI via BASH (`cat x.json | npm run -s relay ...`), never a
   Windows PowerShell 5.1 pipe — PS transcodes stdin to the OEM codepage and mangles
   non-ASCII (中文, em dashes, →) into `?`. The CLI strips a UTF-8 BOM itself.
@@ -164,6 +170,29 @@ no-double-execute (action-item.test.ts), R1-manual-survives-llm-update
   DEFERRED to Phase 3: standalone Claude-API runtime, multi-account mcp_servers,
   Socket Mode + Gmail-watch event detection, real Gmail send. Visual source of truth:
   specs/phase2-stitch/ (IBM Plex/#2563EB, 3-screen nav).
+- Slack one-click auth (landed 2026-08-09): PKCE OAuth replaces "create your own
+  Slack app + paste an xoxp- token". One Taiv-owned Slack app, its public
+  client_id shipped in relay/io/slack-oauth.ts; the browser redirects to
+  localhost, the token is exchanged on-device and stored in Keychain. NO server
+  of ours is in the path — that also keeps Google's CASA carve-out for
+  local-only apps, so never add a token broker. Legacy hand-pasted xoxp- tokens
+  still work (readSlackToken dual-mode; regression test). Cockpit Connections
+  drives connect/disconnect; disconnect calls auth.revoke before deleting.
+  Docs: `.claude/docs/slack-oauth.html` (flow + rate limits),
+  `.claude/docs/slack-app-setup.html` (console walkthrough).
+  OPEN, in priority order:
+  1. **Marketplace listing.** Distributed non-Marketplace apps get 1 req/min and
+     15 objects per request on conversations.history/.replies; the bucket is
+     (app, INSTALLING user's workspace), so colleagues in ONE workspace share a
+     single request per minute. That, not the per-user rate, is what decides
+     whether a team can use this. Listing is the only path back to the old
+     limits. Measure a real-size workspace before committing to a rewrite — one
+     production round (6 conversations, 30 messages) took 94s with no 429s,
+     which is milder than the documented worst case and not yet explained.
+  2. **Scan loop vs the cap.** relay/sources/slack-direct.ts asks for
+     `limit: 200`, a number Slack now silently caps at 15. It degrades quietly
+     (callRaw retries 429 with Retry-After) rather than erroring, so at minimum
+     make truncation observable.
 - Phase 3: trust-based auto-send tiers; WeChat read via local sqlcipher decrypt
   through `ylytdeng/wechat-decrypt` MCP server (driven over stdio JSON-RPC by
   `relay/io/wechat-cli.ts`; supersedes the earlier `@walkerch/wxecho` path —
