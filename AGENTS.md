@@ -242,7 +242,8 @@ any state surgery.
   banned on `dev`.** Procedure: `git rebase dev` on the feature branch (resolve
   conflicts there, run tests), then `git merge --ff-only <branch>` from `dev`.
   Never `git merge --no-ff` or a plain `git merge` into `dev`.
-- Follow `.claude/skills/git-rebase/SKILL.md` for rebase mechanics: backup
+- Follow `.claude/skills/git-workflow/SKILL.md` for commit format, push order
+  and rebase mechanics: backup
   branch first, resolve conflicts deliberately, run the suite before
   integrating. Local-only repo — no force-push concerns.
 - Pre-2026-07-31 merge commits on `dev` are history — do not rewrite them.
