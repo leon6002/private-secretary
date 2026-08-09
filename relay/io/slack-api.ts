@@ -23,9 +23,11 @@
 //   instance so a single SlackClient never has two outstanding requests.
 
 import { loadIdentity } from "./identity.js";
-import { getSecret } from "./keychain.js";
+import { readSlackToken } from "./slack-oauth.js";
 
-export const SLACK_TOKEN_SERVICE = "taiv-secretary-slack";
+// Owned by slack-oauth.ts (the token store); re-exported here so the many
+// existing importers of this name keep working.
+export { SLACK_TOKEN_SERVICE } from "./slack-oauth.js";
 // The primary workspace's Keychain account, from config/identity.json (see
 // relay/io/identity.ts). Was hard-coded to one person; now per-user.
 export const SLACK_TOKEN_ACCOUNT = loadIdentity().slackAccounts[0]?.account ?? loadIdentity().primaryEmail;
@@ -368,6 +370,11 @@ export async function createSlackClientFromKeychain(
   // account selects WHICH workspace's user token to use — default is the Taiv
   // token (leo@taiv.tv); pass another account (e.g. the OSYX huizhezheng@gmail.com
   // entry) to read a second workspace. Same service, different account key.
-  const token = await getSecret(SLACK_TOKEN_SERVICE, account);
+  //
+  // readSlackToken handles both credential shapes: a legacy hand-pasted xoxp-
+  // string (returned as-is) and a PKCE bundle (refreshed here if it is close to
+  // expiry). Every Slack caller funnels through this factory, so this one line
+  // is the whole refresh integration.
+  const token = await readSlackToken(account);
   return new SlackClient({ token, ...overrides });
 }
