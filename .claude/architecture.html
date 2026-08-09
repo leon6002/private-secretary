@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Personal Secretary — Architecture</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --on-surface: #1a1d21;
+    --on-surface-variant: #64748b;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--on-surface);
+    padding: 28px 20px 40px;
+  }
+  .head { max-width: 1240px; margin: 0 auto 18px; }
+  h1 { font-size: 22px; font-weight: 600; }
+  .sub { color: var(--on-surface-variant); font-size: 13px; margin-top: 3px; }
+  .tree-wrap {
+    max-width: 1240px;
+    margin: 0 auto 22px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 18px 22px 20px;
+  }
+  .tree-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--on-surface-variant);
+    margin-bottom: 12px;
+  }
+  .tree-toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
+  .tree-toolbar button {
+    font: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 6px;
+    border: 1px solid #e5e7eb;
+    background: #f8fafc;
+    color: #475569;
+    cursor: pointer;
+  }
+  .tree-toolbar button:hover { background: #f1f5f9; }
+  #tree-root {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: #1a1d21;
+    overflow-x: auto;
+  }
+  #tree-root ul { list-style: none; margin: 0; padding-left: 18px; }
+  #tree-root > ul { padding-left: 0; }
+  #tree-root li { white-space: nowrap; }
+  .row { display: flex; align-items: center; gap: 4px; border-radius: 4px; padding: 0 4px 0 0; }
+  .row:hover { background: #f8fafc; }
+  .tw {
+    flex: 0 0 auto;
+    width: 16px; height: 16px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: none; background: none; cursor: pointer;
+    color: #64748b; font-size: 10px; padding: 0;
+    user-select: none;
+  }
+  .tw.leaf { visibility: hidden; }
+  .nm { font-weight: 700; color: #0f172a; }
+  .nm.f { font-weight: 400; color: #334155; }
+  .cmt { color: #94a3b8; font-size: 11px; margin-left: 10px; }
+  .cat-core { color: #4338ca; }
+  .cat-io { color: #7c3aed; }
+  .cat-ui { color: #be185d; }
+  .cat-state { color: #b45309; }
+  .cat-ext { color: #64748b; }
+  svg { display: block; width: 100%; height: auto; max-width: 1240px; margin: 0 auto; }
+  text { font-family: inherit; }
+</style>
+</head>
+<body>
+<div class="head">
+  <h1>Personal Secretary — Architecture</h1>
+  <div class="sub">One repo, one Node runtime. relay/core is the pure tested decision engine; everything else either feeds it data or renders its output.</div>
+</div>
+
+<div class="tree-wrap">
+  <div class="tree-title">Repository layout</div>
+  <div class="tree-toolbar">
+    <button id="tree-expand" type="button">Expand all</button>
+    <button id="tree-collapse" type="button">Collapse all</button>
+  </div>
+  <div id="tree-root"></div>
+</div>
+
+<svg viewBox="0 0 1240 940" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Architecture diagram">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748b"/>
+    </marker>
+    <marker id="arrBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#059669"/>
+    </marker>
+    <marker id="arrAmber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#d97706"/>
+    </marker>
+    <marker id="arrPink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#db2777"/>
+    </marker>
+    <g id="cloud">
+      <ellipse cx="0" cy="0" rx="46" ry="22"/>
+      <ellipse cx="-24" cy="6" rx="26" ry="16"/>
+      <ellipse cx="24" cy="6" rx="26" ry="16"/>
+    </g>
+  </defs>
+
+  <!-- ============ swimlanes ============ -->
+  <rect x="10" y="10" width="1220" height="140" rx="14" fill="#eef1f4"/>
+  <text x="30" y="34" font-size="11" font-weight="700" letter-spacing="2" fill="#64748b">EXTERNAL WORLD</text>
+  <text x="30" y="50" font-size="10" fill="#94a3b8">untrusted data in · approved sends out</text>
+
+  <rect x="10" y="186" width="1220" height="128" rx="14" fill="#eff6ff"/>
+  <text x="30" y="208" font-size="11" font-weight="700" letter-spacing="2" fill="#3b82f6">RUNTIME — INSIDE CLAUDE CODE</text>
+
+  <rect x="10" y="344" width="1220" height="200" rx="14" fill="#eef2ff"/>
+  <text x="30" y="366" font-size="11" font-weight="700" letter-spacing="2" fill="#6366f1">RELAY/ — THE ENGINE · 357 UNIT TESTS</text>
+
+  <rect x="10" y="570" width="1220" height="150" rx="14" fill="#fffbeb"/>
+  <text x="30" y="592" font-size="11" font-weight="700" letter-spacing="2" fill="#d97706">LOCAL PERSISTENCE — single source of truth</text>
+
+  <rect x="10" y="748" width="1220" height="182" rx="14" fill="#fdf2f8"/>
+  <text x="30" y="770" font-size="11" font-weight="700" letter-spacing="2" fill="#db2777">COCKPIT — Phase 2 · thin local triage UI</text>
+
+  <!-- ============ EXTERNAL (y=98) ============ -->
+  <g transform="translate(140,98)">
+    <use href="#cloud" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+    <text y="-2" text-anchor="middle" font-size="14" font-weight="700" fill="#1a1d21">Slack</text>
+    <text y="14" text-anchor="middle" font-size="9" fill="#64748b">read + send (MCP)</text>
+  </g>
+  <g transform="translate(340,98)">
+    <use href="#cloud" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+    <text y="-2" text-anchor="middle" font-size="14" font-weight="700" fill="#1a1d21">Gmail</text>
+    <text y="14" text-anchor="middle" font-size="9" fill="#64748b">read via MCP · draft-only</text>
+  </g>
+  <g transform="translate(540,98)">
+    <use href="#cloud" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <text y="-2" text-anchor="middle" font-size="14" font-weight="700" fill="#1a1d21">WeChat</text>
+    <text y="14" text-anchor="middle" font-size="9" fill="#64748b">read gated · send = manual</text>
+  </g>
+  <g transform="translate(850,98)">
+    <rect x="-58" y="-26" width="116" height="52" rx="8" fill="#ffffff" stroke="#f59e0b" stroke-width="2" stroke-dasharray="6 4"/>
+    <text y="-8" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1d21">Jira / Notion</text>
+    <text y="8" text-anchor="middle" font-size="9" fill="#d97706">NOT sources — context</text>
+    <text y="20" text-anchor="middle" font-size="9" fill="#d97706">+ executor targets only</text>
+  </g>
+  <g transform="translate(1100,98)">
+    <circle r="26" fill="#fee2e2" stroke="#ef4444" stroke-width="1.5"/>
+    <text y="4" text-anchor="middle" font-size="18" fill="#ef4444">⚠</text>
+    <text y="46" text-anchor="middle" font-size="9" fill="#ef4444" font-weight="600">never scanned</text>
+    <text y="58" text-anchor="middle" font-size="9" fill="#ef4444" font-weight="600">to originate items</text>
+  </g>
+
+  <!-- ============ RUNTIME (y=258) ============ -->
+  <g transform="translate(240,258)">
+    <rect x="-120" y="-40" width="240" height="80" rx="10" fill="#ffffff" stroke="#3b82f6" stroke-width="2"/>
+    <text y="-16" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1d21">/relay skill</text>
+    <text y="0" text-anchor="middle" font-size="10" fill="#475569">THE runtime — reads via MCP,</text>
+    <text y="13" text-anchor="middle" font-size="10" fill="#475569">analyzes, executes approved only</text>
+    <text y="30" text-anchor="middle" font-size="9" font-family="ui-monospace,Menlo,monospace" fill="#94a3b8">.claude/skills/relay/SKILL.md</text>
+  </g>
+  <g transform="translate(560,258)">
+    <rect x="-110" y="-40" width="220" height="80" rx="10" fill="#ffffff" stroke="#3b82f6" stroke-width="2"/>
+    <text y="-16" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1d21">relay/cli.ts</text>
+    <text y="0" text-anchor="middle" font-size="10" fill="#475569">bridge — skill calls the SAME</text>
+    <text y="13" text-anchor="middle" font-size="10" fill="#475569">tested core the tests cover</text>
+    <text y="30" text-anchor="middle" font-size="9" font-family="ui-monospace,Menlo,monospace" fill="#94a3b8">relay/cli.ts</text>
+  </g>
+  <g transform="translate(900,258)">
+    <rect x="-120" y="-40" width="240" height="80" rx="10" fill="#ffffff" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <text y="-16" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1d21">/persona-bootstrap</text>
+    <text y="0" text-anchor="middle" font-size="10" fill="#475569">one-time batch build</text>
+    <text y="13" text-anchor="middle" font-size="10" fill="#475569">NEVER in the scan loop</text>
+    <text y="30" text-anchor="middle" font-size="9" font-family="ui-monospace,Menlo,monospace" fill="#94a3b8">.claude/skills/persona-bootstrap/</text>
+  </g>
+
+  <!-- ============ ENGINE (y=448) ============ -->
+  <g transform="translate(280,448)">
+    <polygon points="0,-62 116,-31 116,31 0,62 -116,31 -116,-31" fill="#ffffff" stroke="#6366f1" stroke-width="2.5"/>
+    <text y="-28" text-anchor="middle" font-size="14" font-weight="700" fill="#312e81">relay/core/</text>
+    <text y="-10" text-anchor="middle" font-size="9.5" fill="#475569">pure logic · no I/O</text>
+    <text y="4" text-anchor="middle" font-size="9.5" fill="#475569">action-item schema + status machine</text>
+    <text y="17" text-anchor="middle" font-size="9.5" fill="#475569">trigger-filter · recipient-resolver</text>
+    <text y="30" text-anchor="middle" font-size="9.5" fill="#475569">dedup · executors · persona-v3</text>
+    <text y="43" text-anchor="middle" font-size="9.5" fill="#475569">tasks · metrics · merge · bootstrap</text>
+  </g>
+  <g transform="translate(600,448)">
+    <rect x="-92" y="-56" width="184" height="112" rx="10" fill="#ffffff" stroke="#6366f1" stroke-width="2"/>
+    <text y="-34" text-anchor="middle" font-size="13" font-weight="700" fill="#312e81">relay/sources/</text>
+    <text y="-16" text-anchor="middle" font-size="9.5" fill="#475569">MessageSource contract</text>
+    <text y="-3" text-anchor="middle" font-size="9.5" fill="#475569">+ normalize() pure fns</text>
+    <text y="14" text-anchor="middle" font-size="9.5" fill="#475569">messaging channels ONLY</text>
+    <text y="27" text-anchor="middle" font-size="9.5" fill="#475569">(slack-channels now)</text>
+    <text y="44" text-anchor="middle" font-size="9" font-family="ui-monospace,Menlo,monospace" fill="#94a3b8">relay/sources/</text>
+  </g>
+  <g transform="translate(840,448)">
+    <rect x="-84" y="-56" width="168" height="112" rx="10" fill="#ede9fe" stroke="#8b5cf6" stroke-width="2"/>
+    <text y="-34" text-anchor="middle" font-size="13" font-weight="700" fill="#5b21b6">relay/io/</text>
+    <text y="-16" text-anchor="middle" font-size="9.5" fill="#475569">fs only</text>
+    <text y="-3" text-anchor="middle" font-size="9.5" fill="#475569">persona loader/store</text>
+    <text y="10" text-anchor="middle" font-size="9.5" fill="#dc2626" font-weight="600">THE R1 write chokepoint</text>
+    <text y="23" text-anchor="middle" font-size="9.5" fill="#475569">loop-state.json v2 + lock</text>
+    <text y="40" text-anchor="middle" font-size="9" font-family="ui-monospace,Menlo,monospace" fill="#94a3b8">relay/io/</text>
+  </g>
+  <g transform="translate(1060,448)">
+    <rect x="-72" y="-56" width="144" height="112" rx="10" fill="#d1fae5" stroke="#059669" stroke-width="2"/>
+    <text y="-34" text-anchor="middle" font-size="13" font-weight="700" fill="#065f46">relay/proc/</text>
+    <text y="-16" text-anchor="middle" font-size="9.5" fill="#475569">executors — crash-safe</text>
+    <text y="-3" text-anchor="middle" font-size="9.5" fill="#475569">markExecuting persisted</text>
+    <text y="10" text-anchor="middle" font-size="9.5" fill="#dc2626" font-weight="600">BEFORE external call</text>
+    <text y="23" text-anchor="middle" font-size="9.5" fill="#475569">Jira/Notion via MCP</text>
+    <text y="40" text-anchor="middle" font-size="9" font-family="ui-monospace,Menlo,monospace" fill="#94a3b8">relay/proc/</text>
+  </g>
+
+  <!-- ============ PERSISTENCE (y=648) ============ -->
+  <g transform="translate(240,648)">
+    <ellipse cx="0" cy="-34" rx="70" ry="12" fill="#ffffff" stroke="#d97706" stroke-width="2"/>
+    <path d="M-70,-34 L-70,26 A70,12 0 0 0 70,26 L70,-34" fill="#ffffff" stroke="#d97706" stroke-width="2"/>
+    <ellipse cx="0" cy="26" rx="70" ry="12" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <text y="-6" text-anchor="middle" font-size="12" font-weight="700" fill="#78350f">state/loop-state.json</text>
+    <text y="8" text-anchor="middle" font-size="9" fill="#92400e">v2 {marks, actions,</text>
+    <text y="19" text-anchor="middle" font-size="9" fill="#92400e">outcomes, sourceErrors}</text>
+    <text y="31" text-anchor="middle" font-size="9" fill="#92400e">+ .lock · pending queue</text>
+  </g>
+  <g transform="translate(600,648)">
+    <ellipse cx="0" cy="-34" rx="70" ry="12" fill="#ffffff" stroke="#d97706" stroke-width="2"/>
+    <path d="M-70,-34 L-70,26 A70,12 0 0 0 70,26 L70,-34" fill="#ffffff" stroke="#d97706" stroke-width="2"/>
+    <ellipse cx="0" cy="26" rx="70" ry="12" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <text y="-6" text-anchor="middle" font-size="12" font-weight="700" fill="#78350f">personas/*.yaml</text>
+    <text y="8" text-anchor="middle" font-size="9" fill="#92400e">v3 hierarchical schema</text>
+    <text y="19" text-anchor="middle" font-size="9" fill="#92400e">provenance + evidence</text>
+    <text y="31" text-anchor="middle" font-size="9" fill="#92400e">_staged/ = review gate</text>
+  </g>
+  <g transform="translate(930,648)">
+    <ellipse cx="0" cy="-34" rx="70" ry="12" fill="#ffffff" stroke="#d97706" stroke-width="2"/>
+    <path d="M-70,-34 L-70,26 A70,12 0 0 0 70,26 L70,-34" fill="#ffffff" stroke="#d97706" stroke-width="2"/>
+    <ellipse cx="0" cy="26" rx="70" ry="12" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <text y="-6" text-anchor="middle" font-size="12" font-weight="700" fill="#78350f">shadow-log.jsonl</text>
+    <text y="8" text-anchor="middle" font-size="9" fill="#92400e">append-only Phase 3B</text>
+    <text y="19" text-anchor="middle" font-size="9" fill="#92400e">replay / parity dataset</text>
+  </g>
+
+  <!-- ============ COCKPIT (y=848) ============ -->
+  <g transform="translate(240,848)">
+    <rect x="-120" y="-52" width="240" height="104" rx="10" fill="#ffffff" stroke="#db2777" stroke-width="2"/>
+    <text y="-30" text-anchor="middle" font-size="13" font-weight="700" fill="#831843">server.ts</text>
+    <text y="-12" text-anchor="middle" font-size="9.5" fill="#475569">loopback-only Node http server</text>
+    <text y="1" text-anchor="middle" font-size="9.5" fill="#475569">CSRF-guarded · imports relay/core</text>
+    <text y="14" text-anchor="middle" font-size="9.5" fill="#475569">serves PREBUILT static bundle</text>
+    <text y="27" text-anchor="middle" font-size="9.5" fill="#475569">(no dev server in production)</text>
+    <text y="44" text-anchor="middle" font-size="9" font-family="ui-monospace,Menlo,monospace" fill="#94a3b8">relay/cockpit/server.ts</text>
+  </g>
+  <g transform="translate(600,848)">
+    <rect x="-110" y="-52" width="220" height="104" rx="10" fill="#ffffff" stroke="#db2777" stroke-width="2"/>
+    <text y="-30" text-anchor="middle" font-size="13" font-weight="700" fill="#831843">web/src/ — React SPA</text>
+    <text y="-12" text-anchor="middle" font-size="9.5" fill="#475569">Queue / People / Connections</text>
+    <text y="1" text-anchor="middle" font-size="9.5" fill="#475569">browser-only subset: JSX + DOM</text>
+    <text y="14" text-anchor="middle" font-size="9.5" fill="#475569">Tailwind + motion · NO own</text>
+    <text y="27" text-anchor="middle" font-size="9.5" fill="#dc2626" font-weight="600">package.json (deps in root)</text>
+    <text y="44" text-anchor="middle" font-size="9" font-family="ui-monospace,Menlo,monospace" fill="#94a3b8">relay/cockpit/web/src/</text>
+  </g>
+  <g transform="translate(930,848)">
+    <rect x="-100" y="-52" width="200" height="104" rx="10" fill="#fdf2f8" stroke="#db2777" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <text y="-30" text-anchor="middle" font-size="13" font-weight="700" fill="#831843">web/dist/</text>
+    <text y="-12" text-anchor="middle" font-size="9.5" fill="#475569">prebuilt bundle</text>
+    <text y="1" text-anchor="middle" font-size="9.5" fill="#475569">(npm run cockpit:build)</text>
+    <text y="14" text-anchor="middle" font-size="9.5" fill="#475569">read fresh per request;</text>
+    <text y="27" text-anchor="middle" font-size="9.5" fill="#dc2626" font-weight="600">rebuild after editing src</text>
+    <text y="44" text-anchor="middle" font-size="9" font-family="ui-monospace,Menlo,monospace" fill="#94a3b8">relay/cockpit/web/dist/</text>
+  </g>
+  <g transform="translate(1170,848)">
+    <circle r="22" fill="#ffffff" stroke="#db2777" stroke-width="2"/>
+    <text y="5" text-anchor="middle" font-size="18">👤</text>
+    <text y="40" text-anchor="middle" font-size="9" fill="#db2777" font-weight="600">you, triage-only</text>
+  </g>
+
+  <!-- ============ FLOWS ============ -->
+  <!-- external -> runtime read / runtime -> external send (now clear of the title) -->
+  <line x1="140" y1="124" x2="140" y2="212" stroke="#64748b" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="340" y1="124" x2="340" y2="212" stroke="#64748b" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="540" y1="124" x2="540" y2="212" stroke="#64748b" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#arr)"/>
+  <text x="128" y="172" text-anchor="end" font-size="9" fill="#64748b" font-weight="600">read</text>
+  <line x1="200" y1="212" x2="200" y2="124" stroke="#059669" stroke-width="2" marker-end="url(#arrGreen)"/>
+  <line x1="400" y1="212" x2="400" y2="124" stroke="#059669" stroke-width="2" marker-end="url(#arrGreen)"/>
+  <text x="412" y="172" font-size="9" fill="#059669" font-weight="600">approved send</text>
+
+  <!-- context lookup: Jira -> relay/io -->
+  <line x1="850" y1="124" x2="850" y2="388" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#arrAmber)"/>
+  <text x="862" y="250" font-size="9" fill="#d97706" font-weight="600">context lookup</text>
+  <!-- executor target: relay/proc -> Jira -->
+  <line x1="1060" y1="392" x2="920" y2="124" stroke="#059669" stroke-width="2" marker-end="url(#arrGreen)"/>
+  <text x="1080" y="250" font-size="9" fill="#059669" font-weight="600">executor target</text>
+
+  <!-- runtime -> engine -->
+  <line x1="280" y1="300" x2="280" y2="382" stroke="#2563eb" stroke-width="2.5" marker-end="url(#arrBlue)"/>
+  <text x="292" y="346" font-size="9" fill="#2563eb" font-weight="600">delegate deterministic decisions</text>
+
+  <!-- engine -> persistence (write) -->
+  <line x1="240" y1="510" x2="240" y2="610" stroke="#d97706" stroke-width="2" marker-end="url(#arrAmber)"/>
+  <line x1="930" y1="510" x2="930" y2="610" stroke="#d97706" stroke-width="2" marker-end="url(#arrAmber)"/>
+  <text x="252" y="564" font-size="9" fill="#d97706" font-weight="600">write queue / state</text>
+  <!-- persistence -> engine (read personas back) -->
+  <line x1="600" y1="610" x2="600" y2="510" stroke="#6366f1" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrBlue)"/>
+  <text x="612" y="564" font-size="9" fill="#6366f1" font-weight="600">read personas</text>
+
+  <!-- persistence <-> cockpit -->
+  <line x1="200" y1="678" x2="200" y2="792" stroke="#db2777" stroke-width="2" marker-end="url(#arrPink)"/>
+  <line x1="280" y1="792" x2="280" y2="678" stroke="#db2777" stroke-width="2" marker-end="url(#arrPink)"/>
+  <text x="292" y="738" font-size="9" fill="#db2777" font-weight="600">read queue · approve/edit/skip back</text>
+
+  <!-- server -> dist: route just above the node tops (node top = y=796) -->
+  <polyline points="240,794 240,772 930,772 930,794" fill="none" stroke="#db2777" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#arrPink)"/>
+  <text x="585" y="766" text-anchor="middle" font-size="9" fill="#db2777" font-weight="600">serves static bundle</text>
+
+  <!-- dist -> user -->
+  <line x1="1032" y1="848" x2="1146" y2="848" stroke="#db2777" stroke-width="2" marker-end="url(#arrPink)"/>
+</svg>
+
+<script>
+(function () {
+  // {n: name, t: 'd'|'f', c: category class suffix, note: comment, kids: []}
+  const TREE = {
+    n: "private-secretary/", t: "d", kids: [
+      { n: "relay/", t: "d", c: "core", note: "the engine — pure logic + I/O, 357 unit tests", kids: [
+        { n: "core/", t: "d", c: "core", note: "pure logic, no I/O — schema, status machine, dedup, executors, persona-v3…", kids: [
+          { n: "action-item.ts", t: "f", note: "schema + status machine + markExecuting/restore" },
+          { n: "tasks.ts", t: "f" }, { n: "trigger-filter.ts", t: "f" },
+          { n: "recipient-resolver.ts", t: "f" }, { n: "dedup.ts", t: "f" },
+          { n: "executors.ts", t: "f" }, { n: "merge.ts", t: "f" },
+          { n: "metrics.ts", t: "f" }, { n: "persona-v3.ts", t: "f" },
+          { n: "bootstrap.ts", t: "f" }, { n: "jira-assignee.ts", t: "f" },
+          { n: "mentions.ts", t: "f" }, { n: "anchors.ts", t: "f" },
+          { n: "calendar-conflict.ts", t: "f" }, { n: "project.ts", t: "f" },
+          { n: "project-synthesis.ts", t: "f" }, { n: "promo-filter.ts", t: "f" },
+          { n: "shadow.ts", t: "f" }, { n: "tool-registry.ts", t: "f" },
+          { n: "types.ts", t: "f" }, { n: "unit-key.ts", t: "f" },
+          { n: "… .test.ts", t: "f", note: "one per module — 357 tests total" },
+        ]},
+        { n: "sources/", t: "d", c: "core", note: "MessageSource contract + normalize() — messaging channels ONLY", kids: [
+          { n: "index.ts", t: "f" }, { n: "types.ts", t: "f" },
+          { n: "slack-channels.ts", t: "f" }, { n: "slack-direct.ts", t: "f" },
+          { n: "gmail-direct.ts", t: "f" }, { n: "wechat-direct.ts", t: "f" },
+        ]},
+        { n: "io/", t: "d", c: "io", note: "fs only — persona loader/store (R1 chokepoint), loop-state.json + lock", kids: [
+          { n: "state.ts", t: "f" }, { n: "personas.ts", t: "f" },
+          { n: "persona-store.ts", t: "f", note: "THE R1 write chokepoint" },
+          { n: "shadow-log.ts", t: "f" }, { n: "activity-log.ts", t: "f" },
+          { n: "settings.ts", t: "f" }, { n: "tools.ts", t: "f" },
+          { n: "identity.ts", t: "f" }, { n: "business-context.ts", t: "f" },
+          { n: "labels.ts", t: "f" }, { n: "projects.ts", t: "f" },
+          { n: "bootstrap-progress.ts", t: "f" },
+          { n: "anthropic-api.ts", t: "f" }, { n: "deepseek-api.ts", t: "f" },
+          { n: "llm-raw-log.ts", t: "f" }, { n: "keychain.ts", t: "f" },
+          { n: "slack-api.ts", t: "f" }, { n: "slack-users.ts", t: "f" },
+          { n: "gmail-api.ts", t: "f" }, { n: "google-oauth.ts", t: "f" },
+          { n: "calendar-api.ts", t: "f" }, { n: "jira-mcp.ts", t: "f" },
+          { n: "mcp-tool.ts", t: "f" }, { n: "mcp-stdio-client.ts", t: "f" },
+          { n: "wechat-cli.ts", t: "f" },
+        ]},
+        { n: "proc/", t: "d", c: "core", note: "executors — crash-safe (markExecuting persisted BEFORE external call)", kids: [
+          { n: "execute.ts", t: "f" }, { n: "scan-loop.ts", t: "f" },
+          { n: "scheduler.ts", t: "f" }, { n: "notify.ts", t: "f" },
+          { n: "plan.ts", t: "f" }, { n: "draft.ts", t: "f" },
+          { n: "research.ts", t: "f" }, { n: "refresh.ts", t: "f" },
+          { n: "consolidate.ts", t: "f" }, { n: "persona-update.ts", t: "f" },
+          { n: "project-synthesis.ts", t: "f" },
+          { n: "llm-anthropic.ts", t: "f" }, { n: "llm-deepseek.ts", t: "f" },
+          { n: "llm-claude-cli.ts", t: "f" },
+          { n: "*-prompt.ts", t: "f", note: "prompt templates per stage" },
+        ]},
+        { n: "cli.ts", t: "f", note: "bridge — the skill calls the SAME tested core via this" },
+        { n: "eval/", t: "d", note: "replay + baseline harness", kids: [
+          { n: "replay.ts", t: "f" }, { n: "baseline.ts", t: "f" },
+        ]},
+        { n: "cockpit/", t: "d", c: "ui", note: "Phase 2 — thin local triage UI (loopback-only)", kids: [
+          { n: "server.ts", t: "f", note: "Node http server, CSRF-guarded, imports relay/core, serves web/dist" },
+          { n: "api.ts", t: "f" }, { n: "security.ts", t: "f" },
+          { n: "reauth.ts", t: "f" }, { n: "wire-executor.ts", t: "f" },
+          { n: "dry-executor.ts", t: "f" },
+          { n: "web/", t: "d", c: "ui", kids: [
+            { n: "src/", t: "d", c: "ui", note: "React SPA — browser-only subset", kids: [
+              { n: "main.tsx", t: "f" }, { n: "App.tsx", t: "f" },
+              { n: "index.css", t: "f" },
+              { n: "screens/", t: "d", kids: [
+                { n: "QueueScreen.tsx", t: "f" }, { n: "PeopleScreen.tsx", t: "f" },
+                { n: "ConnectionsScreen.tsx", t: "f" }, { n: "ProjectsScreen.tsx", t: "f" },
+                { n: "CalendarScreen.tsx", t: "f" }, { n: "SettingsScreen.tsx", t: "f" },
+              ]},
+              { n: "components/", t: "d", kids: [
+                { n: "Button.tsx", t: "f" }, { n: "Tabs.tsx", t: "f" },
+                { n: "TagInput.tsx", t: "f" }, { n: "ScreenPlaceholder.tsx", t: "f" },
+                { n: "ui/ (shadcn)", t: "d", kids: [
+                  { n: "badge.tsx", t: "f" }, { n: "button.tsx", t: "f" },
+                  { n: "input.tsx", t: "f" }, { n: "select.tsx", t: "f" },
+                  { n: "textarea.tsx", t: "f" },
+                ]},
+              ]},
+              { n: "lib/", t: "d", kids: [
+                { n: "api.ts", t: "f" }, { n: "useCockpitState.ts", t: "f" },
+                { n: "theme.tsx", t: "f" }, { n: "toast.tsx", t: "f" },
+                { n: "avatar.tsx", t: "f" }, { n: "cn.ts", t: "f" },
+                { n: "text.ts", t: "f" }, { n: "time.ts", t: "f" },
+              ]},
+            ]},
+            { n: "dist/", t: "d", note: "prebuilt bundle (npm run cockpit:build) — no own package.json" },
+            { n: "index.html", t: "f" }, { n: "vite.config.ts", t: "f" },
+            { n: "tailwind.config.js", t: "f" }, { n: "postcss.config.js", t: "f" },
+            { n: "tsconfig.json", t: "f" },
+          ]},
+        ]},
+      ]},
+      { n: ".claude/", t: "d", note: "the runtime — Claude Code skills drive the engine", kids: [
+        { n: "skills/", t: "d", kids: [
+          { n: "relay/SKILL.md", t: "f", note: "/relay — scan + review orchestration (THE runtime)" },
+          { n: "persona-bootstrap/", t: "d", note: "one-time batch build, NEVER in the scan loop" },
+          { n: "owner-voice/", t: "d" }, { n: "impeccable/", t: "d" },
+          { n: "git-rebase/", t: "d" },
+        ]},
+        { n: "settings.local.json", t: "f" }, { n: "architecture.html", t: "f", note: "this page" },
+      ]},
+      { n: "personas/", t: "d", c: "state", note: "v3 hierarchical YAML, provenance + evidence", kids: [
+        { n: "_staged/", t: "d", note: "bootstrap review gate — promote moves staged live" },
+        { n: "_example/jordan-example.yaml", t: "f" }, { n: "README.md", t: "f" },
+      ]},
+      { n: "state/", t: "d", c: "state", note: "local persistence — single source of truth", kids: [
+        { n: "loop-state.json", t: "f", note: "v2 {marks, actions, outcomes, sourceErrors} — the pending queue" },
+        { n: "shadow-log.jsonl", t: "f" }, { n: "activity-log.jsonl", t: "f" },
+        { n: "labels.jsonl", t: "f" }, { n: "llm-draft-raw.jsonl", t: "f" },
+        { n: "notify-heartbeat.json", t: "f" }, { n: "slack-users.json", t: "f" },
+        { n: ".csrf", t: "f" },
+      ]},
+      { n: "config/", t: "d", kids: [
+        { n: "identity.json", t: "f" }, { n: "secretary-settings.json", t: "f" },
+        { n: "tools.json", t: "f" },
+        { n: "*.example.*", t: "f", note: "identity / business-context templates" },
+      ]},
+      { n: "specs/", t: "d", note: "design docs — the source of truth for each layer", kids: [
+        { n: "action-item-engine.md", t: "f" }, { n: "persona-v3.md", t: "f" },
+        { n: "phase2-cockpit-design.md", t: "f" }, { n: "phase2-stitch/", t: "d", note: "visual source of truth (IBM Plex/#2563EB)" },
+        { n: "wechat-local-decrypt.md", t: "f" }, { n: "wechat-decrypt-migration.md", t: "f" },
+        { n: "task-consolidation.md", t: "f" }, { n: "project-discovery.md", t: "f" },
+        { n: "anchor-pipeline.md", t: "f" }, { n: "daily-todo.md", t: "f" },
+        { n: "phase3-local-mac.md", t: "f" }, { n: "persona-v4-behavior-enhancement.md", t: "f" },
+        { n: "project-goals-for-review.md", t: "f" },
+      ]},
+      { n: "scripts/", t: "d", note: "run-cockpit.ts + one-off ops scripts", kids: [
+        { n: "run-cockpit.ts", t: "f" }, { n: "run-secretary.ts", t: "f" },
+        { n: "run-notify.ts", t: "f" }, { n: "auth/google-oauth.ts", t: "f" },
+        { n: "launchagent/", t: "d" },
+        { n: "smoke-*.ts", t: "f", note: "calendar / draft / gmail / slack / wechat" },
+        { n: "baseline.ts", t: "f" }, { n: "freeze-corpus.ts", t: "f" },
+        { n: "project-bootstrap.ts", t: "f" }, { n: "project-synthesis.ts", t: "f" },
+        { n: "research.ts", t: "f" }, { n: "export-labels.ts", t: "f" },
+        { n: "show-activity.ts", t: "f" }, { n: "resolve-avatars.ts", t: "f" },
+        { n: "seed-cursors-now.ts", t: "f" }, { n: "cleanup-bogus-events.ts", t: "f" },
+        { n: "osyx-slack.mts", t: "f" },
+      ]},
+      { n: "eval/", t: "d", note: "baseline snapshots", kids: [
+        { n: "baseline-2026-07-28.json", t: "f" }, { n: "baseline-2026-07-28.md", t: "f" },
+      ]},
+      { n: "state-demo/", t: "d" }, { n: "stitch-design/", t: "d", note: "3-screen visual references (html + png)" },
+      { n: "todo-export/", t: "d" }, { n: ".kimi/", t: "d" }, { n: ".kimi-code/", t: "d" },
+      { n: "package.json", t: "f" }, { n: "tsconfig.json", t: "f" },
+      { n: "vitest.config.ts", t: "f" }, { n: "components.json", t: "f" },
+      { n: "CLAUDE.md", t: "f" }, { n: "AGENTS.md", t: "f" },
+      { n: "README.md", t: "f" }, { n: "OVERVIEW.md", t: "f" },
+      { n: "PRODUCT.md", t: "f" }, { n: "DESIGN.md", t: "f" },
+      { n: "SETUP.md", t: "f" }, { n: "TODOS.md", t: "f" },
+    ],
+  };
+
+  const root = document.getElementById("tree-root");
+
+  function build(node) {
+    const li = document.createElement("li");
+    const row = document.createElement("div");
+    row.className = "row";
+
+    const tw = document.createElement("button");
+    tw.type = "button";
+    tw.className = "tw" + (node.kids && node.kids.length ? "" : " leaf");
+    tw.textContent = "▸";
+    tw.setAttribute("aria-label", "toggle");
+    row.appendChild(tw);
+
+    const nm = document.createElement("span");
+    nm.className = "nm" + (node.t === "f" ? " f" : "") + (node.c ? " cat-" + node.c : "");
+    nm.textContent = node.n;
+    row.appendChild(nm);
+
+    if (node.note) {
+      const cmt = document.createElement("span");
+      cmt.className = "cmt";
+      cmt.textContent = "— " + node.note;
+      row.appendChild(cmt);
+    }
+
+    li.appendChild(row);
+
+    let childUl = null;
+    if (node.kids && node.kids.length) {
+      childUl = document.createElement("ul");
+      childUl.style.display = "none";
+      node.kids.forEach((k) => childUl.appendChild(build(k)));
+      li.appendChild(childUl);
+      tw.addEventListener("click", () => {
+        const open = childUl.style.display !== "none";
+        childUl.style.display = open ? "none" : "block";
+        tw.textContent = open ? "▸" : "▾";
+      });
+    }
+    li._toggle = (open) => {
+      if (!childUl) return;
+      childUl.style.display = open ? "block" : "none";
+      tw.textContent = open ? "▾" : "▸";
+      Array.from(childUl.children).forEach((c) => c._toggle && c._toggle(open));
+    };
+    return li;
+  }
+
+  const topUl = document.createElement("ul");
+  const topLi = build(TREE);
+  topUl.appendChild(topLi);
+  root.appendChild(topUl);
+  // default: root expanded one level
+  topLi._toggle(true);
+
+  document.getElementById("tree-expand").addEventListener("click", () => topLi._toggle(true));
+  document.getElementById("tree-collapse").addEventListener("click", () => {
+    topLi._toggle(false);
+    topLi._toggle(true); // keep root visible, collapse everything below
+  });
+})();
+</script>
+
+</body>
+</html>
