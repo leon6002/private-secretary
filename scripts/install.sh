@@ -15,6 +15,9 @@
 # Environment overrides:
 #   PRIVATE_SECRETARY_REPO   git URL to clone (default: the GitHub repo below —
 #                            point at your fork/mirror if the origin moves)
+#   PRIVATE_SECRETARY_REF    branch/tag to install (default: dev — the main
+#                            branch is still the initial commit; flip the default
+#                            to main once dev is merged)
 #   PRIVATE_SECRETARY_HOME   install directory (default: ~/private-secretary)
 
 set -euo pipefail
@@ -30,6 +33,8 @@ NC='\033[0m'
 # ── Configuration — override via environment if the repo moves ────
 # e.g. PRIVATE_SECRETARY_REPO=git@github.com:myfork/private-secretary.git bash install.sh
 REPO_URL="${PRIVATE_SECRETARY_REPO:-https://github.com/LeoTaivDev/private-secretary.git}"
+# main is still the initial commit — everything real lives on dev for now.
+REPO_REF="${PRIVATE_SECRETARY_REF:-dev}"
 INSTALL_DIR="${PRIVATE_SECRETARY_HOME:-$HOME/private-secretary}"
 NODE_MIN_MAJOR=20
 
@@ -47,7 +52,7 @@ if [[ "$OSTYPE" != "darwin"* ]]; then
           "Linux/systemd support is not wired yet — install manually: $REPO_URL"
 fi
 ui_success "Detected: macOS"
-ui_info "Repo: $REPO_URL"
+ui_info "Repo: $REPO_URL (ref: $REPO_REF)"
 
 # ── 1. Homebrew (only if we need it for git/node) ───────────────
 install_homebrew() {
@@ -108,15 +113,23 @@ if [[ -d "$INSTALL_DIR/.git" ]]; then
     if [[ -n "$(git -C "$INSTALL_DIR" status --porcelain 2>/dev/null || true)" ]]; then
         ui_warn "Local changes present — skipping git pull (keeping your checkout as-is)"
     else
+        # Ensure we're on the right ref — a checkout cloned from the default
+        # branch (main) may predate the installer knowing about REPO_REF.
+        current_branch="$(git -C "$INSTALL_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+        if [[ "$current_branch" != "$REPO_REF" ]]; then
+            ui_info "Switching checkout from ${current_branch:-detached} to $REPO_REF"
+            git -C "$INSTALL_DIR" fetch origin "$REPO_REF" || abort "git fetch failed for ref $REPO_REF"
+            git -C "$INSTALL_DIR" checkout "$REPO_REF" || abort "git checkout $REPO_REF failed"
+        fi
         git -C "$INSTALL_DIR" pull --ff-only || ui_warn "git pull failed — continuing with current checkout"
     fi
 elif [[ -e "$INSTALL_DIR" ]]; then
     abort "$INSTALL_DIR exists but is not a git checkout" \
           "Move it aside or set PRIVATE_SECRETARY_HOME to a different directory."
 else
-    git clone "$REPO_URL" "$INSTALL_DIR" || abort "git clone failed: $REPO_URL" \
-        "Check network/GitHub access, or override the repo: PRIVATE_SECRETARY_REPO=<url> bash install.sh"
-    ui_success "Cloned into $INSTALL_DIR"
+    git clone --branch "$REPO_REF" "$REPO_URL" "$INSTALL_DIR" || abort "git clone failed: $REPO_URL (ref: $REPO_REF)" \
+        "Check network/GitHub access, or override: PRIVATE_SECRETARY_REPO=<url> PRIVATE_SECRETARY_REF=<branch> bash install.sh"
+    ui_success "Cloned into $INSTALL_DIR ($REPO_REF)"
 fi
 
 cd "$INSTALL_DIR"
