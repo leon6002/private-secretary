@@ -68,8 +68,10 @@ export const SLACK_USER_SCOPES: ReadonlyArray<string> = [
 export interface SlackTokenBundle {
   access_token: string;
   refresh_token: string;
-  // ms epoch. 0 means "never expires" — a non-rotating token, which is what
-  // Slack still issues if the app has rotation off.
+  // ms epoch. 0 means "never expires". Kept as a defensive branch only: with
+  // the token-rotation setting never opted into, the live flow STILL returned a
+  // ~12h rotating token (verified 2026-08-09), because a PKCE desktop redirect
+  // rotates regardless. Do not treat non-rotating as a reachable happy path.
   expires_at: number;
   scope: string;
   team_id: string;

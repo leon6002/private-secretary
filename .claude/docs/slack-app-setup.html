@@ -245,10 +245,11 @@
       <div class="note violet">
         <span class="tag violet">Leave alone</span>
         <p>Just above PKCE sits a separate <b>token rotation</b> opt-in, greyed out until a redirect
-          URL exists. <b>Do not opt in.</b> Rotation buys nothing here and costs the 30-day
-          re-consent: without it the token does not expire, which is a better experience for a
-          desktop app that may sit closed for weeks. The code reads
-          <code>expires_at: 0</code> as “never expires” and handles either outcome.</p>
+          URL exists. Leave it off — but do not expect that to stop rotation.
+          <b>Verified 2026‑08‑09:</b> with rotation never opted into, the flow still returned a
+          rotating token expiring in ~12 hours. A PKCE desktop redirect rotates regardless, so the
+          refresh path and the 30-day re-consent are real and unavoidable, not optional
+          complexity.</p>
       </div>
       <div class="note warn">
         <span class="tag warn">Irreversible</span>

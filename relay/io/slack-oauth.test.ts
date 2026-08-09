@@ -141,9 +141,14 @@ describe("exchangeCode", () => {
 });
 
 describe("refreshBundle", () => {
-  // Slack documents the nested shape for the initial exchange but not for the
-  // refresh of a user token, so the parser accepts either. Both are tested.
-  it("reads a TOP-LEVEL token shape", async () => {
+  // VERIFIED against the live API on 2026-08-09, not inferred: a user-token
+  // refresh answers TOP-LEVEL, unlike the initial exchange which nests under
+  // authed_user. Real response keys were:
+  //   ok, access_token, expires_in, refresh_token, token_type, app_id, scope,
+  //   user_id, team, enterprise, is_enterprise_install
+  // Slack documents only the nested shape, so betting on it would have broken
+  // every install ~12h after connecting. Both shapes stay supported.
+  it("reads a TOP-LEVEL token shape (the real refresh response)", async () => {
     __setSlackOAuthFetch(async () =>
       new Response(
         JSON.stringify({
