@@ -45,6 +45,7 @@ function stubApi(
 
 const PKCE_OK = {
   account: "me@example.com",
+  label: "slack:direct",
   kind: "pkce",
   connected: true,
   team: "leotest",
@@ -114,6 +115,19 @@ describe("ConnectionsScreen", () => {
     render(<ConnectionsScreen />);
     await screen.findByText("me@example.com · leotest");
     expect(within(row("Slack")).getByRole("button", { name: "Disconnect" })).toBeTruthy();
+  });
+
+  // The multi-account fix: a machine that reads Taiv AND OSYX must show BOTH
+  // workspaces as their own rows, not just the default one. The endpoint
+  // returns one status per configured workspace.
+  it("renders one row per configured Slack workspace", async () => {
+    stubApi({ sourceErrors: {} }, [
+      { ...PKCE_OK, account: "leo@taiv.tv", label: "slack:direct", team: "Taiv" },
+      { ...PKCE_OK, account: "huizhezheng@gmail.com", label: "slack:osyx", team: "OSYX" },
+    ]);
+    render(<ConnectionsScreen />);
+    await screen.findByText("leo@taiv.tv · Taiv");
+    await screen.findByText("huizhezheng@gmail.com · OSYX");
   });
 
   it("offers Connect, not Reconnect, when nothing is stored", async () => {
@@ -286,7 +300,9 @@ describe("ConnectionsScreen", () => {
       fireEvent.click(within(slack).getByRole("button", { name: "Disconnect" }));
 
       await screen.findByRole("button", { name: "Connect" });
-      expect(mockApiPost).toHaveBeenCalledWith("/api/connections/slack/disconnect", {});
+      expect(mockApiPost).toHaveBeenCalledWith("/api/connections/slack/disconnect", {
+        account: "me@example.com",
+      });
       mockApiPost.mockReset();
     });
 

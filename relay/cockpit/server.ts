@@ -43,7 +43,7 @@ import {
 } from "./api.js";
 import { checkRequest, loadOrMintCsrfToken } from "./security.js";
 import { startGmailReauth } from "./reauth.js";
-import { disconnectSlack, slackConnectionStatus, startSlackConnect } from "./slack-connect.js";
+import { disconnectSlack, slackConnectionStatuses, startSlackConnect } from "./slack-connect.js";
 import { loadIdentity } from "../io/identity.js";
 import { identityStatus, InvalidIdentity, writeIdentity } from "../io/identity-store.js";
 import { restartDaemon } from "./daemon-control.js";
@@ -417,7 +417,7 @@ export function createCockpitServer(opts: CockpitServerOptions): {
     // connected" (first run), a legacy hand-pasted token, and a rotating PKCE
     // bundle with an expiry.
     if (path === "/api/connections/slack" && method === "GET") {
-      sendJson(res, 200, await slackConnectionStatus());
+      sendJson(res, 200, await slackConnectionStatuses());
       return;
     }
 

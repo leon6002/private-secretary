@@ -24,6 +24,8 @@ import { useCockpitState, type SourceError } from "../lib/useCockpitState";
 
 interface SlackConnection {
   account: string;
+  /** Source label (slack:direct, slack:osyx, …) — keys this account's sourceError. */
+  label: string;
   kind: "none" | "legacy" | "pkce";
   connected: boolean;
   team?: string;
@@ -151,6 +153,9 @@ function hostOf(url: string): string {
 
 interface ConnectorRow {
   id: ConnectorId;
+  /** Unique React key + filter identity. Defaults to `id`; set when one
+   *  connector (e.g. Slack) renders several rows so keys stay unique. */
+  rowKey?: string;
   name: string;
   /** Who/what it is connected as — the second line under the name. */
   identity?: string;
@@ -298,8 +303,8 @@ const FILTERS = [
 export default function ConnectionsScreen() {
   const { state } = useCockpitState();
   const [pendingMailbox, setPendingMailbox] = useState<string | null>(null);
-  const [slackConn, setSlackConn] = useState<SlackConnection | null>(null);
-  const [slackPending, setSlackPending] = useState(false);
+  const [slackConns, setSlackConns] = useState<SlackConnection[]>([]);
+  const [slackPendingAccount, setSlackPendingAccount] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
   const [tools, setTools] = useState<ToolsConfig | null>(null);
   const [pendingTool, setPendingTool] = useState<string | null>(null);
@@ -353,48 +358,49 @@ export default function ConnectionsScreen() {
     }
   }
 
-  async function disconnectSlack() {
-    setSlackPending(true);
+  async function disconnectSlack(account: string) {
+    setSlackPendingAccount(account);
     try {
-      const r = await apiPost<{ detail?: string }>("/api/connections/slack/disconnect", {});
+      const r = await apiPost<{ detail?: string }>("/api/connections/slack/disconnect", { account });
       toast(r.detail || "Disconnected.");
       loadSlack();
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), true);
     } finally {
-      setSlackPending(false);
+      setSlackPendingAccount(null);
     }
   }
 
   // One-shot read, not part of the cockpit poll: the credential only changes
   // when the user acts, so re-fetch after a connect rather than every tick.
   const loadSlack = useCallback(() => {
-    apiGet<SlackConnection>("/api/connections/slack")
-      .then(setSlackConn)
-      .catch(() => setSlackConn(null));
+    apiGet<SlackConnection[] | SlackConnection>("/api/connections/slack")
+      // The endpoint returns one status per configured workspace. Tolerate a
+      // lone object too, so an older server (or a stub) still renders a row.
+      .then((d) => setSlackConns(Array.isArray(d) ? d : [d]))
+      .catch(() => setSlackConns([]));
   }, []);
   useEffect(loadSlack, [loadSlack]);
 
   // Legacy default: no state yet (first poll in flight or failing) renders
   // the same as "no source errors" — nothing red, no alarm.
   const errs: Record<string, SourceError> = state?.sourceErrors ?? {};
-  const slackErr = errs["slack:direct"];
   const gmailErr = errs["gmail:direct"];
 
   // The browser flow finishes out of band, so re-read a few seconds later —
   // the row turns green without the user reloading the page.
-  async function connectSlack() {
-    setSlackPending(true);
+  async function connectSlack(account: string) {
+    setSlackPendingAccount(account);
     try {
-      const r = await apiPost<{ detail?: string }>("/api/connections/slack/connect", {});
+      const r = await apiPost<{ detail?: string }>("/api/connections/slack/connect", { account });
       toast(r.detail || "Opening the browser…");
       setTimeout(() => {
         loadSlack();
-        setSlackPending(false);
+        setSlackPendingAccount(null);
       }, 8000);
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), true);
-      setSlackPending(false);
+      setSlackPendingAccount(null);
     }
   }
 
@@ -451,23 +457,31 @@ export default function ConnectionsScreen() {
   );
 
   const rows: ConnectorRow[] = useMemo(() => {
-    const slack = slackRow(slackConn, !!slackErr);
-    return [
-      {
-        id: "slack",
+    // One row per configured Slack workspace (Taiv + OSYX, …). Each carries its
+    // OWN sourceError (keyed by the account's label) and its own connect /
+    // disconnect action, so a dead OSYX token no longer hides behind Taiv.
+    const slackRows: ConnectorRow[] = slackConns.map((conn, i) => {
+      const pending = slackPendingAccount === conn.account;
+      return {
+        id: "slack" as const,
+        rowKey: `slack:${conn.account}`,
         name: "Slack",
-        ...slack,
-        note: <SlackPrivacyNote />,
-        actions: slackConn?.connected ? (
-          <ActionButton disabled={slackPending} onClick={() => void disconnectSlack()}>
-            {slackPending ? "Working…" : "Disconnect"}
+        ...slackRow(conn, !!errs[conn.label]),
+        // The privacy note is identical for every workspace — show it once.
+        ...(i === 0 ? { note: <SlackPrivacyNote /> } : {}),
+        actions: conn.connected ? (
+          <ActionButton disabled={pending} onClick={() => void disconnectSlack(conn.account)}>
+            {pending ? "Working…" : "Disconnect"}
           </ActionButton>
         ) : (
-          <ActionButton disabled={slackPending} onClick={() => void connectSlack()}>
-            {slackPending ? "Opening browser…" : "Connect"}
+          <ActionButton disabled={pending} onClick={() => void connectSlack(conn.account)}>
+            {pending ? "Opening browser…" : "Connect"}
           </ActionButton>
         ),
-      },
+      };
+    });
+    return [
+      ...slackRows,
       {
         id: "gmail",
         name: "Gmail",
@@ -502,7 +516,7 @@ export default function ConnectionsScreen() {
       // the specs stay — this only hides the row.
       ...mcpRows,
     ];
-  }, [slackConn, slackErr, slackPending, gmailErr, pendingMailbox, mcpRows]);
+  }, [slackConns, errs, slackPendingAccount, gmailErr, pendingMailbox, mcpRows]);
 
   const visible = rows.filter((r) =>
     filter === "connected" ? r.state === "ok" : filter === "attention" ? r.state === "attention" : true,
@@ -550,7 +564,7 @@ export default function ConnectionsScreen() {
             </thead>
             <tbody>
               {visible.map((r) => (
-                <Fragment key={r.id}>
+                <Fragment key={r.rowKey ?? r.id}>
                 <tr className="border-t border-outline align-top">
                   <td className="py-3.5 pr-4">
                     <div className="flex items-start gap-2.5">

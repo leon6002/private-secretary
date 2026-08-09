@@ -14,7 +14,7 @@ import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deleteSecret, getSecret } from "../io/keychain.js";
-import { SlackClient, SLACK_TOKEN_ACCOUNT } from "../io/slack-api.js";
+import { SlackClient, SLACK_ACCOUNTS, SLACK_TOKEN_ACCOUNT } from "../io/slack-api.js";
 import { parseStoredToken, SLACK_REFRESH_TTL_MS, SLACK_TOKEN_SERVICE } from "../io/slack-oauth.js";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -94,6 +94,22 @@ export async function slackConnectionStatus(
     reconnectBy: (stored.refreshed_at ?? stored.granted_at) + SLACK_REFRESH_TTL_MS,
     detail: stored.team_name ? `connected · ${stored.team_name}` : "connected",
   };
+}
+
+// Status for EVERY configured Slack workspace, each tagged with its source
+// `label` so the cockpit can key sourceErrors and render one row per account
+// (a machine can read Taiv + OSYX at once). The single-account
+// slackConnectionStatus stays for the connect/disconnect callers that act on
+// one workspace at a time.
+export async function slackConnectionStatuses(): Promise<
+  Array<SlackConnectionStatus & { label: string }>
+> {
+  return Promise.all(
+    SLACK_ACCOUNTS.map(async (a) => ({
+      ...(await slackConnectionStatus(a.account)),
+      label: a.label,
+    })),
+  );
 }
 
 export interface SlackDisconnect {
