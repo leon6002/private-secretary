@@ -15,6 +15,7 @@
 // No new motion: DESIGN.md allows exactly two product-wide motions and neither
 // is here. Colour transitions on hover only, matching Tabs and the buttons.
 import { useCallback, useEffect, useMemo, useState } from "react";
+import ConnectorIcon, { type ConnectorId } from "../components/ConnectorIcon";
 import Tabs from "../components/Tabs";
 import { apiGet, apiPost } from "../lib/api";
 import { cn } from "../lib/cn";
@@ -51,7 +52,7 @@ const DOT_CLS: Record<RowState, string> = {
 };
 
 interface ConnectorRow {
-  id: string;
+  id: ConnectorId;
   name: string;
   /** Who/what it is connected as — the second line under the name. */
   identity?: string;
@@ -306,6 +307,9 @@ export default function ConnectionsScreen() {
                         aria-hidden="true"
                         className={cn("w-2 h-2 rounded-full mt-[7px] flex-shrink-0", DOT_CLS[r.state])}
                       />
+                      <span className="flex-shrink-0 mt-px">
+                        <ConnectorIcon id={r.id} />
+                      </span>
                       <div className="min-w-0">
                         <div className="text-body-medium text-on-surface">{r.name}</div>
                         {r.identity && (
