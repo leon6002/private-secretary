@@ -1,0 +1,172 @@
+#!/bin/bash
+# Private Secretary one-liner installer for macOS.
+# Usage: curl -fsSL https://raw.githubusercontent.com/LeoTaivDev/private-secretary/main/scripts/install.sh | bash
+#
+# What it does:
+#   1. Ensures Node.js (>= 20) + Git (installs via Homebrew; installs Homebrew if missing)
+#   2. Clones (or updates) the repo into ~/private-secretary
+#   3. npm install + builds the cockpit bundle (npm run cockpit:build)
+#   4. Installs two launchd agents (24/7 daemon + cockpit UI on :4317)
+#   5. Prints next steps (connect Slack/Gmail/Jira inside the cockpit)
+#
+# Idempotent: safe to re-run — it updates the checkout and reloads the agents.
+# macOS only for now (launchd); Linux support would swap step 4 for systemd.
+
+set -euo pipefail
+
+BOLD='\033[1m'
+ACCENT='\033[38;2;37;99;235m'   # #2563EB — matches the cockpit primary
+INFO='\033[38;2;100;116;139m'
+SUCCESS='\033[38;2;5;150;105m'
+WARN='\033[38;2;217;119;6m'
+ERROR='\033[38;2;220;38;38m'
+NC='\033[0m'
+
+REPO_URL="https://github.com/LeoTaivDev/private-secretary.git"
+INSTALL_DIR="${PRIVATE_SECRETARY_HOME:-$HOME/private-secretary}"
+NODE_MIN_MAJOR=20
+
+ui_info()    { echo -e "${INFO}·${NC} $*"; }
+ui_success() { echo -e "${SUCCESS}✓${NC} $*"; }
+ui_warn()    { echo -e "${WARN}!${NC} $*"; }
+ui_error()   { echo -e "${ERROR}✗${NC} $*" >&2; }
+ui_stage()   { echo ""; echo -e "${ACCENT}${BOLD}$*${NC}"; }
+
+abort() { ui_error "$1"; shift; [ $# -gt 0 ] && echo "$*"; exit 1; }
+
+# ── 0. macOS only ────────────────────────────────────────────────
+if [[ "$OSTYPE" != "darwin"* ]]; then
+    abort "This installer currently supports macOS only (launchd)." \
+          "Linux/systemd support is not wired yet — install manually: $REPO_URL"
+fi
+ui_success "Detected: macOS"
+
+# ── 1. Homebrew (only if we need it for git/node) ───────────────
+install_homebrew() {
+    if command -v brew &>/dev/null; then return 0; fi
+    ui_info "Homebrew not found — installing it (you may be prompted for your password)"
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+        || abort "Homebrew install failed" "Install manually from https://brew.sh, then re-run."
+    # Apple Silicon puts brew in /opt/homebrew/bin, Intel in /usr/local/bin —
+    # neither is guaranteed on PATH in a curl|bash non-login shell.
+    for p in /opt/homebrew/bin /usr/local/bin; do
+        [[ -x "$p/brew" ]] && eval "$("$p/brew" shellenv)"
+    done
+    command -v brew &>/dev/null || abort "Homebrew installed but brew is still not on PATH"
+    ui_success "Homebrew installed"
+}
+
+# ── 2. Git + Node ────────────────────────────────────────────────
+# A non-login curl|bash shell may not have Homebrew's bin dirs on PATH even
+# when brew/node are already installed — seed the usual suspects first.
+for p in /opt/homebrew/bin /usr/local/bin; do
+    [[ -d "$p" ]] && [[ ":$PATH:" != *":$p:"* ]] && PATH="$p:$PATH"
+done
+
+node_major() { node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/'; }
+
+ui_stage "[1/4] Checking environment"
+
+if ! command -v git &>/dev/null; then
+    ui_info "Git not found"
+    install_homebrew
+    brew install git || abort "git install failed"
+fi
+ui_success "Git: $(git --version | awk '{print $3}')"
+
+if command -v node &>/dev/null && [[ "$(node_major)" -ge "$NODE_MIN_MAJOR" ]]; then
+    ui_success "Node.js: $(node -v)"
+else
+    if command -v node &>/dev/null; then
+        ui_info "Node.js $(node -v) is too old (need >= ${NODE_MIN_MAJOR}) — upgrading"
+    else
+        ui_info "Node.js not found — installing"
+    fi
+    install_homebrew
+    brew install node || abort "Node.js install failed" "Or install from https://nodejs.org, then re-run."
+    brew link node --overwrite --force 2>/dev/null || true
+    hash -r
+    [[ "$(node_major)" -ge "$NODE_MIN_MAJOR" ]] \
+        || abort "Node.js $(node -v 2>/dev/null || echo missing) still below v${NODE_MIN_MAJOR}" \
+                 "Fix your PATH so the Homebrew node comes first, then re-run."
+    ui_success "Node.js: $(node -v)"
+fi
+
+# ── 3. Clone / update + build ────────────────────────────────────
+ui_stage "[2/4] Installing Private Secretary"
+
+if [[ -d "$INSTALL_DIR/.git" ]]; then
+    ui_info "Existing checkout found at $INSTALL_DIR — updating"
+    if [[ -n "$(git -C "$INSTALL_DIR" status --porcelain 2>/dev/null || true)" ]]; then
+        ui_warn "Local changes present — skipping git pull (keeping your checkout as-is)"
+    else
+        git -C "$INSTALL_DIR" pull --ff-only || ui_warn "git pull failed — continuing with current checkout"
+    fi
+elif [[ -e "$INSTALL_DIR" ]]; then
+    abort "$INSTALL_DIR exists but is not a git checkout" \
+          "Move it aside or set PRIVATE_SECRETARY_HOME to a different directory."
+else
+    git clone "$REPO_URL" "$INSTALL_DIR" || abort "git clone failed" "Check your network/GitHub access."
+    ui_success "Cloned into $INSTALL_DIR"
+fi
+
+cd "$INSTALL_DIR"
+ui_info "Installing dependencies (this can take a minute)…"
+npm install --no-fund --no-audit || abort "npm install failed"
+ui_success "Dependencies installed"
+
+ui_info "Building the cockpit UI…"
+npm run cockpit:build || abort "cockpit build failed"
+ui_success "Cockpit bundle built"
+
+# ── 4. launchd agents (24/7 daemon + cockpit) ────────────────────
+ui_stage "[3/5] Starting the 24/7 daemon + cockpit"
+bash scripts/launchagent/install.sh || abort "launchd agent install failed"
+
+# ── 5. Claude Code skills (/relay etc.) ──────────────────────────
+# The runtime is a Claude Code skill — for a fresh user to get /relay, the
+# repo's .claude/skills must be linked into their user-level ~/.claude/skills.
+ui_stage "[4/5] Linking Claude Code skills (/relay, /persona-bootstrap…)"
+CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
+mkdir -p "$CLAUDE_SKILLS_DIR"
+linked=0
+for skill_dir in "$INSTALL_DIR/.claude/skills"/*/; do
+    name="$(basename "$skill_dir")"
+    target="$CLAUDE_SKILLS_DIR/$name"
+    if [[ -L "$target" && "$(readlink "$target")" == "${skill_dir%/}" ]]; then
+        continue  # already linked to this checkout
+    fi
+    if [[ -e "$target" && ! -L "$target" ]]; then
+        ui_warn "~/.claude/skills/$name exists (not ours) — leaving it untouched"
+        continue
+    fi
+    ln -sfn "${skill_dir%/}" "$target"
+    linked=$((linked + 1))
+done
+ui_success "Skills linked into ~/.claude/skills ($linked new)"
+if ! command -v claude &>/dev/null; then
+    ui_warn "Claude Code CLI not on PATH — /relay only runs inside Claude Code."
+    echo "  Install it: https://claude.com/claude-code"
+fi
+
+# ── 6. Done ──────────────────────────────────────────────────────
+ui_stage "[5/5] Verifying"
+sleep 2  # give launchd a beat to spawn the cockpit
+if curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:4317/; then
+    ui_success "Cockpit is up at http://127.0.0.1:4317"
+else
+    ui_warn "Cockpit didn't answer yet — check: tail -F ~/Library/Logs/taiv-secretary/cockpit.err.log"
+fi
+
+cat <<EOF
+
+${SUCCESS}${BOLD}Private Secretary installed.${NC}
+
+  Cockpit (triage UI) : http://127.0.0.1:4317
+  Daemon + UI logs    : ~/Library/Logs/taiv-secretary/
+  Checkout            : $INSTALL_DIR
+
+Next: open the cockpit → Connections to link Slack / Gmail / Jira.
+Re-run this script any time to update to the latest version.
+
+EOF
