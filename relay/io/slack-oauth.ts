@@ -33,7 +33,8 @@ export const SLACK_OAUTH_TOKEN_URL = "https://slack.com/api/oauth.v2.access";
 // means there is no secret to leak), so it is committed rather than stored in
 // Keychain. Env override exists for staging apps and for anyone running their
 // own Slack app instead of ours.
-export const SLACK_CLIENT_ID = process.env.SLACK_CLIENT_ID ?? "";
+export const SLACK_CLIENT_ID =
+  process.env.SLACK_CLIENT_ID ?? "11702423931251.11780990747270";
 
 // Slack matches redirect_uri against the URLs registered in app settings, so
 // unlike Google's loopback (any port) we can only use ports we pre-registered.
