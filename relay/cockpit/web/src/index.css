@@ -39,16 +39,3 @@ body {
   @apply bg-background text-on-surface font-sans;
 }
 
-/* Approve slide-out (legacy app.css): the Queue adds .removing to the acted
-   task's card while the approve round-trips, and the card slides out. The
-   plain-CSS transition must come AFTER @tailwind utilities so it wins over
-   the card's transition-colors utility. */
-.task-card {
-  transition:
-    opacity 0.2s ease,
-    transform 0.2s ease;
-}
-.task-card.removing {
-  opacity: 0;
-  transform: translateX(14px);
-}

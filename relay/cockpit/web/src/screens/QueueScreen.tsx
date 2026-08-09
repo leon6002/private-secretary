@@ -25,7 +25,7 @@
 // copy rule; the skip reason/field KEYS are API values and unchanged.
 import { useContext, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -43,6 +43,7 @@ import {
   Inbox,
   Info,
   ListChecks,
+  Loader2,
   Mail,
   MailOpen,
   MessageSquare,
@@ -262,9 +263,21 @@ function actionTypeIcon(a: QueueAction): LucideIcon {
 // primary), skip → skipTarget (footer Skip). Skip must work on ANY
 // still-suggested card, not only AI-sendable ones — gating it on readyCard
 // left `Me · reminder` and `Needs info` cards with no way to skip at all.
-function footerTargets(c: TaskCluster): { readyCard?: QueueAction; skipTarget?: QueueAction } {
+// approvingId keeps a card that's currently mid-approve (this client's own
+// in-flight request) counted as the readyCard too — otherwise a background
+// state poll landing on the mid-execution "approved" claim (markExecuting in
+// execute.ts, persisted before the tool call resolves) would flip readyCard
+// to undefined and flash "Nothing ready to send" while the approve is still
+// running.
+function footerTargets(
+  c: TaskCluster,
+  approvingId: string | null,
+): { readyCard?: QueueAction; skipTarget?: QueueAction } {
   const readyCard = c.actions.find(
-    (a) => a.status === "suggested" && !(a.missing_info && a.missing_info.length) && execLabel(a).assignee === "ai",
+    (a) =>
+      (a.status === "suggested" || a.id === approvingId) &&
+      !(a.missing_info && a.missing_info.length) &&
+      execLabel(a).assignee === "ai",
   );
   const skipTarget = readyCard || c.actions.find((a) => a.status === "suggested");
   return { readyCard, skipTarget };
@@ -355,9 +368,9 @@ export default function QueueScreen() {
   const [editing, setEditing] = useState(false);
   const [skipFor, setSkipFor] = useState<string | null>(null);
   const [skipFields, setSkipFields] = useState<string[]>([]);
-  // Approve slide-out: the acted task's card gets .removing while the approve
-  // round-trips (legacy animateApprove).
-  const [removingKey, setRemovingKey] = useState<string | null>(null);
+  // Approve in flight: the clicked action id, so its button can show a spinner
+  // instead of appearing frozen while the approve round-trips.
+  const [approvingId, setApprovingId] = useState<string | null>(null);
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [dropTier, setDropTier] = useState<string | null>(null);
   // Calendar conflict pre-check results, keyed by action id (see the effect).
@@ -462,7 +475,7 @@ export default function QueueScreen() {
     setEditCardId(null);
     setEditing(false);
     const c = clusters.find((cl) => taskKey(cl) === key);
-    setSelectedId(c ? (footerTargets(c).skipTarget?.id ?? c.actions[0]?.id ?? null) : null);
+    setSelectedId(c ? (footerTargets(c, approvingId).skipTarget?.id ?? c.actions[0]?.id ?? null) : null);
   }
 
   // The cluster the detail pane is actually showing (the selected task, else
@@ -490,7 +503,7 @@ export default function QueueScreen() {
   function keyboardAction(act: "approve" | "edit" | "skip") {
     const c = selectedCluster();
     if (!c) return;
-    const { readyCard, skipTarget } = footerTargets(c);
+    const { readyCard, skipTarget } = footerTargets(c, approvingId);
     if (act === "skip") {
       if (!skipTarget) return;
       setSelectedId(skipTarget.id);
@@ -581,29 +594,52 @@ export default function QueueScreen() {
   async function doAction(act: string, arg: string | undefined, id: string) {
     try {
       if (act === "approve") {
-        // If the draft was edited but not yet Saved, persist the textarea
-        // first so we send the EDITED text — not the stale server-side draft.
-        // This edit-then-approve ORDER is load-bearing (legacy doAction).
-        if (editing) {
-          const ta = draftRef.current;
-          if (ta) {
-            await apiPost(`/api/actions/${encodeURIComponent(id)}/edit`, { draft: ta.value });
-            setEditing(false);
+        // Busy state so the button shows a spinner instead of feeling frozen
+        // during the round-trip (real network calls for tool cards like Jira).
+        setApprovingId(id);
+        try {
+          // If the draft was edited but not yet Saved, persist the textarea
+          // first so we send the EDITED text — not the stale server-side draft.
+          // This edit-then-approve ORDER is load-bearing (legacy doAction).
+          if (editing) {
+            const ta = draftRef.current;
+            if (ta) {
+              await apiPost(`/api/actions/${encodeURIComponent(id)}/edit`, { draft: ta.value });
+              setEditing(false);
+            }
           }
+          const res = await apiPost<ApproveResult>(`/api/actions/${encodeURIComponent(id)}/approve`, {});
+          // Clear busy now that the result is known — busy takes priority over
+          // `done` in subActionRow, so leaving it set through the delay below
+          // masked the check-draw animation entirely (spinner straight to gone).
+          setApprovingId(null);
+          let succeeded = false;
+          if (!res.ok && res.conflicts) {
+            toast(`Conflict with ${res.conflicts.length} event(s) — pick another time`, true);
+          } else if (res.awaitingManual) {
+            toast("Draft created — awaiting your send");
+          } else {
+            succeeded = true;
+            // Let the check-draw animation play before the refresh removes the
+            // card — mirrors the "done" action pattern below so approve
+            // doesn't feel like it vanished mid-transition.
+            setDoneAnim((prev) => new Set(prev).add(id));
+            toast("Sent");
+            await new Promise((r) => setTimeout(r, 700));
+          }
+          setSelectedId(null);
+          setEditCardId(null); // return to the task view
+          await refresh();
+          if (succeeded) {
+            setDoneAnim((prev) => {
+              const next = new Set(prev);
+              next.delete(id);
+              return next;
+            });
+          }
+        } finally {
+          setApprovingId(null);
         }
-        const res = await apiPost<ApproveResult>(`/api/actions/${encodeURIComponent(id)}/approve`, {});
-        if (!res.ok && res.conflicts) {
-          toast(`Conflict with ${res.conflicts.length} event(s) — pick another time`, true);
-        } else if (res.awaitingManual) {
-          toast("Draft created — awaiting your send");
-        } else {
-          animateApprove(id);
-          toast("Sent");
-        }
-        setSelectedId(null);
-        setEditCardId(null); // return to the task view
-        await refresh();
-        setRemovingKey(null);
       } else if (act === "edit") {
         setEditing(true);
       } else if (act === "save-edit") {
@@ -687,13 +723,6 @@ export default function QueueScreen() {
     }
   }
 
-  // Approve slide-out: flag the acted card's task so its master-list card
-  // gets .removing for the duration of the refresh (see index.css).
-  function animateApprove(id: string) {
-    const c = clusters.find((cl) => cl.actions.some((a) => a.id === id));
-    if (c) setRemovingKey(taskKey(c));
-  }
-
   // ─── render pieces (function-call style, per the header comment) ──
 
   // One task card in the Today list.
@@ -724,8 +753,13 @@ export default function QueueScreen() {
         ]
       : "border-l-slate-300";
     return (
-      <div
+      <motion.div
         key={key}
+        layout
+        initial={{ opacity: 0, x: 14 }}
+        animate={{ opacity: 1, x: 0 }}
+        exit={{ opacity: 0, x: 14 }}
+        transition={{ duration: 0.2 }}
         ref={(el) => {
           if (el) cardRefs.current.set(key, el);
           else cardRefs.current.delete(key);
@@ -746,7 +780,6 @@ export default function QueueScreen() {
           // the semantic equivalent is primary/10 (tracks the theme).
           selected ? "bg-primary/10 border-primary/40" : "bg-surface border-outline hover:bg-surface-variant",
           dragKey === key && "opacity-40",
-          removingKey === key && "removing",
         )}
       >
         <div className="flex items-start justify-between gap-2 mb-1.5">
@@ -797,7 +830,7 @@ export default function QueueScreen() {
             <span>Updated {timeAgo(clusterRecency(c))}</span>
           </div>
         </div>
-      </div>
+      </motion.div>
     );
   }
 
@@ -815,12 +848,33 @@ export default function QueueScreen() {
     // while the card is still on screen (refresh is delayed in doAction).
     const completed = a.status === "executed";
     const done = completed || doneAnim.has(a.id);
-    const approved = a.status === "approved";
+    const busy = approvingId === a.id;
+    // While THIS client's own approve() for this id is still in flight, the
+    // background state poll can race in the mid-execution "approved" claim
+    // persisted by markExecuting (execute.ts) before the tool call resolves —
+    // without this guard the row would flash "Mark sent" for a card that's
+    // actually mid-execution, not awaiting a manual send.
+    const approved = !busy && a.status === "approved";
     const text = a.headline || (a.params && a.params.title) || a.reason || a.action_type;
     const ex = execLabel(a);
     const checked = done || approved;
     let control: React.ReactNode;
-    if (done) {
+    if (busy) {
+      // Keep the SAME button (size/color/position) as the default branch below
+      // — just disabled with a spinner swapped in for the icon. Swapping to an
+      // unrelated small gray span here made the button appear to vanish on
+      // click with no visible feedback until "done" popped in afterward.
+      control = (
+        <button
+          type="button"
+          disabled
+          className="approve-sub text-label-xs text-white bg-primary px-2.5 py-1 rounded flex items-center gap-1 disabled:opacity-60 disabled:cursor-wait"
+        >
+          <Loader2 size={14} strokeWidth={1.75} className="animate-spin" />
+          AI · {ex.label}
+        </button>
+      );
+    } else if (done) {
       control = (
         <span className="text-label-xs text-on-surface-variant flex items-center gap-1">
           <CheckCheck size={14} strokeWidth={1.75} />
@@ -1158,7 +1212,7 @@ export default function QueueScreen() {
     // Context = the digest only (the raw thread quote is noise).
     const primary = c.actions.find((a) => a.summary) || c.actions[0];
     const entities = plan?.entities || [];
-    const { readyCard, skipTarget } = footerTargets(c);
+    const { readyCard, skipTarget } = footerTargets(c, approvingId);
     // The reason panel belongs to whichever card was clicked — the footer's
     // Skip OR any row's — so a multi-card task can skip a specific sub-action.
     const pendingSkip = skipFor ? c.actions.find((a) => a.id === skipFor) : null;
@@ -1257,13 +1311,18 @@ export default function QueueScreen() {
                 <>
                   <button
                     type="button"
-                    className="bg-primary text-white text-body-medium px-4 py-2 rounded hover:bg-blue-700 flex items-center gap-2"
+                    disabled={approvingId === readyCard.id}
+                    className="bg-primary text-white text-body-medium px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-60 flex items-center gap-2"
                     onClick={() => handleAct("approve", readyCard.id)}
                   >
-                    {(() => {
-                      const Icon = execLabel(readyCard).icon;
-                      return <Icon size={18} strokeWidth={1.75} />;
-                    })()}
+                    {approvingId === readyCard.id ? (
+                      <Loader2 size={18} strokeWidth={1.75} className="animate-spin" />
+                    ) : (
+                      (() => {
+                        const Icon = execLabel(readyCard).icon;
+                        return <Icon size={18} strokeWidth={1.75} />;
+                      })()
+                    )}
                     {execLabel(readyCard).label}
                   </button>
                   {readyCard.draft != null && (
@@ -1372,7 +1431,11 @@ export default function QueueScreen() {
     const needsInfo = !!(a.missing_info && a.missing_info.length > 0);
     const sender = a.sender_name || a.context?.sender_handle || "?";
     const recipient = a.recipient_name || a.target?.personaKey || a.target?.platform || "—";
-    const isManual = a.status === "approved";
+    // See subActionRow's `approved` guard: exclude a card this client is
+    // itself mid-approving, or a background poll landing on the transient
+    // "approved" claim (markExecuting, execute.ts) shows the awaiting-manual
+    // UI for a card that's actually still executing.
+    const isManual = a.status === "approved" && approvingId !== a.id;
     const platIcon: LucideIcon =
       { gmail: Mail, slack: Hash, wechat: MessageSquare, calendar: Calendar }[a.target?.platform ?? ""] || Zap;
     const title = a.headline || (a.params && a.params.title) || a.reason || a.action_type;
@@ -1432,18 +1495,27 @@ export default function QueueScreen() {
         </div>
       );
     } else {
-      const approveLabel =
-        a.action_type === "reply" || a.action_type === "relay" || a.action_type === "forward" ? (
-          <>
-            <Send size={18} strokeWidth={1.75} /> Approve &amp; Send
-          </>
-        ) : (
-          "Approve"
-        );
+      const approveBusy = approvingId === a.id;
+      const approveLabel = approveBusy ? (
+        <>
+          <Loader2 size={18} strokeWidth={1.75} className="animate-spin" /> Approve
+        </>
+      ) : a.action_type === "reply" || a.action_type === "relay" || a.action_type === "forward" ? (
+        <>
+          <Send size={18} strokeWidth={1.75} /> Approve &amp; Send
+        </>
+      ) : (
+        "Approve"
+      );
       actions = (
         <div className="px-6 py-4 bg-surface-variant border-y border-outline flex items-center justify-between">
           <div className="flex gap-4">
-            <button type="button" className={primaryCls} disabled={needsInfo} onClick={() => handleAct("approve", a.id)}>
+            <button
+              type="button"
+              className={primaryCls}
+              disabled={needsInfo || approveBusy}
+              onClick={() => handleAct("approve", a.id)}
+            >
               {approveLabel}
             </button>
             {editing ? (
@@ -1627,9 +1699,14 @@ export default function QueueScreen() {
   }
 
   // Detail: an Edit drill-in shows the single-card editor; else the task view.
+  // detailKey gives AnimatePresence a stable identity per distinct view so
+  // switching away from a just-approved single-action task crossfades
+  // instead of snapping straight to another task or the empty state.
   let detail: React.ReactNode;
+  let detailKey: string;
   if (editCardId) {
     const card = allLiveActions(allClusters).find(({ action }) => action.id === editCardId)?.action;
+    detailKey = card ? `edit-${editCardId}` : "edit-gone";
     detail = card ? (
       <div className="w-full max-w-[800px]">
         <button
@@ -1650,6 +1727,7 @@ export default function QueueScreen() {
     );
   } else {
     const sel = selectedCluster();
+    detailKey = sel ? `task-${taskKey(sel)}` : "empty";
     detail = sel ? (
       renderTaskDetail(sel)
     ) : (
@@ -1690,11 +1768,13 @@ export default function QueueScreen() {
                   dropTier === t.tier && "bg-primary/10 ring-1 ring-primary/40",
                 )}
               >
-                {tiered[i]!.length ? (
-                  tiered[i]!.map((c) => renderTaskCard(c, t))
-                ) : (
-                  <div className="text-label-xs text-on-surface-variant/50 italic px-1 py-2">drop here</div>
-                )}
+                <AnimatePresence>
+                  {tiered[i]!.length ? (
+                    tiered[i]!.map((c) => renderTaskCard(c, t))
+                  ) : (
+                    <div className="text-label-xs text-on-surface-variant/50 italic px-1 py-2">drop here</div>
+                  )}
+                </AnimatePresence>
               </div>
             </section>
           ))}
@@ -1704,12 +1784,27 @@ export default function QueueScreen() {
                 <div className="w-2 h-2 rounded-full bg-slate-300" />
                 <h2 className="text-label-sm text-on-surface-variant uppercase tracking-wider">Unranked</h2>
               </div>
-              <div className="flex flex-col gap-2">{unranked.map((c) => renderTaskCard(c, null))}</div>
+              <div className="flex flex-col gap-2">
+                <AnimatePresence>{unranked.map((c) => renderTaskCard(c, null))}</AnimatePresence>
+              </div>
             </section>
           )}
           <div className="pt-2">{renderDrawer()}</div>
         </div>
-        <div className="flex-1 bg-background overflow-y-auto flex justify-center p-6">{detail}</div>
+        <div className="flex-1 bg-background overflow-y-auto flex justify-center p-6">
+          <AnimatePresence>
+            <motion.div
+              key={detailKey}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              className="w-full flex justify-center"
+            >
+              {detail}
+            </motion.div>
+          </AnimatePresence>
+        </div>
       </div>
     </>
   );
