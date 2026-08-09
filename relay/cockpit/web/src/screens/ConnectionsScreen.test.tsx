@@ -35,6 +35,8 @@ function stubApi(
   tools: unknown = TOOLS,
 ) {
   mockApiGet.mockImplementation((path: string) => {
+    if (path.startsWith("/api/identity"))
+      return Promise.resolve({ configured: true, primaryEmail: "me@example.com" }) as never;
     if (path.startsWith("/api/connections/slack")) return Promise.resolve(slack) as never;
     if (path.startsWith("/api/settings/tools")) return Promise.resolve(tools) as never;
     return Promise.resolve(state) as never;
@@ -224,6 +226,8 @@ describe("ConnectionsScreen", () => {
 
     it("survives a tools endpoint that fails, rather than blanking the screen", async () => {
       mockApiGet.mockImplementation((path: string) => {
+        if (path.startsWith("/api/identity"))
+          return Promise.resolve({ configured: true, primaryEmail: "me@example.com" }) as never;
         if (path.startsWith("/api/settings/tools")) return Promise.reject(new Error("boom")) as never;
         if (path.startsWith("/api/connections/slack")) return Promise.resolve(PKCE_OK) as never;
         return Promise.resolve({ sourceErrors: {} }) as never;
@@ -264,6 +268,8 @@ describe("ConnectionsScreen", () => {
       const mockApiPost = vi.mocked(apiPost);
       let connected = true;
       mockApiGet.mockImplementation((path: string) => {
+        if (path.startsWith("/api/identity"))
+          return Promise.resolve({ configured: true, primaryEmail: "me@example.com" }) as never;
         if (path.startsWith("/api/connections/slack"))
           return Promise.resolve(connected ? PKCE_OK : { kind: "none", connected: false, expiresAt: 0, reconnectBy: 0 }) as never;
         if (path.startsWith("/api/settings/tools")) return Promise.resolve(TOOLS) as never;
@@ -294,6 +300,60 @@ describe("ConnectionsScreen", () => {
       fireEvent.click(within(jira).getByRole("button", { name: "Disconnect" }));
       expect(mockApiPost).toHaveBeenCalledWith("/api/settings/tools/jira/deauthorize", {});
       mockApiPost.mockReset();
+    });
+  });
+
+  // A fresh install has no config/identity.json, and without it nothing polls
+  // and Connect is inert. The screen must ask rather than show a dead table.
+  describe("first run", () => {
+    function stubUnconfigured() {
+      mockApiGet.mockImplementation((path: string) => {
+        if (path.startsWith("/api/identity"))
+          return Promise.resolve({ configured: false, primaryEmail: "" }) as never;
+        if (path.startsWith("/api/connections/slack"))
+          return Promise.resolve({ kind: "none", connected: false, expiresAt: 0, reconnectBy: 0 }) as never;
+        if (path.startsWith("/api/settings/tools")) return Promise.resolve(TOOLS) as never;
+        return Promise.resolve({ sourceErrors: {} }) as never;
+      });
+    }
+
+    it("asks who the instance is for instead of showing the table", async () => {
+      stubUnconfigured();
+      render(<ConnectionsScreen />);
+
+      await screen.findByLabelText("Your work email");
+      expect(screen.queryByRole("table")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
+    });
+
+    it("saves the email and re-reads status", async () => {
+      const mockApiPost = vi.mocked(apiPost);
+      mockApiPost.mockResolvedValue({ daemonRestarted: true } as never);
+      stubUnconfigured();
+      render(<ConnectionsScreen />);
+
+      const input = await screen.findByLabelText("Your work email");
+      fireEvent.change(input, { target: { value: "me@example.com" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await vi.waitFor(() =>
+        expect(mockApiPost).toHaveBeenCalledWith("/api/identity", { primaryEmail: "me@example.com" }),
+      );
+      mockApiPost.mockReset();
+    });
+
+    // A failing status read must not offer to overwrite a working config.
+    it("does not show the form when the identity read fails", async () => {
+      mockApiGet.mockImplementation((path: string) => {
+        if (path.startsWith("/api/identity")) return Promise.reject(new Error("down")) as never;
+        if (path.startsWith("/api/connections/slack")) return Promise.resolve(PKCE_OK) as never;
+        if (path.startsWith("/api/settings/tools")) return Promise.resolve(TOOLS) as never;
+        return Promise.resolve({ sourceErrors: {} }) as never;
+      });
+      render(<ConnectionsScreen />);
+
+      await screen.findByText("Slack");
+      expect(screen.queryByLabelText("Your work email")).toBeNull();
     });
   });
 });

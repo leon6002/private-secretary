@@ -44,6 +44,9 @@ import {
 import { checkRequest, loadOrMintCsrfToken } from "./security.js";
 import { startGmailReauth } from "./reauth.js";
 import { disconnectSlack, slackConnectionStatus, startSlackConnect } from "./slack-connect.js";
+import { loadIdentity } from "../io/identity.js";
+import { identityStatus, InvalidIdentity, writeIdentity } from "../io/identity-store.js";
+import { restartDaemon } from "./daemon-control.js";
 import { InvalidActionTransition } from "../core/action-item.js";
 import {
   EXISTENCE_VERDICTS,
@@ -379,6 +382,34 @@ export function createCockpitServer(opts: CockpitServerOptions): {
       }
       const result = await startGmailReauth(mailbox);
       sendJson(res, result.started ? 200 : 400, result);
+      return;
+    }
+
+    // Who this instance belongs to. A fresh install has no config/identity.json
+    // (it is gitignored), and without it nothing polls and Connect is inert —
+    // so the cockpit has to be able to create it.
+    if (path === "/api/identity" && method === "GET") {
+      sendJson(res, 200, identityStatus(loadIdentity()));
+      return;
+    }
+    if (path === "/api/identity" && method === "POST") {
+      const body = (await readBody(req)) as Record<string, unknown>;
+      try {
+        writeIdentity({
+          primaryEmail: String(body.primaryEmail ?? ""),
+          ...(Array.isArray(body.mailboxes) ? { mailboxes: body.mailboxes as string[] } : {}),
+        });
+      } catch (e) {
+        if (e instanceof InvalidIdentity) {
+          sendJson(res, 400, { error: e.message });
+          return;
+        }
+        throw e;
+      }
+      // The daemon caches identity for its process lifetime, so saving alone
+      // would leave it polling nothing until something else restarted it.
+      const daemon = await restartDaemon();
+      sendJson(res, 200, { ...identityStatus(loadIdentity()), daemonRestarted: daemon.restarted });
       return;
     }
 

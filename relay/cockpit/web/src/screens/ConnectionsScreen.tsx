@@ -51,6 +51,85 @@ const DOT_CLS: Record<RowState, string> = {
   manual: "bg-slate-300 dark:bg-slate-600",
 };
 
+interface IdentityStatus {
+  configured: boolean;
+  primaryEmail: string;
+}
+
+// First run: config/identity.json is gitignored, so a fresh install has none —
+// and without it nothing polls and Connect is inert, because the Keychain
+// account key it would write to is empty. Asking here rather than in a terminal
+// is the point of the whole one-click onboarding.
+function IdentitySetup({ onSaved }: { onSaved: () => void }) {
+  const [email, setEmail] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const r = await apiPost<{ daemonRestarted?: boolean }>("/api/identity", {
+        primaryEmail: email.trim(),
+      });
+      toast(
+        r.daemonRestarted
+          ? "Saved. The background daemon restarted with your settings."
+          : "Saved. The daemon will use this when it next starts.",
+      );
+      onSaved();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err), true);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={save} className="max-w-[52ch]">
+      <h2 className="text-body-medium text-on-surface mb-1">First, who is this for?</h2>
+      <p className="text-label-sm text-on-surface-variant mb-4">
+        The secretary reads one person's accounts. This is the only thing it needs before you can
+        connect anything — everything else is derived from it, and you can add more mailboxes or
+        workspaces later.
+      </p>
+      <label htmlFor="primaryEmail" className="text-label-sm text-on-surface block mb-1.5">
+        Your work email
+      </label>
+      <div className="flex gap-2">
+        <input
+          id="primaryEmail"
+          type="email"
+          required
+          autoFocus
+          value={email}
+          onChange={(ev) => setEmail(ev.target.value)}
+          placeholder="you@yourcompany.com"
+          className={cn(
+            "flex-1 text-body-medium text-on-surface bg-surface border border-outline rounded",
+            "px-3 py-1.5 placeholder:text-on-surface-variant",
+            "focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary",
+          )}
+        />
+        <button
+          type="submit"
+          disabled={saving || !email.trim()}
+          className={cn(
+            "text-label-sm text-on-surface bg-surface border border-outline rounded px-3 py-1.5",
+            "whitespace-nowrap transition-colors hover:bg-surface-variant",
+            "focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary",
+            "disabled:opacity-50 disabled:pointer-events-none",
+          )}
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </div>
+      <p className="text-label-sm text-on-surface-variant mt-3">
+        Stored locally in <code>config/identity.json</code>. Nothing is sent anywhere.
+      </p>
+    </form>
+  );
+}
+
 interface ToolSpec {
   key: string;
   label: string;
@@ -225,6 +304,16 @@ export default function ConnectionsScreen() {
   const [tools, setTools] = useState<ToolsConfig | null>(null);
   const [pendingTool, setPendingTool] = useState<string | null>(null);
   const [openNote, setOpenNote] = useState<string | null>(null);
+  const [identity, setIdentity] = useState<IdentityStatus | null>(null);
+
+  const loadIdentity = useCallback(() => {
+    apiGet<IdentityStatus>("/api/identity")
+      .then(setIdentity)
+      // A failing read must not present the setup form to someone who is
+      // already configured — that would invite overwriting a working config.
+      .catch(() => setIdentity({ configured: true, primaryEmail: "" }));
+  }, []);
+  useEffect(loadIdentity, [loadIdentity]);
 
   const loadTools = useCallback(() => {
     apiGet<ToolsConfig>("/api/settings/tools")
@@ -426,6 +515,15 @@ export default function ConnectionsScreen() {
       </header>
       <div className="flex-1 bg-background overflow-y-auto p-6 flex justify-center">
         <div className="w-full max-w-[820px] flex flex-col">
+          {identity && !identity.configured ? (
+            <IdentitySetup
+              onSaved={() => {
+                loadIdentity();
+                loadSlack();
+              }}
+            />
+          ) : (
+          <>
           <p className="text-body-medium text-on-surface-variant mb-5 max-w-[68ch]">
             Accounts the engine reads from. Nothing is ever sent without your approval, and there
             are no behavior toggles here — those are fixed by design.
@@ -538,6 +636,8 @@ export default function ConnectionsScreen() {
           <p className="text-label-sm text-on-surface-variant mt-6 leading-relaxed">
             Detection runs continuously; analysis happens only when something arrives.
           </p>
+          </>
+          )}
         </div>
       </div>
     </div>
