@@ -11,7 +11,7 @@ vi.mock("../lib/api", () => ({
   apiPost: vi.fn(),
 }));
 
-import { apiGet } from "../lib/api";
+import { apiGet, apiPost } from "../lib/api";
 import ConnectionsScreen from "./ConnectionsScreen";
 
 const mockApiGet = vi.mocked(apiGet);
@@ -111,7 +111,7 @@ describe("ConnectionsScreen", () => {
     stubApi({ sourceErrors: {} }, PKCE_OK);
     render(<ConnectionsScreen />);
     await screen.findByText("me@example.com · leotest");
-    expect(within(row("Slack")).getByRole("button", { name: "Reconnect" })).toBeTruthy();
+    expect(within(row("Slack")).getByRole("button", { name: "Disconnect" })).toBeTruthy();
   });
 
   it("offers Connect, not Reconnect, when nothing is stored", async () => {
@@ -254,6 +254,46 @@ describe("ConnectionsScreen", () => {
       fireEvent.click(await screen.findByRole("button", { name: "What access means" }));
       expect(screen.getByText(/AI provider you configured/)).toBeTruthy();
       expect(screen.getByText(/There is no server in this product/)).toBeTruthy();
+    });
+  });
+
+  // Disconnect must be one click and reversible: after it, the row offers
+  // Connect again rather than stranding the user with no way back.
+  describe("disconnect", () => {
+    it("revokes Slack and returns the row to Connect", async () => {
+      const mockApiPost = vi.mocked(apiPost);
+      let connected = true;
+      mockApiGet.mockImplementation((path: string) => {
+        if (path.startsWith("/api/connections/slack"))
+          return Promise.resolve(connected ? PKCE_OK : { kind: "none", connected: false, expiresAt: 0, reconnectBy: 0 }) as never;
+        if (path.startsWith("/api/settings/tools")) return Promise.resolve(TOOLS) as never;
+        return Promise.resolve({ sourceErrors: {} }) as never;
+      });
+      mockApiPost.mockImplementation((path: string) => {
+        if (path.includes("/disconnect")) connected = false;
+        return Promise.resolve({ detail: "Disconnected." }) as never;
+      });
+
+      render(<ConnectionsScreen />);
+      // Scoped to the Slack row: Jira renders a Disconnect of its own.
+      const slack = (await screen.findByText("Slack")).closest("tr") as HTMLElement;
+      fireEvent.click(within(slack).getByRole("button", { name: "Disconnect" }));
+
+      await screen.findByRole("button", { name: "Connect" });
+      expect(mockApiPost).toHaveBeenCalledWith("/api/connections/slack/disconnect", {});
+      mockApiPost.mockReset();
+    });
+
+    it("posts deauthorize for an MCP tool", async () => {
+      const mockApiPost = vi.mocked(apiPost);
+      mockApiPost.mockResolvedValue({} as never);
+      stubApi({ sourceErrors: {} }, { kind: "none", connected: false, expiresAt: 0, reconnectBy: 0 });
+      render(<ConnectionsScreen />);
+
+      const jira = (await screen.findByText("Jira")).closest("tr") as HTMLElement;
+      fireEvent.click(within(jira).getByRole("button", { name: "Disconnect" }));
+      expect(mockApiPost).toHaveBeenCalledWith("/api/settings/tools/jira/deauthorize", {});
+      mockApiPost.mockReset();
     });
   });
 });

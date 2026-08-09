@@ -43,7 +43,7 @@ import {
 } from "./api.js";
 import { checkRequest, loadOrMintCsrfToken } from "./security.js";
 import { startGmailReauth } from "./reauth.js";
-import { slackConnectionStatus, startSlackConnect } from "./slack-connect.js";
+import { disconnectSlack, slackConnectionStatus, startSlackConnect } from "./slack-connect.js";
 import { InvalidActionTransition } from "../core/action-item.js";
 import {
   EXISTENCE_VERDICTS,
@@ -334,6 +334,15 @@ export function createCockpitServer(opts: CockpitServerOptions): {
       sendJson(res, 200, await api.authorizeTool(toolKey));
       return;
     }
+    // Drop a tool's stored OAuth token (Connections "Disconnect"). Local only —
+    // MCP servers expose no documented revoke, so the grant may live on at the
+    // provider.
+    const deauthMatch = path.match(/^\/api\/settings\/tools\/([^/]+)\/deauthorize$/);
+    if (deauthMatch && method === "POST") {
+      const toolKey = decodeURIComponent(deauthMatch[1]!);
+      sendJson(res, 200, await api.deauthorizeTool(toolKey));
+      return;
+    }
     if (path === "/api/settings/google" && method === "GET") {
       sendJson(res, 200, await api.getGoogleSetup());
       return;
@@ -378,6 +387,14 @@ export function createCockpitServer(opts: CockpitServerOptions): {
     // bundle with an expiry.
     if (path === "/api/connections/slack" && method === "GET") {
       sendJson(res, 200, await slackConnectionStatus());
+      return;
+    }
+
+    // Disconnect Slack: revoke at Slack, then delete the local token.
+    if (path === "/api/connections/slack/disconnect" && method === "POST") {
+      const body = (await readBody(req)) as Record<string, unknown>;
+      const account = typeof body.account === "string" ? body.account.trim() : "";
+      sendJson(res, 200, account ? await disconnectSlack(account) : await disconnectSlack());
       return;
     }
 

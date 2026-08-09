@@ -622,6 +622,22 @@ export class CockpitApi {
     return { ok: true, service };
   }
 
+  // Forget a URL-based MCP tool's OAuth token. Unlike Slack there is no
+  // documented revoke endpoint on these servers, so this is a LOCAL delete —
+  // the grant may still exist at the provider and has to be withdrawn there.
+  // The caller says so rather than implying a full revoke.
+  async deauthorizeTool(toolKey: string): Promise<{ ok: true; revokedRemotely: false }> {
+    const spec = effectiveToolSpecs(this.opts.statePath)[toolKey];
+    if (!spec) throw new CockpitBadRequestError(`unknown tool: ${toolKey}`);
+    const cfg = spec.config ?? {};
+    if (cfg.type !== "mcp" || !cfg.url) {
+      throw new CockpitBadRequestError(`${toolKey} is not a URL-based MCP tool`);
+    }
+    // Already-absent is success: the caller wants it gone, and it is.
+    await deleteSecret(mcpAuthServiceFor(toolKey, cfg.authService), cfg.url).catch(() => {});
+    return { ok: true, revokedRemotely: false };
+  }
+
   setToolsConfig(config: { tools?: Record<string, unknown> }): { tools: ToolsConfig["tools"] } {
     const clean: ToolsConfig = { tools: {} };
     for (const [key, raw] of Object.entries(config.tools ?? {})) {

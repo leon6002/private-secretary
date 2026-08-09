@@ -13,8 +13,8 @@
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getSecret } from "../io/keychain.js";
-import { SLACK_TOKEN_ACCOUNT } from "../io/slack-api.js";
+import { deleteSecret, getSecret } from "../io/keychain.js";
+import { SlackClient, SLACK_TOKEN_ACCOUNT } from "../io/slack-api.js";
 import { parseStoredToken, SLACK_REFRESH_TTL_MS, SLACK_TOKEN_SERVICE } from "../io/slack-oauth.js";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -93,6 +93,56 @@ export async function slackConnectionStatus(
     // Pre-refreshed_at bundles fall back to the original consent time.
     reconnectBy: (stored.refreshed_at ?? stored.granted_at) + SLACK_REFRESH_TTL_MS,
     detail: stored.team_name ? `connected · ${stored.team_name}` : "connected",
+  };
+}
+
+export interface SlackDisconnect {
+  ok: boolean;
+  /** True when Slack itself confirmed the grant was withdrawn. */
+  revoked: boolean;
+  detail: string;
+}
+
+// Disconnect = revoke at Slack, THEN forget locally. Order matters: revoking
+// needs the token, so deleting first would leave a live grant nobody can
+// withdraw from here. If the revoke call fails (network, already-dead token)
+// the local copy is still removed — leaving an unusable credential behind
+// would strand the row in a state the user cannot clear.
+// Injectable so tests can assert revoke-before-delete without a live token.
+export type SlackRevoke = (token: string) => Promise<boolean>;
+const defaultSlackRevoke: SlackRevoke = async (token) =>
+  (await new SlackClient({ token }).authRevoke()).revoked;
+
+export async function disconnectSlack(
+  account: string = SLACK_TOKEN_ACCOUNT,
+  revoke: SlackRevoke = defaultSlackRevoke,
+): Promise<SlackDisconnect> {
+  let token: string | undefined;
+  try {
+    const stored = parseStoredToken(await getSecret(SLACK_TOKEN_SERVICE, account));
+    token = typeof stored === "string" ? stored : stored.access_token;
+  } catch {
+    return { ok: true, revoked: false, detail: "Already disconnected." };
+  }
+
+  let revoked = false;
+  let revokeError = "";
+  try {
+    revoked = await revoke(token);
+  } catch (e) {
+    revokeError = e instanceof Error ? e.message : String(e);
+  }
+
+  await deleteSecret(SLACK_TOKEN_SERVICE, account).catch(() => {});
+
+  return {
+    ok: true,
+    revoked,
+    detail: revoked
+      ? "Disconnected. Access was revoked at Slack and the token is gone from this Mac."
+      : `Removed from this Mac, but Slack did not confirm the revoke${
+          revokeError ? ` (${revokeError})` : ""
+        } — remove it at slack.com/apps to be sure.`,
   };
 }
 

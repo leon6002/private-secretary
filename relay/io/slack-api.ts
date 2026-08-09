@@ -223,6 +223,14 @@ export class SlackClient {
     return this.call("auth.test", {});
   }
 
+  // Revoke this token at Slack. Deleting our Keychain copy alone would only
+  // make US forget it — the grant would still be live on Slack's side and the
+  // app would still be listed under the user's installed apps. Disconnect has
+  // to do both, and this is the half that actually withdraws access.
+  async authRevoke(): Promise<{ revoked: boolean }> {
+    return this.call("auth.revoke", {});
+  }
+
   // List ALL conversations the user is in (IM + MPIM + private + public).
   // Paginates internally via the response cursor; returns everything in one
   // array because the caller (source) wants a registry of "what to poll".

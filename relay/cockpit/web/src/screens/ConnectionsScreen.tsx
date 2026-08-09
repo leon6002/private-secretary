@@ -193,9 +193,14 @@ function ActionButton({
       type="button"
       disabled={disabled}
       onClick={onClick}
+      // Neutral secondary button, not a tinted primary. Slack, Notion and
+      // Atlassian all render connect/disconnect controls this way, and so does
+      // the Claude connector list this screen is modelled on: the accent is
+      // reserved for the one primary action on a screen, and a settings table
+      // has none. Blue on every row read as four competing calls to action.
       className={cn(
-        "text-label-sm text-primary border border-primary/40 bg-primary/5 rounded px-2 py-1",
-        "whitespace-nowrap transition-colors hover:bg-primary/10",
+        "text-label-sm text-on-surface bg-surface border border-outline rounded px-2.5 py-1",
+        "whitespace-nowrap transition-colors hover:bg-surface-variant",
         "focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary",
         "disabled:opacity-50 disabled:pointer-events-none",
       )}
@@ -240,6 +245,35 @@ export default function ConnectionsScreen() {
       toast(e instanceof Error ? e.message : String(e), true);
     } finally {
       setPendingTool(null);
+    }
+  }
+
+  async function disconnectTool(key: string, label: string) {
+    setPendingTool(key);
+    try {
+      await apiPost(`/api/settings/tools/${encodeURIComponent(key)}/deauthorize`, {});
+      // Deliberately not "revoked": MCP servers expose no revoke endpoint, so
+      // the grant may still exist at the provider. Saying otherwise would be a
+      // false assurance.
+      toast(`${label} disconnected on this Mac.`);
+      loadTools();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setPendingTool(null);
+    }
+  }
+
+  async function disconnectSlack() {
+    setSlackPending(true);
+    try {
+      const r = await apiPost<{ detail?: string }>("/api/connections/slack/disconnect", {});
+      toast(r.detail || "Disconnected.");
+      loadSlack();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setSlackPending(false);
     }
   }
 
@@ -307,17 +341,24 @@ export default function ConnectionsScreen() {
             access: "context lookup · create after approval",
             state: authorized ? ("ok" as const) : ("manual" as const),
             status: authorized ? "connected" : "not connected",
-            actions: (
+            actions: authorized ? (
+              <ActionButton
+                disabled={pendingTool === t.key}
+                onClick={() => void disconnectTool(t.key, t.label)}
+              >
+                {pendingTool === t.key ? "Working…" : "Disconnect"}
+              </ActionButton>
+            ) : (
               <ActionButton
                 disabled={pendingTool === t.key}
                 onClick={() => void connectTool(t.key)}
               >
-                {pendingTool === t.key ? "Opening browser…" : authorized ? "Reconnect" : "Connect"}
+                {pendingTool === t.key ? "Opening browser…" : "Connect"}
               </ActionButton>
             ),
           };
         }),
-    [tools, pendingTool],
+    [tools, pendingTool, disconnectTool],
   );
 
   const rows: ConnectorRow[] = useMemo(() => {
@@ -328,9 +369,13 @@ export default function ConnectionsScreen() {
         name: "Slack",
         ...slack,
         note: <SlackPrivacyNote />,
-        actions: (
+        actions: slackConn?.connected ? (
+          <ActionButton disabled={slackPending} onClick={() => void disconnectSlack()}>
+            {slackPending ? "Working…" : "Disconnect"}
+          </ActionButton>
+        ) : (
           <ActionButton disabled={slackPending} onClick={() => void connectSlack()}>
-            {slackPending ? "Opening browser…" : slackConn?.connected ? "Reconnect" : "Connect"}
+            {slackPending ? "Opening browser…" : "Connect"}
           </ActionButton>
         ),
       },

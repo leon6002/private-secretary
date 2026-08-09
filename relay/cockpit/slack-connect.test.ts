@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { __setRunner as __setKeychainRunner } from "../io/keychain.js";
 import { SLACK_REFRESH_TTL_MS, SLACK_TOKEN_SERVICE } from "../io/slack-oauth.js";
-import { slackConnectionStatus, startSlackConnect } from "./slack-connect.js";
+import { disconnectSlack, slackConnectionStatus, startSlackConnect } from "./slack-connect.js";
 
 const ACCOUNT = "me@example.com";
 
@@ -102,5 +102,63 @@ describe("startSlackConnect", () => {
     const r = startSlackConnect("   ", (argv) => calls.push(argv));
     expect(r.started).toBe(false);
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("disconnectSlack", () => {
+  function keychainStore(seed?: string) {
+    const store = new Map<string, string>();
+    if (seed) store.set(`${SLACK_TOKEN_SERVICE}|${ACCOUNT}`, seed);
+    const order: string[] = [];
+    __setKeychainRunner(async (args) => {
+      const k = `${args[args.indexOf("-s") + 1]}|${args[args.indexOf("-a") + 1]}`;
+      if (args[0] === "find-generic-password") {
+        const v = store.get(k);
+        if (v === undefined) {
+          throw Object.assign(new Error("missing"), { code: 44, stderr: "could not be found" });
+        }
+        return { stdout: v + "\n", stderr: "" };
+      }
+      if (args[0] === "delete-generic-password") {
+        order.push("delete");
+        store.delete(k);
+        return { stdout: "", stderr: "" };
+      }
+      throw new Error(`unhandled: ${args[0]}`);
+    });
+    return { store, order };
+  }
+
+  // Revoke FIRST, then forget: revoking needs the token, so deleting first
+  // would leave a live grant that nothing here could withdraw.
+  it("revokes at Slack before deleting the local copy", async () => {
+    const { store, order } = keychainStore(bundle());
+    const r = await disconnectSlack(ACCOUNT, async () => {
+      order.push("revoke");
+      return true;
+    });
+    expect(order).toEqual(["revoke", "delete"]);
+    expect(r.revoked).toBe(true);
+    expect(store.size).toBe(0);
+  });
+
+  // A dead or unreachable token must not strand the row: forget it locally
+  // anyway, and say plainly that Slack did not confirm.
+  it("still forgets the token when the revoke call fails", async () => {
+    const { store } = keychainStore(bundle());
+    const r = await disconnectSlack(ACCOUNT, async () => {
+      throw new Error("token_revoked");
+    });
+    expect(r.ok).toBe(true);
+    expect(r.revoked).toBe(false);
+    expect(r.detail).toMatch(/slack\.com\/apps/);
+    expect(store.size).toBe(0);
+  });
+
+  it("is a no-op when nothing is stored", async () => {
+    keychainStore();
+    const r = await disconnectSlack(ACCOUNT, async () => true);
+    expect(r.ok).toBe(true);
+    expect(r.detail).toMatch(/Already disconnected/);
   });
 });
