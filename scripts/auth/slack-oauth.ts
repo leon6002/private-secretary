@@ -19,6 +19,7 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
+import { page } from "../../relay/cockpit/consent-page.js";
 import { loadIdentity } from "../../relay/io/identity.js";
 import { getSecret } from "../../relay/io/keychain.js";
 import { SlackClient } from "../../relay/io/slack-api.js";
@@ -83,12 +84,6 @@ function openBrowser(url: string): void {
   spawn("open", [url], { detached: true, stdio: "ignore" }).unref();
 }
 
-function page(title: string, body: string): string {
-  return `<!doctype html><meta charset="utf-8"><title>${title}</title>
-<body style="font:16px -apple-system,sans-serif;padding:3rem;max-width:34rem">
-<h1 style="font-size:1.3rem">${title}</h1><p>${body}</p></body>`;
-}
-
 async function cmdConsent(account: string): Promise<void> {
   if (!SLACK_CLIENT_ID) {
     throw new Error(
@@ -100,28 +95,46 @@ async function cmdConsent(account: string): Promise<void> {
   const challenge = codeChallengeOf(verifier, (s) => createHash("sha256").update(s).digest());
   const state = randomUUID();
 
-  let resolveCode: (c: string) => void = () => {};
-  let rejectCode: (e: Error) => void = () => {};
-  const codePromise = new Promise<string>((res, rej) => {
-    resolveCode = res;
-    rejectCode = rej;
+  // The browser response is deliberately HELD until the exchange has finished.
+  // Answering "Connected" the moment the code arrives would be a lie whenever
+  // the exchange or the auth.test check then fails — the user would close a
+  // success page over a connection that does not work.
+  type Callback = { code: string; respond: (html: string) => void };
+  let resolveCb: (c: Callback) => void = () => {};
+  let rejectCb: (e: Error) => void = () => {};
+  const callback = new Promise<Callback>((res, rej) => {
+    resolveCb = res;
+    rejectCb = rej;
   });
 
   const { port, close } = await listenOnRegisteredPort((code, gotState, respond) => {
     // state must match, or this callback is not ours — a CSRF guard, and the
     // reason we do not just take whatever code arrives on the port.
     if (gotState !== state) {
-      respond(page("Mismatched request", "Close this tab and run the command again."));
-      rejectCode(new Error("state mismatch on the OAuth callback"));
+      respond(
+        page({
+          ok: false,
+          title: "Mismatched request",
+          body: "This callback did not come from the sign-in that started here. Nothing was stored.",
+          detail: "Close this tab and run the connect step again.",
+        }),
+      );
+      rejectCb(new Error("state mismatch on the OAuth callback"));
       return;
     }
     if (!code) {
-      respond(page("No authorization code", "Slack sent no code. Close this tab and retry."));
-      rejectCode(new Error("no code on the OAuth callback"));
+      respond(
+        page({
+          ok: false,
+          title: "No authorization code",
+          body: "Slack redirected back without a code, so there was nothing to exchange.",
+          detail: "Close this tab and try connecting again.",
+        }),
+      );
+      rejectCb(new Error("no code on the OAuth callback"));
       return;
     }
-    respond(page("Connected", "Slack is linked. You can close this tab."));
-    resolveCode(code);
+    resolveCb({ code, respond });
   });
 
   const redirectUri = slackRedirectUri(port);
@@ -138,36 +151,64 @@ async function cmdConsent(account: string): Promise<void> {
   openBrowser(authUrl);
 
   const timeout = setTimeout(
-    () => rejectCode(new Error("timed out waiting for the Slack callback")),
+    () => rejectCb(new Error("timed out waiting for the Slack callback")),
     CALLBACK_TIMEOUT_MS,
   );
-  let code: string;
+  let cb: Callback;
   try {
-    code = await codePromise;
+    cb = await callback;
+  } catch (e) {
+    close();
+    throw e;
   } finally {
     clearTimeout(timeout);
-    close();
   }
 
-  const bundle = await exchangeCode({
-    clientId: SLACK_CLIENT_ID,
-    code,
-    codeVerifier: verifier,
-    redirectUri,
-  });
+  try {
+    const bundle = await exchangeCode({
+      clientId: SLACK_CLIENT_ID,
+      code: cb.code,
+      codeVerifier: verifier,
+      redirectUri,
+    });
 
-  // Prove the token actually works before writing it — a stored-but-dead
-  // credential is worse than none, because the daemon only finds out mid-scan.
-  const who = await new SlackClient({ token: bundle.access_token }).authTest();
-  await saveSlackBundle(account, bundle);
+    // Prove the token actually works before writing it — a stored-but-dead
+    // credential is worse than none, because the daemon only finds out mid-scan.
+    const who = await new SlackClient({ token: bundle.access_token }).authTest();
+    await saveSlackBundle(account, bundle);
 
-  console.log(`✅ ${who.team} — signed in as ${who.user}`);
-  console.log(`   stored: ${SLACK_TOKEN_SERVICE} / ${account}`);
-  console.log(
-    bundle.expires_at
-      ? `   rotating token, expires ${new Date(bundle.expires_at).toLocaleString()}`
-      : "   non-rotating token (no expiry)",
-  );
+    cb.respond(
+      page({
+        ok: true,
+        title: "Connected",
+        body: `${who.team} is linked. The secretary will start reading new messages on its next round — nothing sends without your approval.`,
+        detail: `Signed in as ${who.user}. Stored in your macOS Keychain on this Mac only. You can close this tab.`,
+      }),
+    );
+
+    console.log(`✅ ${who.team} — signed in as ${who.user}`);
+    console.log(`   stored: ${SLACK_TOKEN_SERVICE} / ${account}`);
+    console.log(
+      bundle.expires_at
+        ? `   rotating token, expires ${new Date(bundle.expires_at).toLocaleString()}`
+        : "   non-rotating token (no expiry)",
+    );
+  } catch (e) {
+    // The browser is still waiting on this response, so tell it the truth
+    // rather than leaving a spinning tab next to a failed connect.
+    cb.respond(
+      page({
+        ok: false,
+        title: "Could not finish connecting",
+        body: "Slack approved the request, but exchanging it for a token failed. Nothing was stored.",
+        detail: e instanceof Error ? e.message : String(e),
+      }),
+    );
+    throw e;
+  } finally {
+    // Only now: the response has to be written before the socket goes away.
+    close();
+  }
 }
 
 async function cmdShow(account: string): Promise<void> {
