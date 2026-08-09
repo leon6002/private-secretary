@@ -456,10 +456,6 @@ export default function ConnectionsScreen() {
                 <tr className="border-t border-outline align-top">
                   <td className="py-3.5 pr-4">
                     <div className="flex items-start gap-2.5">
-                      <span
-                        aria-hidden="true"
-                        className={cn("w-2 h-2 rounded-full mt-[7px] flex-shrink-0", DOT_CLS[r.state])}
-                      />
                       <span className="flex-shrink-0 mt-px">
                         <ConnectorIcon id={r.id} />
                       </span>
@@ -495,12 +491,21 @@ export default function ConnectionsScreen() {
                   </td>
                   <td className="py-3.5">
                     <div className="flex items-start justify-between gap-3">
+                      {/* The dot lives with the words it qualifies. In the name
+                          cell it read as a bullet; here it is the status. */}
                       <span
                         className={cn(
-                          "text-label-sm",
+                          "text-label-sm flex items-start gap-2",
                           r.state === "attention" ? "text-error" : "text-on-surface-variant",
                         )}
                       >
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            "w-2 h-2 rounded-full mt-[5px] flex-shrink-0",
+                            DOT_CLS[r.state],
+                          )}
+                        />
                         {r.status}
                       </span>
                       {r.actions && <div className="flex-shrink-0">{r.actions}</div>}
