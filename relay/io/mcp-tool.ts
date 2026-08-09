@@ -144,16 +144,21 @@ function startCallbackServer(): Promise<{
 // instead of hanging the "Connect" button on "Authorizing…" forever.
 const OAUTH_CALLBACK_TIMEOUT_MS = 120_000;
 
-async function connect(url: string, authService: string, account: string): Promise<McpConnection> {
-  const { server, redirectUrl, waitForCode } = await startCallbackServer();
-  const provider = new McpOAuthProvider(authService, account, redirectUrl);
+function newTransportAndClient(url: string, provider: McpOAuthProvider): McpConnection {
   const transport = new StreamableHTTPClientTransport(new URL(url), {
     authProvider: provider,
   });
   const client = new Client({ name: "private-secretary", version: "1.0.0" });
+  return { transport, client };
+}
+
+async function connect(url: string, authService: string, account: string): Promise<McpConnection> {
+  const { server, redirectUrl, waitForCode } = await startCallbackServer();
+  const provider = new McpOAuthProvider(authService, account, redirectUrl);
+  let conn = newTransportAndClient(url, provider);
 
   try {
-    await client.connect(transport);
+    await conn.client.connect(conn.transport);
     // Already authorized (token present) — the callback server was only for the
     // OAuth code; close it so it doesn't keep the process alive.
     server.close();
@@ -178,15 +183,20 @@ async function connect(url: string, authService: string, account: string): Promi
           ),
         ),
       ]);
-      await transport.finishAuth(code);
-      await client.connect(transport);
+      await conn.transport.finishAuth(code);
+      // The pre-auth transport already called start() once (that's how the
+      // auth-needed request was sent); StreamableHTTPClientTransport refuses
+      // a second start() on the same instance, so reconnect with a fresh
+      // transport/client bound to the same provider (which now holds the token).
+      conn = newTransportAndClient(url, provider);
+      await conn.client.connect(conn.transport);
     } else {
       console.error(`[mcp] ${url}: connect failed: ${(e as Error).message ?? String(e)}`);
       server.close();
       throw e;
     }
   }
-  return { transport, client };
+  return conn;
 }
 
 // ─── the ToolRunner ─────────────────────────────────────────────────
@@ -210,20 +220,31 @@ export function createMcpToolRunner(opts: McpToolOptions): ToolRunner {
       // Strip our own envelope keys before they leak into the tool arguments.
       const { mcp_tool: _t, ...args } = params;
 
-      const { client } = await connect(opts.url, opts.authService, opts.url);
-      try {
-        const res = await client.callTool({ name: toolName, arguments: args });
-        const text = callResultText(res);
-        return { ref: extractRef(text, toolName) };
-      } finally {
-        await client.close().catch(() => {});
-      }
+      const res = await callMcpTool(opts.url, opts.authService, toolName, args);
+      return { ref: extractRef(callResultText(res), toolName) };
     },
   };
 }
 
+// Connect, call one tool, close. The low-level primitive callers with
+// tool-specific field mapping (e.g. relay/io/jira-mcp.ts) build on instead of
+// duplicating the connect/close plumbing above.
+export async function callMcpTool(
+  url: string,
+  authService: string,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<unknown> {
+  const { client } = await connect(url, authService, url);
+  try {
+    return await client.callTool({ name: toolName, arguments: args });
+  } finally {
+    await client.close().catch(() => {});
+  }
+}
+
 // Concatenate a callTool result's text blocks (or JSON.stringify the rest).
-function callResultText(res: unknown): string {
+export function callResultText(res: unknown): string {
   const content = (res as { content?: unknown } | null)?.content;
   if (Array.isArray(content)) {
     const parts = content.map((c) => {
@@ -257,7 +278,7 @@ export async function listMcpTools(url: string, authService: string): Promise<st
 }
 
 // A short stable ref for the receipt: the server's text first line, trimmed.
-function extractRef(text: string, toolName: string): string {
+export function extractRef(text: string, toolName: string): string {
   const first = text.split("\n")[0]?.trim().slice(0, 80) ?? "";
   return first ? `${toolName}: ${first}` : `${toolName}: ok`;
 }

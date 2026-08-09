@@ -156,7 +156,7 @@ ACTION TYPES (a sender's batch may yield several, or none):
 - tool: process a tracked item through a connected MCP tool — a reported bug,
   feature request, or backlog item. params {tool (the tool key, e.g. "notion"),
   mcp_tool (the specific MCP server tool to call, e.g. "notion-create-pages"
-  for Notion / "jira_create_issue" for Jira — use the tool's real name),
+  for Notion / "createJiraIssue" for Jira — use the tool's real name),
   project, summary, description, assignee?}. A reported bug/feature is a tool
   card, NOT a plain task.
 - ignore: newsletter / automated / already-handled. params {category}.

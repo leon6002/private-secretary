@@ -17,6 +17,7 @@ import { CalendarClient } from "../io/calendar-api.js";
 import { KNOWN_MAILBOXES } from "../io/google-oauth.js";
 import { effectiveToolSpecs } from "../io/tools.js";
 import { createMcpToolRunner, mcpAuthServiceFor } from "../io/mcp-tool.js";
+import { createJiraToolRunner } from "../io/jira-mcp.js";
 import { executeAction, type ExecuteDeps, type ToolRunner } from "../proc/execute.js";
 import type { CockpitExecutor } from "./api.js";
 import type { ActionItem } from "../core/action-item.js";
@@ -50,11 +51,14 @@ function toolStubs(statePath: string): Record<string, ToolRunner> {
   for (const [key, spec] of Object.entries(effectiveToolSpecs(statePath))) {
     const cfg = spec.config ?? {};
     if (cfg.type === "mcp" && cfg.url) {
-      runners[key] = createMcpToolRunner({
+      const runnerOpts = {
         url: cfg.url,
         authService: mcpAuthServiceFor(key, cfg.authService),
         defaultTool: cfg.defaultTool,
-      });
+      };
+      // Jira needs field mapping (project→projectKey, issueTypeName default,
+      // assignee→assignee_account_id) that other generic MCP tools don't.
+      runners[key] = key === "jira" ? createJiraToolRunner(runnerOpts) : createMcpToolRunner(runnerOpts);
     } else {
       runners[key] = {
         async run() {
