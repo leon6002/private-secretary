@@ -93,6 +93,21 @@
     background: var(--surface-variant); border: 1px solid var(--outline);
     padding: 5px 9px; border-radius: 6px; color: #cbd5e1;
   }
+  figure {
+    margin: 14px 0 0; background: var(--surface);
+    border: 1px solid var(--outline); border-radius: 11px;
+    padding: 10px 10px 0; overflow: hidden;
+  }
+  figure img {
+    display: block; width: 100%; height: auto;
+    border-radius: 6px; border: 1px solid var(--outline);
+    background: #fff;
+  }
+  figcaption {
+    font-size: 12.5px; color: var(--on-surface-variant);
+    padding: 9px 4px 10px; text-wrap: pretty;
+  }
+  figcaption b { color: var(--on-surface); font-weight: 600; }
   .note {
     border-radius: 10px; padding: 12px 15px; margin: 14px 0 0;
     background: var(--surface); border: 1px solid var(--outline);
@@ -135,11 +150,14 @@
 
   <div class="note err">
     <span class="tag err">Read this first</span>
-    <p><b>Order matters.</b> PKCE must be enabled <b>before</b> you add the
-      <code>http://localhost</code> redirect URLs. Slack historically rejected non-HTTPS redirect
-      URLs outright; localhost is only accepted once the app is marked a public client, which is
-      what enabling PKCE does. Add the URLs first and they will be refused, with an error that does
-      not explain why. Steps below are in the order that works.</p>
+    <p><b>PKCE is not optional here, whatever Slack's copy says.</b> Without it the token exchange
+      demands a <code>client_secret</code>, which a desktop app cannot hold — that is the entire
+      reason this design needs no server. Turn it on (step 2) before running any consent.</p>
+    <p style="margin-top:8px">Slack historically refused non-HTTPS redirect URLs, so if the
+      <code>http://localhost</code> entries in step 3 are <b>rejected on save</b>, enabling PKCE
+      first is the fix — it marks the app a public client. In practice the console has also been
+      seen accepting them with PKCE still off, so treat this as a fallback rather than a strict
+      ordering. What is not optional is that PKCE is on before the flow runs.</p>
   </div>
 
   <!-- 1 -->
@@ -209,10 +227,29 @@
     <div class="badge">2</div>
     <div>
       <h2>Enable PKCE</h2>
-      <div class="nav">app settings<i>→</i><b>OAuth &amp; Permissions</b><i>→</i>the PKCE setting</div>
+      <div class="nav">
+        app settings<i>→</i><b>OAuth &amp; Permissions</b><i>→</i>scroll down<i>→</i><b>Proof Key for Code Exchange (PKCE)</b><i>→</i>Opt In
+      </div>
       <p>This marks the app a <b>public client</b>: the token exchange stops requiring a
         <code>client_secret</code>, which is what lets the whole flow run on the user's machine with
         no server of ours anywhere in it.</p>
+      <figure>
+        <img src="img/pkce.png" alt="The PKCE panel in Slack's OAuth and Permissions page, with a green Opt In button" />
+        <figcaption>
+          A green <b>Opt In</b> means PKCE is still <b>off</b>. It sits well below the scopes, near
+          the bottom of the page. Slack's own copy calls it “optional for web-based authentication”
+          — for us it is mandatory, because without it the <code>http://localhost</code> redirect
+          URLs in the next step cannot be registered at all.
+        </figcaption>
+      </figure>
+      <div class="note violet">
+        <span class="tag violet">Leave alone</span>
+        <p>Just above PKCE sits a separate <b>token rotation</b> opt-in, greyed out until a redirect
+          URL exists. <b>Do not opt in.</b> Rotation buys nothing here and costs the 30-day
+          re-consent: without it the token does not expire, which is a better experience for a
+          desktop app that may sit closed for weeks. The code reads
+          <code>expires_at: 0</code> as “never expires” and handles either outcome.</p>
+      </div>
       <div class="note warn">
         <span class="tag warn">Irreversible</span>
         <p>Slack: “Enabling PKCE marks your app as a public client. This is a one-way operation; it
@@ -238,12 +275,36 @@
         <span>http://localhost:4319/slack/callback</span>
         <span>http://localhost:4320/slack/callback</span>
       </div>
+      <figure>
+        <img src="img/callbackurl.png" alt="Slack's Redirect URLs panel showing no URLs added, with Add New Redirect URL and Save URLs buttons" />
+        <figcaption>
+          <b>“You haven't added any Redirect URLs”</b> is the state that produces
+          <code>redirect_uri did not match any configured URIs</code> at authorize time. Add each
+          URL, then click <b>Save URLs</b> — adding without saving leaves the list empty. Slack's
+          own note here says a passed URL “must (partially) match”, so it prefix-matches: registering
+          the origin would be enough, but the exact paths above are unambiguous.
+        </figcaption>
+      </figure>
+      <figure>
+        <img src="img/added-callbackurl.png" alt="Slack's Redirect URLs panel listing the three saved localhost callback URLs" />
+        <figcaption>
+          What it looks like once saved: three entries, each with edit and delete controls. This is
+          the state the consent flow needs — the port the script actually binds is whichever of the
+          three is free.
+        </figcaption>
+      </figure>
       <div class="note err">
-        <span class="tag err">If rejected</span>
-        <p>An error here means step 2 did not take effect. Go back, confirm PKCE is on, reload the
-          page, and try again. Do not switch to <code>https</code> or reach for ngrok — a tunnel
-          would put a third-party host in the callback path, which is the exact property this
-          design exists to avoid.</p>
+        <span class="tag err">If rejected on save</span>
+        <p>Go back and confirm PKCE is on, reload the page, try again. Do not switch to
+          <code>https</code> or reach for ngrok — a tunnel would put a third-party host in the
+          callback path, which is the exact property this design exists to avoid.</p>
+      </div>
+      <div class="note err">
+        <span class="tag err">If they save but authorize still fails</span>
+        <p><code>redirect_uri did not match any configured URIs</code> after a successful save means
+          the entries did not stick — reload the page and confirm all three are listed. Saving the
+          URLs is <b>not</b> the same as enabling PKCE; both are required, and the console lets you
+          do one without the other.</p>
       </div>
     </div>
   </div>
