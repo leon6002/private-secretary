@@ -11,6 +11,11 @@
 #
 # Idempotent: safe to re-run — it updates the checkout and reloads the agents.
 # macOS only for now (launchd); Linux support would swap step 4 for systemd.
+#
+# Environment overrides:
+#   PRIVATE_SECRETARY_REPO   git URL to clone (default: the GitHub repo below —
+#                            point at your fork/mirror if the origin moves)
+#   PRIVATE_SECRETARY_HOME   install directory (default: ~/private-secretary)
 
 set -euo pipefail
 
@@ -22,7 +27,9 @@ WARN='\033[38;2;217;119;6m'
 ERROR='\033[38;2;220;38;38m'
 NC='\033[0m'
 
-REPO_URL="https://github.com/LeoTaivDev/private-secretary.git"
+# ── Configuration — override via environment if the repo moves ────
+# e.g. PRIVATE_SECRETARY_REPO=git@github.com:myfork/private-secretary.git bash install.sh
+REPO_URL="${PRIVATE_SECRETARY_REPO:-https://github.com/LeoTaivDev/private-secretary.git}"
 INSTALL_DIR="${PRIVATE_SECRETARY_HOME:-$HOME/private-secretary}"
 NODE_MIN_MAJOR=20
 
@@ -40,6 +47,7 @@ if [[ "$OSTYPE" != "darwin"* ]]; then
           "Linux/systemd support is not wired yet — install manually: $REPO_URL"
 fi
 ui_success "Detected: macOS"
+ui_info "Repo: $REPO_URL"
 
 # ── 1. Homebrew (only if we need it for git/node) ───────────────
 install_homebrew() {
@@ -106,7 +114,8 @@ elif [[ -e "$INSTALL_DIR" ]]; then
     abort "$INSTALL_DIR exists but is not a git checkout" \
           "Move it aside or set PRIVATE_SECRETARY_HOME to a different directory."
 else
-    git clone "$REPO_URL" "$INSTALL_DIR" || abort "git clone failed" "Check your network/GitHub access."
+    git clone "$REPO_URL" "$INSTALL_DIR" || abort "git clone failed: $REPO_URL" \
+        "Check network/GitHub access, or override the repo: PRIVATE_SECRETARY_REPO=<url> bash install.sh"
     ui_success "Cloned into $INSTALL_DIR"
 fi
 

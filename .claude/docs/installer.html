@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>install.sh — One-liner macOS installer</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --surface: #12161f;
+    --surface-variant: #1a1f2b;
+    --outline: #262c3a;
+    --on-surface: #e6e8ec;
+    --on-surface-variant: #9aa3b2;
+    --primary: #60a5fa;
+    --primary-soft: #1e3a5f;
+    --ok: #34d399;
+    --ok-soft: #064e3b;
+    --warn: #fbbf24;
+    --warn-soft: #451a03;
+    --err: #f87171;
+    --err-soft: #450a0a;
+    --violet: #a78bfa;
+    --violet-soft: #2e1065;
+    --pink: #f472b6;
+    --pink-soft: #500f33;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--on-surface);
+    padding: 40px 24px 64px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+
+  /* ── header ─────────────────────────────── */
+  .eyebrow {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--primary); margin-bottom: 10px;
+  }
+  h1 {
+    font-size: 30px; font-weight: 600; letter-spacing: -0.02em;
+    line-height: 1.15; text-wrap: balance; margin-bottom: 10px;
+  }
+  .lede {
+    font-size: 15px; color: var(--on-surface-variant);
+    max-width: 68ch; margin-bottom: 22px; text-wrap: pretty;
+  }
+  .cmdline {
+    display: flex; align-items: center; gap: 10px;
+    background: #05070c; color: #e2e8f0;
+    border: 1px solid var(--outline);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px;
+    padding: 13px 16px; border-radius: 10px; margin-bottom: 34px;
+    overflow-x: auto; white-space: nowrap;
+  }
+  .cmdline .prompt { color: #64748b; user-select: none; }
+  .cmdline .url { color: #7dd3fc; }
+  .cmdline .pipe { color: #f472b6; }
+  .copy {
+    margin-left: auto; flex: 0 0 auto;
+    background: none; border: 1px solid #334155; border-radius: 6px;
+    color: #94a3b8; font: inherit; font-size: 10.5px; padding: 3px 9px;
+    cursor: pointer; transition: color .15s, border-color .15s;
+  }
+  .copy:hover { color: #e2e8f0; border-color: #64748b; }
+
+  /* ── step cards ─────────────────────────── */
+  .step {
+    display: flex; gap: 18px;
+    background: var(--surface); border: 1px solid var(--outline);
+    border-radius: 12px; padding: 22px 24px; margin-bottom: 14px;
+  }
+  .num {
+    flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; font-weight: 700; color: #0b0e14; margin-top: 2px;
+  }
+  .num.blue   { background: var(--primary); }
+  .num.violet { background: var(--violet); }
+  .num.pink   { background: var(--pink); }
+  .num.green  { background: var(--ok); }
+  .step-body { flex: 1; min-width: 0; }
+  .step h2 {
+    font-size: 16px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 3px;
+  }
+  .step h2 .stag {
+    font-size: 11px; font-weight: 600; color: var(--on-surface-variant);
+    font-family: ui-monospace, Menlo, monospace; margin-left: 6px;
+  }
+  .step .what { font-size: 13.5px; color: var(--on-surface-variant); margin-bottom: 14px; max-width: 66ch; }
+  .step .what:last-child { margin-bottom: 0; }
+
+  .sub { border-left: 2px solid var(--outline); padding: 2px 0 2px 14px; margin-bottom: 12px; }
+  .sub:last-child { margin-bottom: 0; }
+  .sub h3 { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+  .sub p { font-size: 12.5px; color: var(--on-surface-variant); max-width: 64ch; }
+  .sub code, .files code, .note code, .what code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.92em;
+    background: var(--surface-variant); padding: 1px 5px; border-radius: 4px;
+    color: #7dd3fc;
+  }
+
+  .tag {
+    display: inline-block; font-size: 10px; font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 2px 8px; border-radius: 99px; margin-left: 8px; vertical-align: 2px;
+  }
+  .tag.oc  { background: var(--warn-soft);  color: var(--warn); }
+  .tag.us  { background: var(--violet-soft); color: var(--violet); }
+
+  .pill-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .pill {
+    font-size: 11px; font-weight: 500; padding: 3px 10px; border-radius: 99px;
+    border: 1px solid var(--outline); background: var(--surface-variant);
+    color: var(--on-surface-variant);
+    font-family: ui-monospace, Menlo, monospace;
+  }
+  .pill.guard { background: var(--ok-soft);  border-color: #065f46; color: var(--ok); }
+  .pill.risk  { background: var(--err-soft); border-color: #7f1d1d; color: var(--err); }
+
+  /* ── collapsible source code ────────────── */
+  details.code {
+    margin-top: 14px;
+    border: 1px solid var(--outline);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  details.code summary {
+    cursor: pointer; user-select: none; list-style: none;
+    font-size: 11.5px; font-weight: 600; color: var(--primary);
+    padding: 8px 14px; background: var(--surface-variant);
+    display: flex; align-items: center; gap: 6px;
+  }
+  details.code summary::before {
+    content: "▸"; font-size: 10px; transition: transform .15s;
+  }
+  details.code[open] summary::before { transform: rotate(90deg); }
+  details.code summary::-webkit-details-marker { display: none; }
+  details.code summary:hover { color: #93c5fd; }
+  details.code pre {
+    margin: 0; padding: 14px 16px;
+    background: #05070c; color: #cbd5e1;
+    border-top: 1px solid var(--outline);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11.5px; line-height: 1.6;
+    overflow-x: auto; white-space: pre;
+  }
+  details.code pre .c { color: #475569; }          /* comment */
+  details.code pre .k { color: #7dd3fc; }          /* keyword-ish */
+  details.code pre .s { color: #86efac; }          /* string */
+
+  /* ── two global rules ───────────────────── */
+  .rules { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 30px 0 8px; }
+  @media (max-width: 640px) { .rules { grid-template-columns: 1fr; } }
+  .rule {
+    border-radius: 12px; padding: 18px 20px;
+    border: 1px solid var(--outline); background: var(--surface);
+  }
+  .rule h3 { font-size: 13px; font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 7px; }
+  .rule p { font-size: 12.5px; color: var(--on-surface-variant); }
+  .rule.idem { border-left: 3px solid var(--ok); }
+  .rule.safe { border-left: 3px solid var(--primary); }
+
+  /* ── files touched ──────────────────────── */
+  .files { margin-top: 30px; background: var(--surface); border: 1px solid var(--outline); border-radius: 12px; padding: 20px 24px; }
+  .files h2 { font-size: 14px; font-weight: 700; margin-bottom: 12px; }
+  .files table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .files td { padding: 6px 0; border-top: 1px solid var(--surface-variant); vertical-align: top; }
+  .files tr:first-child td { border-top: none; }
+  .files td:first-child { width: 46%; padding-right: 14px; }
+  .files td:last-child { color: var(--on-surface-variant); }
+  .chip {
+    display: inline-block; font-size: 9.5px; font-weight: 700; letter-spacing: 0.05em;
+    text-transform: uppercase; padding: 1px 7px; border-radius: 4px; margin-left: 8px; vertical-align: 1px;
+  }
+  .chip.write { background: var(--err-soft); color: var(--err); }
+  .chip.exec  { background: var(--warn-soft); color: var(--warn); }
+  .chip.link  { background: var(--violet-soft); color: var(--violet); }
+
+  .note {
+    margin-top: 22px; font-size: 12px; color: var(--on-surface-variant);
+    background: var(--surface-variant); border-radius: 10px; padding: 13px 16px;
+  }
+  .note b { color: var(--on-surface); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="eyebrow">scripts/install.sh · macOS</div>
+  <h1>The one-liner installer, annotated</h1>
+  <p class="lede">
+    What actually happens when someone runs the curl-pipe-bash command — the environment it
+    detects, what it installs, what it never touches, and why each guard exists.
+    Modeled on OpenClaw's installer, trimmed to what this project needs.
+  </p>
+
+  <div class="cmdline" id="cmd">
+    <span class="prompt">$</span>
+    <span>curl -fsSL <span class="url">https://raw.githubusercontent.com/leon6002/private-secretary/dev/scripts/install.sh</span> <span class="pipe">|</span> bash</span>
+    <button class="copy" id="copyBtn" type="button">copy</button>
+  </div>
+
+  <!-- STEP 0 -->
+  <section class="step">
+    <div class="num blue">0</div>
+    <div class="step-body">
+      <h2>macOS only gate <span class="stag">OSTYPE check</span></h2>
+      <p class="what">
+        The 24/7 residency is built on launchd, which is macOS-only. Rather than half-work on
+        Linux, the script stops immediately with a pointer to manual install.
+        <code>set -euo pipefail</code>
+        is on from the first line: any failed command anywhere aborts the whole run instead of
+        leaving a half-installed system.
+      </p>
+      <details class="code">
+        <summary>View source</summary>
+        <pre><span class="k">set</span> -euo pipefail
+
+<span class="c"># ── 0. macOS only ──</span>
+<span class="k">if</span> [[ <span class="s">"$OSTYPE"</span> != <span class="s">"darwin"</span>* ]]; <span class="k">then</span>
+    abort <span class="s">"This installer currently supports macOS only (launchd)."</span> \
+          <span class="s">"Linux/systemd support is not wired yet — install manually: $REPO_URL"</span>
+<span class="k">fi</span>
+ui_success <span class="s">"Detected: macOS"</span>
+ui_info <span class="s">"Repo: $REPO_URL"</span></pre>
+      </details>
+    </div>
+  </section>
+
+  <!-- STEP 1 -->
+  <section class="step">
+    <div class="num blue">1</div>
+    <div class="step-body">
+      <h2>Environment self-check <span class="stag">[1/4]</span><span class="tag oc">from OpenClaw</span></h2>
+      <p class="what">
+        Handles machines in any state — fresh Mac, old Node, no brew — without asking the user
+        to prepare anything. Three ideas taken straight from OpenClaw's installer:
+      </p>
+
+      <div class="sub">
+        <h3>PATH seeding for non-login shells</h3>
+        <p><code>curl | bash</code> never reads <code>.zprofile</code>, so Homebrew's bin dirs
+        (<code>/opt/homebrew/bin</code>, <code>/usr/local/bin</code>) are prepended manually —
+        otherwise a machine that <i>has</i> Node looks like one that doesn't.</p>
+      </div>
+      <div class="sub">
+        <h3>Lazy Homebrew</h3>
+        <p>Homebrew is installed only when something actually needs it (missing Git or Node).
+        Users who already have everything never touch brew.</p>
+      </div>
+      <div class="sub">
+        <h3>Git + Node ≥ 20, then verify the winner</h3>
+        <p>Installs or upgrades via brew, runs <code>hash -r</code> to drop the shell's command
+        cache, then re-checks that the Node <i>actually resolved on PATH</i> is new enough —
+        an old Node earlier in PATH fails loudly with a fix instruction instead of silently
+        breaking the build later.</p>
+      </div>
+      <details class="code">
+        <summary>View source</summary>
+        <pre><span class="c"># Seed Homebrew's bin dirs for non-login curl|bash shells.</span>
+<span class="k">for</span> p <span class="k">in</span> /opt/homebrew/bin /usr/local/bin; <span class="k">do</span>
+    [[ -d <span class="s">"$p"</span> ]] && [[ <span class="s">":$PATH:"</span> != *<span class="s">":$p:"</span>* ]] && PATH=<span class="s">"$p:$PATH"</span>
+<span class="k">done</span>
+
+node_major() { node -v 2&gt;/dev/null | sed -E <span class="s">'s/^v([0-9]+).*/\1/'</span>; }
+
+<span class="c"># Lazy Homebrew — only when git or node actually needs it.</span>
+install_homebrew() {
+    <span class="k">if</span> command -v brew &gt;/dev/null; <span class="k">then return</span> 0; <span class="k">fi</span>
+    /bin/bash -c <span class="s">"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"</span>
+    <span class="k">for</span> p <span class="k">in</span> /opt/homebrew/bin /usr/local/bin; <span class="k">do</span>
+        [[ -x <span class="s">"$p/brew"</span> ]] && <span class="k">eval</span> <span class="s">"$("$</span>p<span class="s">/brew shellenv)"</span>
+    <span class="k">done</span>
+}
+
+<span class="k">if</span> ! command -v git &gt;/dev/null; <span class="k">then</span>
+    install_homebrew
+    brew install git || abort <span class="s">"git install failed"</span>
+<span class="k">fi</span>
+
+<span class="k">if</span> command -v node &gt;/dev/null && [[ <span class="s">"$(node_major)"</span> -ge <span class="s">"$NODE_MIN_MAJOR"</span> ]]; <span class="k">then</span>
+    ui_success <span class="s">"Node.js: $(node -v)"</span>
+<span class="k">else</span>
+    install_homebrew
+    brew install node || abort <span class="s">"Node.js install failed"</span>
+    brew link node --overwrite --force 2&gt;/dev/null || <span class="k">true</span>
+    hash -r
+    [[ <span class="s">"$(node_major)"</span> -ge <span class="s">"$NODE_MIN_MAJOR"</span> ]] \
+        || abort <span class="s">"Node.js still below v${NODE_MIN_MAJOR}"</span> \
+                 <span class="s">"Fix your PATH so the Homebrew node comes first, then re-run."</span>
+<span class="k">fi</span></pre>
+      </details>
+    </div>
+  </section>
+
+  <!-- STEP 2 -->
+  <section class="step">
+    <div class="num violet">2</div>
+    <div class="step-body">
+      <h2>Clone / update + build <span class="stag">[2/4]</span><span class="tag us">ours</span></h2>
+      <p class="what">
+        Lands the code at <code>~/private-secretary</code> (override with
+        <code>PRIVATE_SECRETARY_HOME</code>) and makes it runnable.
+      </p>
+      <div class="sub">
+        <h3>Idempotent checkout</h3>
+        <p>Existing clean checkout → <code>git pull --ff-only</code>. Dirty checkout → warn and
+        keep the user's changes, never overwrite. A non-git directory at that path aborts with
+        instructions instead of deleting anything.</p>
+      </div>
+      <div class="sub">
+        <h3>npm install + cockpit:build</h3>
+        <p>The cockpit server serves a <b>prebuilt static bundle</b> — without a build at install
+        time the first page load shows the "run npm run cockpit:build" hint instead of the app.</p>
+      </div>
+      <details class="code">
+        <summary>View source</summary>
+        <pre>REPO_URL=<span class="s">"${PRIVATE_SECRETARY_REPO:-https://github.com/LeoTaivDev/private-secretary.git}"</span>
+INSTALL_DIR=<span class="s">"${PRIVATE_SECRETARY_HOME:-$HOME/private-secretary}"</span>
+
+<span class="k">if</span> [[ -d <span class="s">"$INSTALL_DIR/.git"</span> ]]; <span class="k">then</span>
+    <span class="c"># Update: never clobber a dirty checkout.</span>
+    <span class="k">if</span> [[ -n <span class="s">"$(git -C "</span>$INSTALL_DIR<span class="s">" status --porcelain)"</span> ]]; <span class="k">then</span>
+        ui_warn <span class="s">"Local changes present — skipping git pull"</span>
+    <span class="k">else</span>
+        git -C <span class="s">"$INSTALL_DIR"</span> pull --ff-only
+    <span class="k">fi</span>
+<span class="k">elif</span> [[ -e <span class="s">"$INSTALL_DIR"</span> ]]; <span class="k">then</span>
+    abort <span class="s">"$INSTALL_DIR exists but is not a git checkout"</span>
+<span class="k">else</span>
+    git clone <span class="s">"$REPO_URL"</span> <span class="s">"$INSTALL_DIR"</span> || abort <span class="s">"git clone failed: $REPO_URL"</span> \
+        <span class="s">"Check network/GitHub access, or override: PRIVATE_SECRETARY_REPO=&lt;url&gt;"</span>
+<span class="k">fi</span>
+
+<span class="k">cd</span> <span class="s">"$INSTALL_DIR"</span>
+npm install --no-fund --no-audit
+npm run cockpit:build   <span class="c"># cockpit serves a PREBUILT bundle</span></pre>
+      </details>
+    </div>
+  </section>
+
+  <!-- STEP 3 -->
+  <section class="step">
+    <div class="num pink">3</div>
+    <div class="step-body">
+      <h2>24/7 daemon + cockpit via launchd <span class="stag">[3/5]</span><span class="tag us">ours</span></h2>
+      <p class="what">
+        Delegates to the existing <code>scripts/launchagent/install.sh</code>, which renders two
+        plists into <code>~/Library/LaunchAgents</code> and loads them:
+      </p>
+      <div class="pill-row">
+        <span class="pill">tv.taiv.secretary → run-notify.ts · KeepAlive + RunAtLoad</span>
+        <span class="pill">tv.taiv.secretary.cockpit → run-cockpit.ts · 127.0.0.1:4317</span>
+      </div>
+      <div class="sub" style="margin-top:12px">
+        <h3>Logs live outside TCC-protected folders</h3>
+        <p>Stdout/stderr go to <code>~/Library/Logs/taiv-secretary/</code> — never
+        <code>~/Documents</code>. launchd opens log paths before exec; under a protected folder the
+        spawn fails with EX_CONFIG and zero output (we once had a daemon silently dead for 9 days
+        and 56,484 retries because of this).</p>
+      </div>
+      <details class="code">
+        <summary>View source</summary>
+        <pre>bash scripts/launchagent/install.sh
+
+<span class="c"># ── inside scripts/launchagent/install.sh ──</span>
+LOG_DIR=<span class="s">"${HOME}/Library/Logs/taiv-secretary"</span>  <span class="c"># outside TCC-protected dirs</span>
+
+install_agent() {
+    <span class="k">local</span> label=<span class="s">"$1"</span>
+    <span class="k">local</span> dst=<span class="s">"${HOME_DIR}/Library/LaunchAgents/${label}.plist"</span>
+    <span class="c"># Idempotent: unload an already-loaded agent before reloading.</span>
+    <span class="k">if</span> launchctl print <span class="s">"gui/$(id -u)/${label}"</span> &gt;/dev/null 2&gt;&1; <span class="k">then</span>
+        launchctl unload <span class="s">"$dst"</span> 2&gt;/dev/null || <span class="k">true</span>
+    <span class="k">fi</span>
+    sed -e <span class="s">"s|@REPO_ROOT@|${REPO_ROOT}|g"</span> \
+        -e <span class="s">"s|@NPX_PATH@|${NPX_PATH}|g"</span> \
+        -e <span class="s">"s|@LOG_DIR@|${LOG_DIR}|g"</span> \
+        <span class="s">"$src"</span> &gt; <span class="s">"$dst"</span>
+    launchctl load <span class="s">"$dst"</span>
+}
+install_agent <span class="s">"tv.taiv.secretary"</span>          <span class="c"># scan daemon</span>
+install_agent <span class="s">"tv.taiv.secretary.cockpit"</span> <span class="c"># UI on :4317</span></pre>
+      </details>
+    </div>
+  </section>
+
+  <!-- STEP 4 -->
+  <section class="step">
+    <div class="num violet">4</div>
+    <div class="step-body">
+      <h2>Link Claude Code skills <span class="stag">[4/5]</span><span class="tag us">ours</span></h2>
+      <p class="what">
+        The runtime <i>is</i> a Claude Code skill (<code>/relay</code>), but skills live in the
+        repo's <code>.claude/skills/</code> — a fresh user's Claude Code can't see them. Each skill
+        directory is symlinked into the user-level <code>~/.claude/skills/</code>.
+      </p>
+      <div class="pill-row">
+        <span class="pill guard">✓ already linked to this checkout → skip</span>
+        <span class="pill guard">✓ re-run safe — second run links 0</span>
+        <span class="pill risk">✗ user's own same-named dir → warn, never touch</span>
+      </div>
+      <div class="sub" style="margin-top:12px">
+        <h3>Claude CLI probe</h3>
+        <p>If <code>claude</code> isn't on PATH, the user is told where to get Claude Code —
+        the skills are useless without it.</p>
+      </div>
+      <details class="code">
+        <summary>View source</summary>
+        <pre>CLAUDE_SKILLS_DIR=<span class="s">"$HOME/.claude/skills"</span>
+mkdir -p <span class="s">"$CLAUDE_SKILLS_DIR"</span>
+linked=0
+<span class="k">for</span> skill_dir <span class="k">in</span> <span class="s">"$INSTALL_DIR/.claude/skills"</span>/*/; <span class="k">do</span>
+    name=<span class="s">"$(basename "</span>$skill_dir<span class="s">")"</span>
+    target=<span class="s">"$CLAUDE_SKILLS_DIR/$name"</span>
+    <span class="c"># Already linked to THIS checkout → skip (idempotent).</span>
+    <span class="k">if</span> [[ -L <span class="s">"$target"</span> && <span class="s">"$(readlink "</span>$target<span class="s">")"</span> == <span class="s">"${skill_dir%/}"</span> ]]; <span class="k">then continue</span>; <span class="k">fi</span>
+    <span class="c"># User's own same-named dir → warn, never touch.</span>
+    <span class="k">if</span> [[ -e <span class="s">"$target"</span> && ! -L <span class="s">"$target"</span> ]]; <span class="k">then</span>
+        ui_warn <span class="s">"~/.claude/skills/$name exists (not ours) — leaving it untouched"</span>
+        <span class="k">continue</span>
+    <span class="k">fi</span>
+    ln -sfn <span class="s">"${skill_dir%/}"</span> <span class="s">"$target"</span>
+    linked=$((linked + 1))
+<span class="k">done</span>
+<span class="k">if</span> ! command -v claude &gt;/dev/null; <span class="k">then</span>
+    ui_warn <span class="s">"Claude Code CLI not on PATH — /relay only runs inside Claude Code."</span>
+<span class="k">fi</span></pre>
+      </details>
+    </div>
+  </section>
+
+  <!-- STEP 5 -->
+  <section class="step">
+    <div class="num green">5</div>
+    <div class="step-body">
+      <h2>Verify + hand off <span class="stag">[5/5]</span></h2>
+      <p class="what">
+        Probes <code>http://127.0.0.1:4317/</code> after a 2s grace period for launchd to spawn the
+        cockpit. Success prints the URL, log paths, and the next action (open cockpit →
+        Connections, link Slack / Gmail / Jira). Failure isn't fatal — it prints the exact
+        <code>tail -F</code> command to diagnose with.
+      </p>
+      <details class="code">
+        <summary>View source</summary>
+        <pre>sleep 2  <span class="c"># give launchd a beat to spawn the cockpit</span>
+<span class="k">if</span> curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:4317/; <span class="k">then</span>
+    ui_success <span class="s">"Cockpit is up at http://127.0.0.1:4317"</span>
+<span class="k">else</span>
+    ui_warn <span class="s">"Cockpit didn't answer yet — check:"</span> \
+            <span class="s">"tail -F ~/Library/Logs/taiv-secretary/cockpit.err.log"</span>
+<span class="k">fi</span></pre>
+      </details>
+    </div>
+  </section>
+
+  <!-- global rules -->
+  <div class="rules">
+    <div class="rule idem">
+      <h3>🔄 Idempotent by design</h3>
+      <p>Every stage is safe to re-run: pull latest, rebuild, reload agents, re-link what's
+      missing. "Re-run the installer" <b>is</b> the upgrade path — there is no separate updater.</p>
+    </div>
+    <div class="rule safe">
+      <h3>🛡 Touch only what's ours</h3>
+      <p>Writes are confined to the checkout dir, two launchd plists, and our own symlinks under
+      <code>~/.claude/skills</code>. User files, dirty checkouts, and foreign skill directories
+      are warned about and left alone. Any failure aborts immediately with a concrete fix.</p>
+    </div>
+  </div>
+
+  <!-- files touched -->
+  <div class="files">
+    <h2>Everything this script creates or modifies</h2>
+    <table>
+      <tr><td><code>~/private-secretary/</code><span class="chip write">write</span></td>
+          <td>The full checkout + node_modules + built cockpit bundle.</td></tr>
+      <tr><td><code>~/Library/LaunchAgents/tv.taiv.secretary.plist</code><span class="chip write">write</span></td>
+          <td>24/7 scan daemon (KeepAlive, RunAtLoad, 30s throttle).</td></tr>
+      <tr><td><code>~/Library/LaunchAgents/tv.taiv.secretary.cockpit.plist</code><span class="chip write">write</span></td>
+          <td>The triage UI on 127.0.0.1:4317.</td></tr>
+      <tr><td><code>~/Library/Logs/taiv-secretary/</code><span class="chip write">write</span></td>
+          <td>Daemon + cockpit stdout/stderr logs.</td></tr>
+      <tr><td><code>~/.claude/skills/{relay, persona-bootstrap, …}</code><span class="chip link">symlink</span></td>
+          <td>User-level links into the repo's .claude/skills — updates with every git pull.</td></tr>
+      <tr><td><code>Homebrew + git + node</code><span class="chip exec">system</span></td>
+          <td>Installed only if missing/outdated — the only system-level changes.</td></tr>
+    </table>
+  </div>
+
+  <div class="note">
+    <b>Known gaps before public distribution:</b> the script's raw URL must point at a branch that
+    actually has it (currently <code>dev</code>, not yet merged to <code>main</code>), and the repo
+    must be public for anonymous <code>curl</code> to fetch it — or the script needs a token/SSH
+    path. Linux stays out of scope until someone swaps step 3 for systemd units.
+  </div>
+
+</div>
+
+<script>
+  document.getElementById("copyBtn").addEventListener("click", function () {
+    const text = document.getElementById("cmd").innerText.replace(/^\$\s*/, "").replace(/copy$/, "").trim();
+    navigator.clipboard.writeText(text).then(() => {
+      this.textContent = "copied ✓";
+      setTimeout(() => (this.textContent = "copy"), 1500);
+    });
+  });
+</script>
+</body>
+</html>
