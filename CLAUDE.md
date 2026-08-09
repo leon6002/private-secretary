@@ -2,8 +2,8 @@
 
 Scans Slack + Gmail on an interval, understands each new message with sender
 context, and writes suggested Action Items (reply / relay / forward / calendar /
-task / ignore) into a local pending queue. The user reviews cards
-(批准并发送 / 编辑 / 跳过); approved items execute via the matching executor.
+task / ignore) into a local pending queue. The user reviews each card and
+approves, edits or skips it; approved items execute via the matching executor.
 Relay (EN<->ZH cross-platform forwarding) is one action type.
 
 Specs: `specs/action-item-engine.md` (engine), `specs/persona-v3.md` (personas),
@@ -33,22 +33,22 @@ The layout is discoverable from the tree; what is NOT discoverable:
 
 ## Commands
 
-- `npm test` — vitest suite · `npm run typecheck` — tsc --noEmit
-- `npm run relay <personas|queue|gate|…> state/loop-state.json` — see `relay/cli.ts`
-- `npm run cockpit:build` — required before the cockpit serves the React app
-- First run needs `config/identity.json` (gitignored, so a fresh clone has
-  none). The cockpit's Connections screen asks for it and writes it. Without it
-  nothing polls and the Slack Connect button is inert, because the Keychain
-  account key it writes to is the empty string.
-- Pipe JSON into the CLI via BASH (`cat x.json | npm run -s relay ...`), never a
-  Windows PowerShell 5.1 pipe — PS transcodes stdin to the OEM codepage and
-  mangles non-ASCII (中文, em dashes, →) into `?`. The CLI strips a UTF-8 BOM.
+- `npm test` (vitest) and `npm run typecheck` (tsc --noEmit) — run both before
+  claiming a change works.
+- `npm run cockpit:build` — the cockpit serves a stale bundle until you do.
+- `npm run relay <subcommand> state/loop-state.json` — subcommands in `relay/cli.ts`.
+- Pipe JSON into the CLI from bash, never Windows PowerShell 5.1: PS transcodes
+  stdin to the OEM codepage and turns non-ASCII (CJK, em dashes, arrows) into
+  `?`. The CLI strips a UTF-8 BOM itself.
+- First run needs `config/identity.json`, which is gitignored — the cockpit's
+  Connections screen writes it. Without it nothing polls and Connect is inert.
 
 ## Git
 
-Commit format, type/scope vocabulary and the two-remote push order live in the
-`git-workflow` skill. The rule with zero exceptions: **never add a
-`Co-authored-by: Claude` (or any AI attribution) trailer.**
+Format, type/scope vocabulary and push order: the `git-workflow` skill.
+Duplicated here on purpose, because skills load on demand and this one is not
+amendable once pushed: **never add a `Co-authored-by: Claude` or any other AI
+attribution trailer.**
 
 ## Hard constraints
 

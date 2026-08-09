@@ -59,4 +59,5 @@ and the open items.
   `relay/io/wechat-cli.ts`; supersedes the earlier `@walkerch/wxecho` path —
   see `specs/wechat-decrypt-migration.md`). Still WeChat 4.1.8.x-pinned per
   `specs/wechat-local-decrypt.md`. WeChat send via Customer Service official
-  API (公众号/客服号 only — personal 1:1 send remains clipboard-manual).
+  API (Official Accounts / Customer Service accounts only — personal 1:1
+  send remains clipboard-manual).
