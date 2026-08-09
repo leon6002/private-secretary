@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Creating the Slack app — step by step</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --surface: #12161f;
+    --surface-variant: #1a1f2b;
+    --outline: #262c3a;
+    --on-surface: #e6e8ec;
+    --on-surface-variant: #9aa3b2;
+    --primary: #60a5fa;
+    --primary-soft: #1e3a5f;
+    --ok: #34d399;
+    --ok-soft: #064e3b;
+    --warn: #fbbf24;
+    --warn-soft: #451a03;
+    --err: #f87171;
+    --err-soft: #450a0a;
+    --violet: #a78bfa;
+    --violet-soft: #2e1065;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--on-surface);
+    padding: 40px 24px 64px; line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  .eyebrow {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--primary); margin-bottom: 10px;
+  }
+  h1 {
+    font-size: 30px; font-weight: 600; letter-spacing: -0.02em;
+    line-height: 1.15; text-wrap: balance; margin-bottom: 10px;
+  }
+  .lede {
+    font-size: 15px; color: var(--on-surface-variant);
+    max-width: 68ch; margin-bottom: 26px; text-wrap: pretty;
+  }
+  .lede b { color: var(--on-surface); font-weight: 600; }
+  p { font-size: 14px; color: var(--on-surface-variant); max-width: 72ch; text-wrap: pretty; }
+  code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px;
+    background: var(--surface-variant); border: 1px solid var(--outline);
+    padding: 1px 5px; border-radius: 5px; color: #cbd5e1;
+  }
+  pre {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px;
+    background: #05070c; border: 1px solid var(--outline);
+    padding: 14px 16px; border-radius: 10px; margin: 12px 0 2px;
+    overflow-x: auto; line-height: 1.5; color: #cbd5e1;
+  }
+  pre .k { color: #7dd3fc; }
+  pre .v { color: #a5b4fc; }
+  pre .c { color: #64748b; }
+
+  /* ── step blocks ────────────────────────── */
+  .step {
+    display: grid; grid-template-columns: 44px 1fr; gap: 18px;
+    padding: 24px 0; border-top: 1px solid var(--outline);
+  }
+  .step:first-of-type { border-top: none; }
+  .badge {
+    width: 34px; height: 34px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; font-weight: 700;
+    background: var(--primary-soft); color: var(--primary);
+    border: 1px solid #2c4f7c;
+  }
+  .step.critical .badge { background: var(--warn-soft); color: var(--warn); border-color: #6b4408; }
+  .step h2 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 4px; }
+  .nav {
+    display: inline-flex; align-items: center; gap: 7px; flex-wrap: wrap;
+    font-size: 12px; color: var(--on-surface-variant);
+    background: var(--surface); border: 1px solid var(--outline);
+    padding: 5px 10px; border-radius: 7px; margin: 8px 0 12px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .nav i { color: #4b5566; font-style: normal; }
+  .nav b { color: var(--primary); font-weight: 600; }
+  .scopes {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+    gap: 6px; margin: 12px 0 4px;
+  }
+  .scopes span {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+    background: var(--surface-variant); border: 1px solid var(--outline);
+    padding: 5px 9px; border-radius: 6px; color: #cbd5e1;
+  }
+  .note {
+    border-radius: 10px; padding: 12px 15px; margin: 14px 0 0;
+    background: var(--surface); border: 1px solid var(--outline);
+  }
+  .note.warn { border-left: 3px solid var(--warn); }
+  .note.err  { border-left: 3px solid var(--err); }
+  .note.ok   { border-left: 3px solid var(--ok); }
+  .note.violet { border-left: 3px solid var(--violet); }
+  .note p { font-size: 13.5px; }
+  .tag {
+    display: inline-block; font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 2px 7px; border-radius: 5px; margin-bottom: 6px;
+  }
+  .tag.warn { background: var(--warn-soft); color: var(--warn); }
+  .tag.err { background: var(--err-soft); color: var(--err); }
+  .tag.ok { background: var(--ok-soft); color: var(--ok); }
+  .tag.violet { background: var(--violet-soft); color: var(--violet); }
+  table { border-collapse: collapse; width: 100%; margin-top: 12px; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--outline); vertical-align: top; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--on-surface-variant); font-weight: 600; }
+  td { color: var(--on-surface-variant); }
+  td:first-child { color: var(--on-surface); }
+  h3.sec {
+    font-size: 19px; font-weight: 600; margin: 46px 0 8px;
+    padding-top: 24px; border-top: 1px solid var(--outline);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="eyebrow">One-time setup · api.slack.com</div>
+  <h1>Creating the Slack app</h1>
+  <p class="lede">
+    Done <b>once, by us, forever</b>. Every user then connects with a single click and never sees
+    any of this. Budget fifteen minutes. The only thing to send back at the end is the
+    <b>Client ID</b>.
+  </p>
+
+  <div class="note err">
+    <span class="tag err">Read this first</span>
+    <p><b>Order matters.</b> PKCE must be enabled <b>before</b> you add the
+      <code>http://localhost</code> redirect URLs. Slack historically rejected non-HTTPS redirect
+      URLs outright; localhost is only accepted once the app is marked a public client, which is
+      what enabling PKCE does. Add the URLs first and they will be refused, with an error that does
+      not explain why. Steps below are in the order that works.</p>
+  </div>
+
+  <!-- 1 -->
+  <div class="step">
+    <div class="badge">1</div>
+    <div>
+      <h2>Create the app from a manifest</h2>
+      <div class="nav">
+        <b>api.slack.com/apps</b><i>→</i>Create New App<i>→</i><b>From a manifest</b><i>→</i>pick the Taiv workspace
+      </div>
+      <p>The manifest sets all twelve scopes in one paste, instead of twelve dropdown selections.
+        Choose YAML and replace the contents with:</p>
+      <pre><span class="k">display_information</span>:
+  <span class="k">name</span>: <span class="v">Private Secretary</span>
+  <span class="k">description</span>: <span class="v">Local assistant that drafts replies from your messages</span>
+  <span class="k">background_color</span>: <span class="v">"#2563eb"</span>
+<span class="k">oauth_config</span>:
+  <span class="k">scopes</span>:
+    <span class="c"># user scopes only — the engine reads and sends AS the user.</span>
+    <span class="c"># Do NOT add a bot section: desktop redirects forbid bot scopes.</span>
+    <span class="k">user</span>:
+      - channels:history
+      - groups:history
+      - im:history
+      - mpim:history
+      - channels:read
+      - groups:read
+      - im:read
+      - mpim:read
+      - users:read
+      - users.profile:read
+      - chat:write
+      - files:read
+<span class="k">settings</span>:
+  <span class="k">org_deploy_enabled</span>: <span class="v">false</span>
+  <span class="k">socket_mode_enabled</span>: <span class="v">false</span></pre>
+      <div class="note violet">
+        <span class="tag violet">Note</span>
+        <p>No <code>redirect_urls</code> in this manifest on purpose — they go in at step 3, after
+          PKCE is on. The app name here is what every user reads on the consent screen, so it is
+          worth getting right now.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2 -->
+  <div class="step critical">
+    <div class="badge">2</div>
+    <div>
+      <h2>Enable PKCE</h2>
+      <div class="nav">app settings<i>→</i><b>OAuth &amp; Permissions</b><i>→</i>the PKCE setting</div>
+      <p>This marks the app a <b>public client</b>: the token exchange stops requiring a
+        <code>client_secret</code>, which is what lets the whole flow run on the user's machine with
+        no server of ours anywhere in it.</p>
+      <div class="note warn">
+        <span class="tag warn">Irreversible</span>
+        <p>Slack: “Enabling PKCE marks your app as a public client. This is a one-way operation; it
+          cannot be undone without contacting Slack support.” It is the right call for a desktop
+          product — just make it deliberately, not by clicking through.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3 -->
+  <div class="step">
+    <div class="badge">3</div>
+    <div>
+      <h2>Add the three redirect URLs</h2>
+      <div class="nav">
+        <b>OAuth &amp; Permissions</b><i>→</i>Redirect URLs<i>→</i>Add New Redirect URL<i>→</i>Save URLs
+      </div>
+      <p>All three, exactly as written. Slack matches <code>redirect_uri</code> against registered
+        URLs, so an unregistered port simply fails — unlike Google's loopback, which accepts any
+        port. Three ports because a user's 4318 may already be taken by something else.</p>
+      <div class="scopes">
+        <span>http://localhost:4318/slack/callback</span>
+        <span>http://localhost:4319/slack/callback</span>
+        <span>http://localhost:4320/slack/callback</span>
+      </div>
+      <div class="note err">
+        <span class="tag err">If rejected</span>
+        <p>An error here means step 2 did not take effect. Go back, confirm PKCE is on, reload the
+          page, and try again. Do not switch to <code>https</code> or reach for ngrok — a tunnel
+          would put a third-party host in the callback path, which is the exact property this
+          design exists to avoid.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4 -->
+  <div class="step">
+    <div class="badge">4</div>
+    <div>
+      <h2>Verify the scopes landed</h2>
+      <div class="nav"><b>OAuth &amp; Permissions</b><i>→</i>Scopes<i>→</i>User Token Scopes</div>
+      <p>Confirm twelve entries under <b>User Token Scopes</b>, and that
+        <b>Bot Token Scopes</b> is empty. A stray bot scope breaks the desktop redirect at the
+        authorize step with an unhelpful error.</p>
+      <div class="scopes">
+        <span>channels:history</span><span>groups:history</span><span>im:history</span>
+        <span>mpim:history</span><span>channels:read</span><span>groups:read</span>
+        <span>im:read</span><span>mpim:read</span><span>users:read</span>
+        <span>users.profile:read</span><span>chat:write</span><span>files:read</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5 -->
+  <div class="step">
+    <div class="badge">5</div>
+    <div>
+      <h2>Turn on public distribution</h2>
+      <div class="nav"><b>Manage Distribution</b><i>→</i>Share Your App with Other Workspaces<i>→</i>Activate Public Distribution</div>
+      <p>Without this the app installs only into the Taiv workspace, and every outside user gets an
+        error. Slack shows a checklist that must be green first — the redirect URLs from step 3
+        satisfy most of it.</p>
+      <div class="note ok">
+        <span class="tag ok">Not needed</span>
+        <p>App Directory <b>listing</b> is a separate submission with its own review. It only buys
+          discoverability inside Slack's directory. Installing by link works without it, so skip it
+          for now.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6 -->
+  <div class="step">
+    <div class="badge">6</div>
+    <div>
+      <h2>Copy the Client ID</h2>
+      <div class="nav"><b>Basic Information</b><i>→</i>App Credentials<i>→</i>Client ID</div>
+      <p>Looks like <code>1234567890123.9876543210987</code>. This is the only value needed —
+        it gets committed to the repo as <code>SLACK_CLIENT_ID</code>.</p>
+      <div class="note warn">
+        <span class="tag warn">Do not send</span>
+        <p>The <b>Client Secret</b>, signing secret and verification token stay in the Slack console.
+          PKCE never uses them, and none of them belong in a public repository. If a secret ever
+          does get committed, rotate it in App Credentials rather than just deleting the line.</p>
+      </div>
+    </div>
+  </div>
+
+  <h3 class="sec">Verifying it works</h3>
+  <p>Once the Client ID is in place, one command runs the real flow end to end — browser opens,
+    click Allow, token lands in Keychain:</p>
+  <pre>npx tsx scripts/auth/slack-oauth.ts consent
+npx tsx scripts/auth/slack-oauth.ts show      <span class="c"># scopes + expiry of what got stored</span>
+npx tsx scripts/smoke-slack-direct.ts         <span class="c"># lists your DM channels using it</span></pre>
+
+  <h3 class="sec">When something goes wrong</h3>
+  <table>
+    <thead><tr><th>Symptom</th><th>Cause</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Redirect URL rejected on save</td>
+        <td>PKCE not enabled yet — step 2 before step 3</td>
+      </tr>
+      <tr>
+        <td><code>invalid_scope</code> at authorize</td>
+        <td>A bot scope is present. Desktop redirects may request user scopes only</td>
+      </tr>
+      <tr>
+        <td><code>bad_redirect_uri</code></td>
+        <td>The port in use is not one of the three registered, or the path is not <code>/slack/callback</code></td>
+      </tr>
+      <tr>
+        <td>Browser opens, callback never arrives</td>
+        <td>All three ports busy. The consent script says which; free one and rerun</td>
+      </tr>
+      <tr>
+        <td>Works for you, fails for an outside workspace</td>
+        <td>Public distribution not activated (step 5)</td>
+      </tr>
+      <tr>
+        <td>User's Allow click needs approval</td>
+        <td>That workspace requires admin approval for app installs. Not something we control — the UI has to explain the wait</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="note violet">
+    <span class="tag violet">Related</span>
+    <p>How the flow works and why no server is involved: <code>.claude/docs/slack-oauth.html</code>.
+      Implementation: <code>relay/io/slack-oauth.ts</code>.</p>
+  </div>
+
+</div>
+</body>
+</html>
