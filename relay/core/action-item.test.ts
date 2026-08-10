@@ -547,3 +547,56 @@ describe("start times compare as instants, not strings", () => {
     expect(redundantPendingCalendarIds([a, b])).toEqual([]);
   });
 });
+
+describe("normalizeCalendarTimes — the model stops doing timezone maths", () => {
+  const raw = (params: Record<string, unknown>) => ({
+    source_message_id: "slack:D1:1",
+    action_type: "calendar",
+    reason: "r",
+    confidence: 0.9,
+    params,
+  });
+
+  // The meeting that exposed this: "3pm Portugal time" arrived as four
+  // different instants across refreshes. Now the model reports what it read.
+  it("converts a wall time plus zone into an instant", () => {
+    const r = validateActionItem(raw({ start: "2026-08-13T15:00", tz: "Europe/Lisbon" }));
+    expect(r.ok && r.item.params.start).toBe("2026-08-13T14:00:00.000Z");
+  });
+
+  it("converts end as well as start", () => {
+    const r = validateActionItem(
+      raw({ start: "2026-08-13T15:00", end: "2026-08-13T16:00", tz: "Europe/Lisbon" }),
+    );
+    expect(r.ok && r.item.params.end).toBe("2026-08-13T15:00:00.000Z");
+  });
+
+  // Two refreshes wording the same meeting differently now agree, which is
+  // what stops them stacking up as separate cards.
+  it("makes two spellings of the same meeting identical", () => {
+    const a = validateActionItem(raw({ start: "2026-08-13T15:00", tz: "Europe/Lisbon" }));
+    const b = validateActionItem(raw({ start: "2026-08-13T22:00", tz: "Asia/Shanghai" }));
+    expect(a.ok && b.ok && a.item.params.start).toBe(b.ok ? b.item.params.start : "");
+  });
+
+  // Guessing a zone is how the wrong hour gets booked.
+  it("leaves a wall time alone when no zone was given", () => {
+    const r = validateActionItem(raw({ start: "2026-08-13T15:00" }));
+    expect(r.ok && r.item.params.start).toBe("2026-08-13T15:00");
+  });
+
+  it("ignores an invented zone rather than trusting it", () => {
+    const r = validateActionItem(raw({ start: "2026-08-13T15:00", tz: "Portugal time" }));
+    expect(r.ok && r.item.params.start).toBe("2026-08-13T15:00");
+  });
+
+  it("passes through a value that already carries an offset", () => {
+    const r = validateActionItem(raw({ start: "2026-08-13T14:00:00Z", tz: "Europe/Lisbon" }));
+    expect(r.ok && r.item.params.start).toBe("2026-08-13T14:00:00.000Z");
+  });
+
+  it("does not touch non-calendar cards", () => {
+    const r = validateActionItem({ ...raw({ start: "2026-08-13T15:00", tz: "Europe/Lisbon" }), action_type: "task" });
+    expect(r.ok && r.item.params.start).toBe("2026-08-13T15:00");
+  });
+});

@@ -65,3 +65,20 @@ Retry-After) rather than erroring, so at minimum make truncation observable.
 One production round (6 conversations, 30 messages) took 94s with no 429s —
 milder than the documented worst case and not yet explained. Measure a
 real-size workspace before rewriting the scan loop.
+
+## Calendar times
+
+The model does NOT convert timezones. It reports the wall clock it read
+(`params.start`/`end` as "YYYY-MM-DDTHH:mm", no offset) plus the IANA zone in
+`params.tz`; `normalizeCalendarTimes` in `relay/core/action-item.ts` does the
+conversion once, at validation, using the zone's real offset on that date
+(`relay/core/when.ts`).
+
+Why: asked to convert, the model produced four different instants for one
+"3pm Portugal time" across consecutive refreshes — 13:00, 14:00, 15:00 and
+07:00 UTC. Approving the wrong one books a real event at the wrong hour.
+
+A wall time with no valid `tz` is left exactly as written. Guessing a zone is
+how the wrong hour gets booked; an unparseable start blocks approval, which is
+the recoverable failure.
+

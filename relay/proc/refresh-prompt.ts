@@ -90,7 +90,7 @@ export function buildRefreshRequest(opts: {
     ? `\n\nPROJECT CATALOG — set project_id to the BEST-FITTING id by topic/domain (keep the card's current project_id unless the thread clearly fits a different one; "MISC" only if none fit):\n${opts.projectCatalog.trim()}`
     : "";
   const timeLine = opts.now
-    ? `CURRENT TIME: ${opts.now} (UTC)${opts.nowLocal ? ` = local ${opts.nowLocal}` : ""} — resolve all relative dates in the thread (明天/下周三/next Friday) against THIS date, never your own knowledge of the calendar.\n\n`
+    ? `CURRENT TIME: ${opts.now} (UTC)${opts.nowLocal ? ` = local ${opts.nowLocal}` : ""} — resolve all relative dates in the thread (明天/下周三/next Friday) against THIS date, never your own knowledge of the calendar.\n\nTIMEZONES — do NOT convert. Write params.start/params.end as the WALL CLOCK time exactly as the thread states it ("YYYY-MM-DDTHH:mm", no Z, no offset), and put the IANA zone that wall time belongs to in params.tz (e.g. "Europe/Lisbon"). "Thursday 3pm Portugal time" is start "2026-08-13T15:00" with tz "Europe/Lisbon". The conversion is done for you, and a refreshed card must name the SAME instant as before unless the meeting actually moved.\n\n`
     : "";
   const userText =
     timeLine +

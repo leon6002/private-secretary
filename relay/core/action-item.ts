@@ -9,6 +9,7 @@
 //                  (terminal) │ for manual paste; auto-send platforms execute
 //                             │ immediately after approve, then markExecuted
 
+import { isValidTimeZone, resolveWallTime } from "./when.js";
 import { AUTO_SEND_PLATFORMS, type Attachment, type Platform } from "./types.js";
 import { DEFAULT_TOOL_SPECS, type ToolSpec } from "./tool-registry.js";
 
@@ -367,7 +368,34 @@ export function validateActionItem(raw: unknown): ValidationResult {
     if (xs.length) item.next_actions = xs;
   }
   if (typeof o.project_id === "string" && o.project_id.trim() !== "") item.project_id = o.project_id.trim();
+  normalizeCalendarTimes(item);
   return { ok: true, item };
+}
+
+// Convert the model's wall time + named zone into a real instant, at the one
+// boundary every card passes through.
+//
+// The model used to do this arithmetic and got it wrong four ways for a single
+// meeting — the same "3pm Portugal time" arrived as 13:00, 14:00, 15:00 and
+// 07:00 UTC on consecutive refreshes. Approving the wrong one books a real
+// event at the wrong hour. So the model now reports what it READ (a wall time
+// and the zone that wall time belongs to) and the conversion happens here,
+// once, with the zone's actual offset on that date.
+//
+// A value that already carries an offset is already an instant and passes
+// through. A wall time with no zone is left exactly as written: guessing a zone
+// is how the wrong hour gets booked, and an unparseable start blocks approval,
+// which is the recoverable failure.
+export function normalizeCalendarTimes(item: ActionItem): void {
+  if (item.action_type !== "calendar") return;
+  const zone = typeof item.params.tz === "string" ? item.params.tz.trim() : "";
+  if (!zone || !isValidTimeZone(zone)) return;
+  for (const field of ["start", "end"] as const) {
+    const raw = item.params[field];
+    if (typeof raw !== "string" || !raw.trim()) continue;
+    const iso = resolveWallTime(raw, zone);
+    if (iso) item.params[field] = iso;
+  }
 }
 
 export class InvalidActionTransition extends Error {

@@ -338,7 +338,7 @@ export function buildDraftRequest(opts: {
   const personaBlock = describePersona(opts.persona);
   const msgBlock = opts.messages.map(describeMessage).join("\n\n");
   const timeLine = opts.now
-    ? `CURRENT TIME: ${opts.now} (UTC)${opts.nowLocal ? ` = local ${opts.nowLocal}` : ""} — the sender's local timezone is the local one unless thread context says otherwise. Resolve relative dates (明天/今晚/next Friday) against the per-message timestamps below, in the sender's local date.\n\n`
+    ? `CURRENT TIME: ${opts.now} (UTC)${opts.nowLocal ? ` = local ${opts.nowLocal}` : ""} — the sender's local timezone is the local one unless thread context says otherwise. Resolve relative dates (明天/今晚/next Friday) against the per-message timestamps below, in the sender's local date.\n\nTIMEZONES — do NOT convert. Write params.start/params.end as the WALL CLOCK time exactly as the conversation states it ("YYYY-MM-DDTHH:mm", no Z, no offset), and put the IANA zone that wall time belongs to in params.tz (e.g. "Europe/Lisbon", "Asia/Shanghai"). "Thursday 3pm Portugal time" is start "2026-08-13T15:00" with tz "Europe/Lisbon". The conversion is done for you; doing it yourself has produced the wrong hour.\n\n`
     : "";
   const recipientHint =
     opts.knownPersonaKeys.length > 0
