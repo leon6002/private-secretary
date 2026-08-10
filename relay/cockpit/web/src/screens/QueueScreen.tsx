@@ -1868,8 +1868,21 @@ function renderTaskCard(c: TaskCluster, tierMeta: (typeof TIERS)[number] | null)
             flex container with overflow drops its trailing padding, so p-6 here
             meant the last card sat flush against the bottom edge with nothing
             to scroll into — the pane looked cut off and would not go further. */}
-        <div className="flex-1 bg-background overflow-y-auto flex justify-center">
-          <AnimatePresence>
+        {/* Two fixes for the detail pane jumping left and right on every card
+            switch, which had two separate causes:
+
+            1. During a crossfade BOTH panes are mounted, and as two in-flow
+               children of a justify-center row they shared the width — so the
+               incoming pane rendered off-centre and slid into place as the old
+               one left. mode="popLayout" takes the outgoing pane out of flow,
+               so the incoming one is centred from its first frame. Not
+               mode="wait", which would fix it by making every switch wait out
+               a fade first — latency traded for alignment.
+            2. A tall card scrolls and a short one does not, and the scrollbar
+               it adds narrows the pane. Reserving the gutter always keeps the
+               centre line fixed whatever the content height. */}
+        <div className="flex-1 bg-background overflow-y-auto [scrollbar-gutter:stable] relative flex justify-center">
+          <AnimatePresence mode="popLayout">
             <motion.div
               key={detailKey}
               initial={{ opacity: 0 }}
