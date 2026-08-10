@@ -247,3 +247,52 @@ describe("multiple workspaces", () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+describe("disconnect finds the credential wherever it lives", () => {
+  function store(seed: Record<string, string>) {
+    const m = new Map(Object.entries(seed));
+    __setKeychainRunner(async (args) => {
+      const k = `${args[args.indexOf("-s") + 1]}|${args[args.indexOf("-a") + 1]}`;
+      if (args[0] === "delete-generic-password") {
+        m.delete(k);
+        return { stdout: "", stderr: "" };
+      }
+      const v = m.get(k);
+      if (v === undefined) {
+        throw Object.assign(new Error("missing"), { code: 44, stderr: "could not be found" });
+      }
+      return { stdout: v + "\n", stderr: "" };
+    });
+    return m;
+  }
+
+  // REGRESSION: a pre-split install keeps its OAuth bundle in the ORIGINAL
+  // slot. Targeting the oauth slot by name found nothing, said "Already
+  // disconnected" and deleted nothing — while the status row, which checks
+  // both slots, kept showing connected.
+  it("disconnects a bundle sitting in the pre-split slot", async () => {
+    const m = store({ [`${SLACK_TOKEN_SERVICE}|${ACCOUNT}`]: bundle() });
+    const r = await disconnectSlack(ACCOUNT, async () => true, "oauth");
+    expect(r.revoked).toBe(true);
+    expect(m.size).toBe(0);
+  });
+
+  // The hand-pasted token can occupy that same slot, and it is unrecoverable
+  // from the cockpit — an "oauth" disconnect must never take it.
+  it("refuses to delete a legacy token during an oauth disconnect", async () => {
+    const m = store({ [`${SLACK_TOKEN_SERVICE}|${ACCOUNT}`]: "xoxp-own-app" });
+    const r = await disconnectSlack(ACCOUNT, async () => true, "oauth");
+    expect(r.detail).toMatch(/Already disconnected/);
+    expect(m.get(`${SLACK_TOKEN_SERVICE}|${ACCOUNT}`)).toBe("xoxp-own-app");
+  });
+
+  it("prefers the oauth slot when both slots hold something", async () => {
+    const m = store({
+      [`${SLACK_TOKEN_SERVICE}|${ACCOUNT}`]: "xoxp-own-app",
+      [`taiv-secretary-slack-oauth|${ACCOUNT}`]: bundle(),
+    });
+    await disconnectSlack(ACCOUNT, async () => true, "oauth");
+    expect(m.has(`taiv-secretary-slack-oauth|${ACCOUNT}`)).toBe(false);
+    expect(m.get(`${SLACK_TOKEN_SERVICE}|${ACCOUNT}`)).toBe("xoxp-own-app");
+  });
+});

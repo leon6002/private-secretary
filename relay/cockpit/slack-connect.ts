@@ -147,21 +147,47 @@ export type SlackRevoke = (token: string) => Promise<boolean>;
 const defaultSlackRevoke: SlackRevoke = async (token) =>
   (await new SlackClient({ token }).authRevoke()).revoked;
 
+// which="legacy" means the hand-pasted string only; which="oauth" means our
+// bundle, wherever it currently lives.
+async function findForDisconnect(
+  account: string,
+  which: "legacy" | "oauth",
+): Promise<{ service: string; token: string } | null> {
+  const slots =
+    which === "legacy"
+      ? [SLACK_TOKEN_SERVICE]
+      : [SLACK_OAUTH_TOKEN_SERVICE, SLACK_TOKEN_SERVICE];
+  for (const service of slots) {
+    let stored: SlackTokenBundle | string;
+    try {
+      stored = parseStoredToken(await getSecret(service, account));
+    } catch {
+      continue;
+    }
+    // Never let an "oauth" disconnect delete the hand-pasted token that happens
+    // to sit in the same slot — that credential is unrecoverable from here.
+    if (typeof stored === "string") {
+      if (which === "legacy") return { service, token: stored };
+      continue;
+    }
+    if (which === "oauth") return { service, token: stored.access_token };
+  }
+  return null;
+}
+
 export async function disconnectSlack(
   account: string = SLACK_TOKEN_ACCOUNT,
   revoke: SlackRevoke = defaultSlackRevoke,
   which: "legacy" | "oauth" = "oauth",
 ): Promise<SlackDisconnect> {
-  // Only ever our own slot by default. Removing the legacy token is a
-  // different, unrecoverable act and has to be asked for explicitly.
-  const service = which === "legacy" ? SLACK_TOKEN_SERVICE : SLACK_OAUTH_TOKEN_SERVICE;
-  let token: string | undefined;
-  try {
-    const stored = parseStoredToken(await getSecret(service, account));
-    token = typeof stored === "string" ? stored : stored.access_token;
-  } catch {
-    return { ok: true, revoked: false, detail: "Already disconnected." };
-  }
+  // Find the credential the way the READER does, not by slot name alone. A
+  // pre-split install keeps its OAuth bundle in the original slot, so targeting
+  // the oauth slot by name found nothing, reported "Already disconnected" and
+  // deleted nothing — while the status row, which does check both, kept saying
+  // connected. Both were telling the truth about different places.
+  const found = await findForDisconnect(account, which);
+  if (!found) return { ok: true, revoked: false, detail: "Already disconnected." };
+  const { service, token } = found;
 
   let revoked = false;
   let revokeError = "";
