@@ -16,9 +16,12 @@ import { fileURLToPath } from "node:url";
 import { deleteSecret, getSecret } from "../io/keychain.js";
 import { SlackClient, SLACK_TOKEN_ACCOUNT } from "../io/slack-api.js";
 import { loadIdentity } from "../io/identity.js";
+import { appendSlackAccount } from "../io/identity-store.js";
+import { restartDaemon } from "./daemon-control.js";
 import {
   parseStoredToken,
   resolveSlackCredential,
+  saveLegacyToken,
   SLACK_OAUTH_TOKEN_SERVICE,
   SLACK_REFRESH_TTL_MS,
   SLACK_TOKEN_SERVICE,
@@ -208,6 +211,69 @@ export async function disconnectSlack(
           revokeError ? ` (${revokeError})` : ""
         } — remove it at slack.com/apps to be sure.`,
   };
+}
+
+export interface AddLegacyResult {
+  ok: boolean;
+  account: string;
+  label: string;
+  team: string;
+  user: string;
+  added: boolean;
+  daemonRestarted: boolean;
+}
+
+// Injectable so tests do not need a live token.
+export type SlackWhoAmI = (token: string) => Promise<{ team: string; team_id: string; user: string }>;
+const defaultWhoAmI: SlackWhoAmI = async (token) => {
+  const w = await new SlackClient({ token }).authTest();
+  return { team: w.team, team_id: w.team_id, user: w.user };
+};
+
+// Register a workspace from a token pasted out of the user's OWN Slack app.
+// The one-click flow can also add a workspace, but it can only ever mint OUR
+// app's rate-limited token — so for a heavy mailbox this is the path that
+// actually works, and it needs to exist independently rather than as a
+// second step after burning an OAuth grant.
+//
+// The token identifies its own workspace: auth.test says which team it belongs
+// to, which is exactly what the registration needs. That also verifies it
+// before anything is stored — a token that cannot answer auth.test would
+// otherwise sit in Keychain looking configured and fail at scan time.
+export async function addLegacyWorkspace(
+  rawToken: string,
+  whoAmI: SlackWhoAmI = defaultWhoAmI,
+  restart: () => Promise<{ restarted: boolean }> = restartDaemon,
+): Promise<AddLegacyResult> {
+  const token = rawToken.trim();
+  if (!token.startsWith("xoxp-")) {
+    throw new InvalidSlackToken(
+      "Expected a user token starting with xoxp- (not a bot xoxb- token)",
+    );
+  }
+  const who = await whoAmI(token);
+  // Idempotent: pasting a token for a workspace that is already registered
+  // fills in ITS credential instead of minting a second entry, because a new
+  // label would orphan that workspace's cursors.
+  const reg = appendSlackAccount({ teamId: who.team_id, teamName: who.team });
+  await saveLegacyToken(reg.account, token);
+  const r = reg.added ? await restart() : { restarted: false };
+  return {
+    ok: true,
+    account: reg.account,
+    label: reg.label,
+    team: who.team,
+    user: who.user,
+    added: reg.added,
+    daemonRestarted: r.restarted,
+  };
+}
+
+export class InvalidSlackToken extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidSlackToken";
+  }
 }
 
 export interface SlackConnectStart {

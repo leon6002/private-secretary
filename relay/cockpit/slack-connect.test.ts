@@ -1,7 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { __setRunner as __setKeychainRunner } from "../io/keychain.js";
 import { SLACK_REFRESH_TTL_MS, SLACK_TOKEN_SERVICE } from "../io/slack-oauth.js";
-import { disconnectSlack, slackConnectionStatus, startSlackConnect } from "./slack-connect.js";
+import {
+  addLegacyWorkspace,
+  disconnectSlack,
+  slackConnectionStatus,
+  startSlackConnect,
+} from "./slack-connect.js";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { _setIdentityForTest, _resetIdentity } from "../io/identity.js";
 
 const ACCOUNT = "me@example.com";
@@ -294,5 +302,59 @@ describe("disconnect finds the credential wherever it lives", () => {
     await disconnectSlack(ACCOUNT, async () => true, "oauth");
     expect(m.has(`taiv-secretary-slack-oauth|${ACCOUNT}`)).toBe(false);
     expect(m.get(`${SLACK_TOKEN_SERVICE}|${ACCOUNT}`)).toBe("xoxp-own-app");
+  });
+});
+
+describe("addLegacyWorkspace", () => {
+  const WHO = async () => ({ team: "Taiv", team_id: "T77", user: "leo" });
+
+  function tmpIdentity() {
+    const dir = mkdtempSync(join(tmpdir(), "idw-"));
+    mkdirSync(join(dir, "config"), { recursive: true });
+    writeFileSync(
+      join(dir, "config", "identity.json"),
+      JSON.stringify({ primaryEmail: "me@example.com", slackAccounts: [] }),
+    );
+    return dir;
+  }
+
+  it("refuses a bot token before it reaches Slack or Keychain", async () => {
+    let called = false;
+    await expect(
+      addLegacyWorkspace("xoxb-bot", async () => {
+        called = true;
+        return { team: "X", team_id: "T", user: "u" };
+      }),
+    ).rejects.toThrow(/xoxp-/);
+    expect(called).toBe(false);
+  });
+
+  // The token identifies its own workspace, and auth.test doubles as
+  // verification: a token that cannot answer it would otherwise sit in
+  // Keychain looking configured and fail at scan time.
+  it("verifies the token, then registers the workspace it names", async () => {
+    const dir = tmpIdentity();
+    const cwd = process.cwd();
+    process.chdir(dir);
+    try {
+      const store = new Map<string, string>();
+      __setKeychainRunner(async (args) => {
+        if (args[0] === "add-generic-password") {
+          store.set(`${args[args.indexOf("-s") + 1]}|${args[args.indexOf("-a") + 1]}`, args[args.indexOf("-w") + 1]!);
+          return { stdout: "", stderr: "" };
+        }
+        throw Object.assign(new Error("missing"), { code: 44, stderr: "could not be found" });
+      });
+
+      const r = await addLegacyWorkspace("xoxp-abc", WHO, async () => ({ restarted: true }));
+      expect(r).toMatchObject({ team: "Taiv", user: "leo", added: true, account: "team:T77" });
+      expect(store.get(`${SLACK_TOKEN_SERVICE}|team:T77`)).toBe("xoxp-abc");
+      // A newly polled workspace is invisible to a daemon that read its list
+      // at startup.
+      expect(r.daemonRestarted).toBe(true);
+    } finally {
+      process.chdir(cwd);
+      _resetIdentity();
+    }
   });
 });

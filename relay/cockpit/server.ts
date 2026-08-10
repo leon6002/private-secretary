@@ -43,7 +43,13 @@ import {
 } from "./api.js";
 import { checkRequest, loadOrMintCsrfToken } from "./security.js";
 import { startGmailReauth } from "./reauth.js";
-import { disconnectSlack, slackConnectionStatus, startSlackConnect } from "./slack-connect.js";
+import {
+  addLegacyWorkspace,
+  disconnectSlack,
+  InvalidSlackToken,
+  slackConnectionStatus,
+  startSlackConnect,
+} from "./slack-connect.js";
 import { saveLegacyToken } from "../io/slack-oauth.js";
 import { SLACK_TOKEN_ACCOUNT } from "../io/slack-api.js";
 import { loadIdentity } from "../io/identity.js";
@@ -431,6 +437,25 @@ export function createCockpitServer(opts: CockpitServerOptions): {
       // unrecoverable from here, so it must be named.
       const which = body.which === "legacy" ? "legacy" : "oauth";
       sendJson(res, 200, await disconnectSlack(account || undefined, undefined, which));
+      return;
+    }
+
+    // Register a NEW workspace straight from a token pasted out of the user's
+    // own Slack app. The one-click add can only mint our rate-limited token, so
+    // this is the path that works for a heavy mailbox.
+    if (path === "/api/connections/slack/add-legacy" && method === "POST") {
+      const body = (await readBody(req)) as Record<string, unknown>;
+      try {
+        sendJson(res, 200, await addLegacyWorkspace(String(body.token ?? "")));
+      } catch (e) {
+        if (e instanceof InvalidSlackToken || e instanceof InvalidIdentity) {
+          sendJson(res, 400, { error: e.message });
+          return;
+        }
+        // A token that cannot answer auth.test is the user's problem to fix,
+        // not a server fault — say what Slack said.
+        sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) });
+      }
       return;
     }
 

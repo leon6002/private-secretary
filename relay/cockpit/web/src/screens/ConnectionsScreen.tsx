@@ -199,6 +199,56 @@ function LegacyTokenForm({ account, onSaved }: { account: string; onSaved: () =>
   );
 }
 
+// Registering a workspace from an own-app token. Separate from the per-row
+// paste field, which only fills in a credential for a workspace that is
+// already registered — this one creates the entry.
+function AddLegacyWorkspaceForm({ onAdded }: { onAdded: () => void }) {
+  const [token, setToken] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const r = await apiPost<{ team: string; user: string; added: boolean }>(
+        "/api/connections/slack/add-legacy",
+        { token: token.trim() },
+      );
+      setToken("");
+      toast(
+        r.added
+          ? `Added ${r.team} (signed in as ${r.user}).`
+          : `${r.team} was already registered — its token is updated.`,
+      );
+      onAdded();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err), true);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="flex gap-2 items-start">
+      <input
+        type="password"
+        value={token}
+        onChange={(ev) => setToken(ev.target.value)}
+        placeholder="xoxp-…"
+        aria-label="User token from a Slack app you created"
+        className={cn(
+          "w-[15rem] text-label-sm text-on-surface bg-surface border border-outline rounded",
+          "px-2 py-1 placeholder:text-on-surface-variant",
+          "focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary",
+        )}
+      />
+      <ActionButton type="submit" disabled={saving || !token.trim()}>
+        {saving ? "Checking…" : "Add with own token"}
+      </ActionButton>
+    </form>
+  );
+}
+
 interface ToolSpec {
   key: string;
   label: string;
@@ -750,17 +800,29 @@ export default function ConnectionsScreen() {
             </p>
           )}
 
-          <div className="mt-5">
-            <ActionButton
-              disabled={slackPendingAccount === ADD_PENDING}
-              onClick={() => void connectSlack("add")}
-            >
-              {slackPendingAccount === ADD_PENDING ? "Opening browser…" : "Add a Slack workspace"}
-            </ActionButton>
-            <p className="text-label-sm text-on-surface-variant mt-2 max-w-[62ch]">
-              You pick the workspace on Slack's page; it is registered here under whatever
-              workspace you approve. Each one is polled separately and keeps its own history.
-            </p>
+          {/* Two ways in, because they are not interchangeable: one click is
+              convenient but rate-limited until the app is on the Marketplace,
+              and a heavy mailbox needs the user's own app token. */}
+          <div className="mt-6 grid gap-4 md:grid-cols-2 max-w-[62ch] md:max-w-none">
+            <div>
+              <ActionButton
+                disabled={slackPendingAccount === ADD_PENDING}
+                onClick={() => void connectSlack("add")}
+              >
+                {slackPendingAccount === ADD_PENDING ? "Opening browser…" : "Add a Slack workspace"}
+              </ActionButton>
+              <p className="text-label-sm text-on-surface-variant mt-2">
+                One click. You pick the workspace on Slack's page. Rate-limited to 1 request a
+                minute until our app is listed on the Slack Marketplace.
+              </p>
+            </div>
+            <div>
+              <AddLegacyWorkspaceForm onAdded={loadSlack} />
+              <p className="text-label-sm text-on-surface-variant mt-2">
+                A user token from a Slack app you created yourself. No rate cap — use this for a
+                busy workspace. The token says which workspace it belongs to.
+              </p>
+            </div>
           </div>
 
           <p className="text-label-sm text-on-surface-variant mt-6 leading-relaxed">
