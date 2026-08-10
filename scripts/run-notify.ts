@@ -129,6 +129,9 @@ const maxDraft = num("--max-draft", 20);
 // "anthropic" maps onto the historical internal name "api". loadSettings is
 // total — a missing/corrupt file can never stop the daemon from starting.
 const fileSettings = loadSettings(statePath);
+// The owner's zone anchors every relative date the model resolves. Configured
+// in the cockpit; falls back to this machine.
+const ownerTimeZone = fileSettings.timezone;
 const llmFlag = strOpt("--llm");
 const llmMode = (llmFlag ?? fileSettings.llm.mode) === "anthropic" ? "api" : (llmFlag ?? fileSettings.llm.mode);
 const draftModel = strOpt("--draft-model") ?? fileSettings.llm.draftModel;
@@ -224,7 +227,7 @@ async function buildDraft(): Promise<DraftDeps | undefined> {
     // (and holds the state lock) — only enable once decode is reliable.
     const vision = visionEnabled && llmMode === "cli" ? { resolveImages } : {};
     if (visionEnabled && llmMode === "cli") console.log("[notify] image vision ENABLED (cli)");
-    return { llm, resolvePersona, knownPersonaKeys: keys, projects, leoProfile: leoProfile.trim() || undefined, personas, fetchRelatedThread, ...vision };
+    return { llm, resolvePersona, knownPersonaKeys: keys, projects, leoProfile: leoProfile.trim() || undefined, personas, fetchRelatedThread, ownerTimeZone, ...vision };
   } catch (e) {
     console.log(`[notify] drafting DISABLED — ${(e as Error).message.split("\n")[0]}`);
     return undefined;
@@ -456,7 +459,7 @@ async function buildRefresh(): Promise<RefreshDeps | undefined> {
     const { resolve: resolvePersona } = buildPersonaResolver(loadPersonas(personaDir));
     const projectCatalog = renderProjectCatalog(loadProjects(projectsDir));
     console.log(`[notify] task refresh enabled via ${llmMode} (TTL ${refreshTtlMin}min)`);
-    return { llm, resolvePersona, fetchThread, projectCatalog, ttlMs: refreshTtlMin * 60_000, maxPerTick: refreshMaxPerTick };
+    return { llm, resolvePersona, fetchThread, projectCatalog, ownerTimeZone, ttlMs: refreshTtlMin * 60_000, maxPerTick: refreshMaxPerTick };
   } catch (e) {
     console.log(`[notify] refresh DISABLED — ${(e as Error).message.split("\n")[0]}`);
     return undefined;
@@ -538,7 +541,8 @@ async function main(): Promise<void> {
   }
   console.log(`[notify] state=${statePath}`);
   console.log(`[notify] ${describeIdentity()}`);
-  console.log(
+  console.log(`[notify] timezone: ${ownerTimeZone}`);
+console.log(
   `[notify] cadence: wechat=${intervals.wechat / 1000}s gmail=${intervals.gmail / 1000}s ` +
     `slack=${intervals.slack / 1000}s (${intervals.slack === SLACK_MS_UNTHROTTLED ? "own-app token, unthrottled" : "rate-limited credential or override"})`,
 );

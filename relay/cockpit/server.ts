@@ -308,6 +308,11 @@ export function createCockpitServer(opts: CockpitServerOptions): {
       sendJson(res, 200, await api.getSettings());
       return;
     }
+    if (path === "/api/settings/timezone" && method === "POST") {
+      const body = (await readBody(req)) as Record<string, unknown>;
+      sendJson(res, 200, api.setTimezone({ timezone: String(body.timezone ?? "") }));
+      return;
+    }
     if (path === "/api/settings/llm" && method === "POST") {
       const body = (await readBody(req)) as Record<string, unknown>;
       if (typeof body.mode !== "string" || typeof body.draftModel !== "string") {

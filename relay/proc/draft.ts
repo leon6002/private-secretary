@@ -22,6 +22,8 @@ import {
   type ActionItem,
 } from "../core/action-item.js";
 import type { InboundMessage, Persona } from "../core/types.js";
+import { nowLocalIn } from "../core/when.js";
+import { machineTimeZone } from "../io/settings.js";
 import { buildDraftRequest, type DraftedAction } from "./draft-prompt.js";
 import { selectProjects, renderProjectContext, renderProjectCatalog, type Project } from "../core/project.js";
 import { detectMentions } from "../core/mentions.js";
@@ -40,6 +42,8 @@ export type LlmCaller = (req: {
 }) => Promise<DraftedAction[]>;
 
 export interface DraftDeps {
+  /** The OWNER's IANA zone — anchors every relative date. Defaults to the machine. */
+  ownerTimeZone?: string;
   llm: LlmCaller;
   // handle (senderHandle / email) → persona, or null for a new contact.
   resolvePersona: (senderHandle: string) => Persona | null;
@@ -148,6 +152,7 @@ export async function draftActions(
   deps: DraftDeps,
 ): Promise<DraftResult> {
   const now = deps.now ?? (() => new Date().toISOString());
+  const ownerZone = deps.ownerTimeZone || machineTimeZone();
   const bySender = groupBySender(candidates);
   const actions: ActionItem[] = [];
   const errors: DraftResult["errors"] = [];
@@ -199,13 +204,10 @@ export async function draftActions(
     // relative dates resolve against evidence instead of the model's stale
     // calendar (live incident: a 2026-07-30 message was booked onto 2025-01-23).
     const nowIso = now();
-    const d = new Date(nowIso);
-    const pad2 = (n: number): string => String(n).padStart(2, "0");
-    const offMin = -d.getTimezoneOffset();
-    const nowLocal =
-      `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ` +
-      `${pad2(d.getHours())}:${pad2(d.getMinutes())} ` +
-      `(UTC${offMin >= 0 ? "+" : "-"}${pad2(Math.floor(Math.abs(offMin) / 60))}:${pad2(Math.abs(offMin) % 60)})`;
+    // Rendered in the OWNER's configured zone. Using the machine's offset was
+    // the same thing until the owner travelled or this ran on a server, at
+    // which point every "tomorrow 9am" resolved to the wrong day, silently.
+    const nowLocal = nowLocalIn(nowIso, ownerZone);
     const req = buildDraftRequest({
       persona,
       messages: batch,

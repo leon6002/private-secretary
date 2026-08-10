@@ -15,6 +15,7 @@
 // or hand-mangled file; the next save simply rewrites it cleanly. Fallback is
 // PER FIELD: one bad value doesn't discard the other valid ones.
 
+import { isValidTimeZone } from "../core/when.js";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -25,12 +26,32 @@ export interface SecretarySettings {
     mode: LlmMode;
     draftModel: string;
   };
+  /**
+   * The OWNER's IANA timezone. Anchors the clock the model reasons against,
+   * and is the fallback zone for a meeting stated without one.
+   *
+   * Defaults to the machine's zone, which is right until the owner travels or
+   * runs this on a server — at which point every relative date ("tomorrow
+   * 9am") silently resolves against the wrong day, so it has to be settable.
+   */
+  timezone: string;
 }
 
 export const LLM_MODES: readonly LlmMode[] = ["cli", "anthropic", "deepseek"];
 
+// Resolved at call time, not module load: a long-running daemon should pick up
+// a machine that changed zone on its next read.
+export function machineTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
 export const DEFAULT_SETTINGS: SecretarySettings = {
   llm: { mode: "cli", draftModel: "opus" },
+  timezone: "",
 };
 
 // settingsPathFor follows the same convention as CockpitApi.projectsDir():
@@ -46,9 +67,11 @@ export function loadSettings(statePath: string): SecretarySettings {
   try {
     const raw = JSON.parse(readFileSync(settingsPathFor(statePath), "utf8")) as {
       llm?: { mode?: unknown; draftModel?: unknown };
+      timezone?: unknown;
     };
     const mode = raw?.llm?.mode;
     const draftModel = raw?.llm?.draftModel;
+    const tz = typeof raw?.timezone === "string" ? raw.timezone.trim() : "";
     return {
       llm: {
         mode: LLM_MODES.includes(mode as LlmMode) ? (mode as LlmMode) : DEFAULT_SETTINGS.llm.mode,
@@ -57,9 +80,13 @@ export function loadSettings(statePath: string): SecretarySettings {
             ? draftModel.trim()
             : DEFAULT_SETTINGS.llm.draftModel,
       },
+      // An unset or invalid zone falls back to the machine rather than to a
+      // guess like UTC: booking someone's meetings in the wrong zone is the
+      // failure this whole area exists to prevent.
+      timezone: tz && isValidTimeZone(tz) ? tz : machineTimeZone(),
     };
   } catch {
-    return structuredClone(DEFAULT_SETTINGS);
+    return { ...structuredClone(DEFAULT_SETTINGS), timezone: machineTimeZone() };
   }
 }
 

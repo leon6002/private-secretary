@@ -64,7 +64,14 @@ import {
   type ActivityKind,
   type ActivityRecord,
 } from "../io/activity-log.js";
-import { LLM_MODES, loadSettings, saveSettings, type LlmMode } from "../io/settings.js";
+import {
+  LLM_MODES,
+  loadSettings,
+  machineTimeZone,
+  saveSettings,
+  type LlmMode,
+} from "../io/settings.js";
+import { isValidTimeZone } from "../core/when.js";
 import {
   effectiveToolSpecs,
   loadToolsConfig,
@@ -699,9 +706,31 @@ export class CockpitApi {
     }
     const model = draftModel.trim();
     if (!model) throw new CockpitBadRequestError("draftModel must be non-empty");
-    saveSettings(this.opts.statePath, { llm: { mode: mode as LlmMode, draftModel: model } });
+    // Preserve everything else in the file: this endpoint owns the llm block
+    // only, and a blind write would silently reset the timezone.
+    const current = loadSettings(this.opts.statePath);
+    saveSettings(this.opts.statePath, {
+      ...current,
+      llm: { mode: mode as LlmMode, draftModel: model },
+    });
     this.activity("edit", `settings: llm mode=${mode} model=${model}`);
     return { ok: true, restartRequired: true };
+  }
+
+  // The OWNER's timezone: the clock the model reasons against, and the zone a
+  // meeting is read in when the conversation does not name one. Empty resets
+  // to the machine's zone rather than to a constant — "UTC" would silently
+  // shift every relative date for anyone not on it.
+  setTimezone({ timezone }: { timezone: string }): { ok: true; timezone: string; restartRequired: true } {
+    const tz = timezone.trim();
+    if (tz && !isValidTimeZone(tz)) {
+      throw new CockpitBadRequestError(`not an IANA timezone: ${tz}`);
+    }
+    const current = loadSettings(this.opts.statePath);
+    saveSettings(this.opts.statePath, { ...current, timezone: tz || machineTimeZone() });
+    const applied = loadSettings(this.opts.statePath).timezone;
+    this.activity("edit", `settings: timezone=${applied}`);
+    return { ok: true, timezone: applied, restartRequired: true };
   }
 
   // Store or remove an API key in the Keychain. The whitelist is exactly two

@@ -225,7 +225,7 @@ describe("draftActions orchestrator", () => {
       return [];
     };
     await draftActions([msg()], deps(llm)); // deps.now = 2026-06-14T12:00:00Z
-    expect(seenUserText).toMatch(/CURRENT TIME: 2026-06-14T12:00:00Z \(UTC\) = local \d{4}-\d{2}-\d{2} \d{2}:\d{2} \(UTC[+-]\d{2}:\d{2}\)/);
+    expect(seenUserText).toMatch(/CURRENT TIME: 2026-06-14T12:00:00Z \(UTC\) = local \d{4}-\d{2}-\d{2} \d{2}:\d{2} \([A-Za-z_]+\/[A-Za-z_]+, GMT[+-]\d{2}:\d{2}\)/);
   });
 
   it("groups a sender's multiple messages into ONE analysis", async () => {
@@ -461,5 +461,28 @@ describe("draftActions empty-retry (flaky LLM)", () => {
     });
     expect(calls).toBe(1);
     expect(r.actions).toHaveLength(1);
+  });
+});
+
+describe("owner timezone anchors the clock", () => {
+  const resolver = buildPersonaResolver([michael]);
+
+  // The anchor used to come from the machine's offset. Same thing at home,
+  // wrong the moment the owner travels or this runs on a server — and a wrong
+  // anchor makes every "tomorrow 9am" resolve to the wrong day, silently.
+  it("renders the clock line in the configured zone, naming it", async () => {
+    let seen = "";
+    await draftActions([msg()], {
+      llm: async (req) => {
+        seen = req.userText;
+        return [];
+      },
+      resolvePersona: resolver.resolve,
+      knownPersonaKeys: resolver.keys,
+      ownerTimeZone: "Europe/Lisbon",
+      now: () => "2026-06-14T12:00:00Z",
+    });
+    expect(seen).toContain("Europe/Lisbon");
+    expect(seen).toContain("2026-06-14 13:00");
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isValidTimeZone, resolveWallTime } from "./when.js";
+import { isValidTimeZone, nowLocalIn, resolveWallTime } from "./when.js";
 
 describe("resolveWallTime", () => {
   // The meeting that started all of this: "Thursday 3pm Portugal time" on
@@ -58,5 +58,19 @@ describe("isValidTimeZone", () => {
   it("accepts IANA names and rejects invented ones", () => {
     expect(isValidTimeZone("Europe/Lisbon")).toBe(true);
     expect(isValidTimeZone("Portugal time")).toBe(false);
+  });
+});
+
+describe("nowLocalIn", () => {
+  // The anchor the model resolves "tomorrow 9am" against. Using the machine's
+  // offset was right until the owner travelled, and wrong silently.
+  it("renders the instant in the owner's zone, naming it", () => {
+    const s = nowLocalIn("2026-08-13T14:00:00Z", "Europe/Lisbon");
+    expect(s).toContain("2026-08-13 15:00");
+    expect(s).toContain("Europe/Lisbon");
+  });
+
+  it("crosses the date line correctly", () => {
+    expect(nowLocalIn("2026-08-13T20:00:00Z", "Asia/Shanghai")).toContain("2026-08-14 04:00");
   });
 });

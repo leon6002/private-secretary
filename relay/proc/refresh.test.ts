@@ -160,3 +160,33 @@ describe("refresh prompt: clock anchor", () => {
     expect(req.userText).toContain("CURRENT TIME: 2026-08-02T03:00:00.000Z (UTC) = local 2026-08-02 11:00 (UTC+08:00)");
   });
 });
+
+describe("sender name on refreshed cards", () => {
+  // The card's provenance line showed "slack · U07VD53V7M3 · 08-09", which
+  // identifies nobody — while the transcript beside it already knew the name.
+  it("copies the resolved speaker name onto the card", async () => {
+    const r = await refreshOpenTasks([card("c1")], {
+      ...deps({ actions: [{ action_type: "task", reason: "r", confidence: 0.9, headline: "h", summary: "s" }] }),
+      fetchThread: async () => ({
+        text: "…",
+        messages: [
+          { speaker: "me", self: true, at: 1, text: "hi" },
+          { speaker: "Sandro Pinto", self: false, at: 2, text: "yo" },
+        ],
+      }),
+    });
+    expect(r.newActions[0]?.context?.sender_name).toBe("Sandro Pinto");
+  });
+
+  // A name that is itself an id is no better than the handle.
+  it("does not copy an unresolved id as a name", async () => {
+    const r = await refreshOpenTasks([card("c1")], {
+      ...deps({ actions: [{ action_type: "task", reason: "r", confidence: 0.9, headline: "h", summary: "s" }] }),
+      fetchThread: async () => ({
+        text: "…",
+        messages: [{ speaker: "U07VD53V7M3", self: false, at: 2, text: "yo" }],
+      }),
+    });
+    expect(r.newActions[0]?.context?.sender_name).toBeUndefined();
+  });
+});

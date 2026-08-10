@@ -80,3 +80,29 @@ export function resolveWallTime(wall: string, zone: string): string | null {
   const exact = naive - zoneOffsetMinutes(zone, guess) * 60000;
   return new Date(exact).toISOString();
 }
+// The clock line the model reasons against, rendered in the OWNER's zone.
+//
+// This used to use the machine's offset via getTimezoneOffset(). Same thing
+// while the laptop sits at home, wrong the moment the owner travels or this
+// runs on a server — and a wrong anchor makes every "tomorrow 9am" resolve to
+// the wrong day, silently.
+export function nowLocalIn(iso: string, zone: string): string {
+  const d = new Date(iso);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: zone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).formatToParts(d);
+  const p: Record<string, string> = {};
+  for (const { type, value } of parts) p[type] = value;
+  const hour = p.hour === "24" ? "00" : p.hour;
+  const offName =
+    new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "longOffset" })
+      .formatToParts(d)
+      .find((x) => x.type === "timeZoneName")?.value ?? "";
+  return `${p.year}-${p.month}-${p.day} ${hour}:${p.minute} (${zone}${offName ? `, ${offName}` : ""})`;
+}

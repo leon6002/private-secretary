@@ -18,6 +18,8 @@ import {
   type TranscriptMessage,
 } from "../core/action-item.js";
 import type { Persona, Platform } from "../core/types.js";
+import { nowLocalIn } from "../core/when.js";
+import { machineTimeZone } from "../io/settings.js";
 import { clusterKey } from "../core/unit-key.js";
 import { buildRefreshRequest } from "./refresh-prompt.js";
 import type { LlmCaller } from "./draft.js";
@@ -25,6 +27,8 @@ import type { LlmCaller } from "./draft.js";
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
 
 export interface RefreshDeps {
+  /** The OWNER's IANA zone — anchors every relative date. Defaults to the machine. */
+  ownerTimeZone?: string;
   llm: LlmCaller;
   resolvePersona: (handle: string) => Persona | null;
   // Re-read the recent thread (both sides) for a card's conversation. Returns
@@ -67,6 +71,7 @@ export async function refreshOpenTasks(
 ): Promise<RefreshResult> {
   const ttl = deps.ttlMs ?? DEFAULT_TTL_MS;
   const now = deps.now ?? (() => new Date().toISOString());
+  const ownerZone = deps.ownerTimeZone || machineTimeZone();
   const nowMs = (deps.nowMs ?? (() => Date.now()))();
 
   // Group open cards by conversation; the newest card represents it.
@@ -103,13 +108,10 @@ export async function refreshOpenTasks(
     // The un-anchored refresh pass hallucinated dates into 2023–2025 and the
     // approvals of those cards became REAL bogus calendar events (2026-08-01).
     const nowIso = now();
-    const d = new Date(nowIso);
-    const pad2 = (n: number): string => String(n).padStart(2, "0");
-    const offMin = -d.getTimezoneOffset();
-    const nowLocal =
-      `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ` +
-      `${pad2(d.getHours())}:${pad2(d.getMinutes())} ` +
-      `(UTC${offMin >= 0 ? "+" : "-"}${pad2(Math.floor(Math.abs(offMin) / 60))}:${pad2(Math.abs(offMin) % 60)})`;
+    // Rendered in the OWNER's configured zone. Using the machine's offset was
+    // the same thing until the owner travelled or this ran on a server, at
+    // which point every "tomorrow 9am" resolved to the wrong day, silently.
+    const nowLocal = nowLocalIn(nowIso, ownerZone);
     let actions;
     try {
       actions = await deps.llm(buildRefreshRequest({ card: rep, thread, persona, projectCatalog: deps.projectCatalog, now: nowIso, nowLocal }));
@@ -119,8 +121,16 @@ export async function refreshOpenTasks(
     if (!actions || actions.length === 0) continue;
 
     const platform = platformOf(rep);
+    // The transcript already resolved this person's display name; without
+    // copying it here the card's provenance line falls back to the raw handle
+    // ("slack · U07VD53V7M3 · 08-09"), which identifies nobody. Only a name
+    // that is not itself an id counts.
+    const speakerName = fetched.messages?.find(
+      (m) => !m.self && m.speaker && !/^U[A-Z0-9]{8,}$/.test(m.speaker),
+    )?.speaker;
     const ctx: ActionContext = {
       sender_handle: sender,
+      ...(speakerName ? { sender_name: speakerName } : {}),
       original_message: thread,
       ...(fetched.messages?.length ? { original_transcript: fetched.messages } : {}),
       ...(rep.context?.thread_ref ? { thread_ref: rep.context.thread_ref } : {}),
