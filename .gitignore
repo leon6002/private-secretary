@@ -44,6 +44,13 @@ config/business-context.md
 # Owner voice profile: learned from real DMs. NEVER commit.
 config/owner-voice.md
 
+# Claude Code's per-machine permission decisions. It rewrites this file every
+# time a permission is granted, so tracking it meant any install where the
+# owner opened Claude Code went permanently dirty — and a dirty checkout makes
+# the updater refuse, silently, forever. Claude Code's own convention is that
+# settings.local.json is the not-checked-in half of settings.json.
+.claude/settings.local.json
+
 # Kimi CLI local workspace: review notes, chat records, intermediate materials.
 # Local only — NEVER commit.
 .kimi-code/
