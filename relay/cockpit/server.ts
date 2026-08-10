@@ -55,7 +55,7 @@ import { SLACK_TOKEN_ACCOUNT } from "../io/slack-api.js";
 import { loadIdentity } from "../io/identity.js";
 import { identityStatus, InvalidIdentity, writeIdentity } from "../io/identity-store.js";
 import { restartDaemon } from "./daemon-control.js";
-import { restartServices, runUpdate, updateStatus } from "./updater.js";
+import { captureRunningSha, restartServices, runUpdate, updateStatus } from "./updater.js";
 import { spawn } from "node:child_process";
 import { InvalidActionTransition } from "../core/action-item.js";
 import {
@@ -151,6 +151,8 @@ export function createCockpitServer(opts: CockpitServerOptions): {
   port: number;
 } {
   const api = new CockpitApi(opts);
+  // Record the commit THIS process loaded, before anything can pull a new one.
+  void captureRunningSha();
   // Persisted in the state dir so a restart reuses the same token (open tabs
   // keep working instead of failing CSRF on the next approve).
   const csrfToken = loadOrMintCsrfToken(dirname(opts.statePath));

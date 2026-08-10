@@ -3,6 +3,7 @@ import { beforeEach } from "vitest";
 import {
   AGENT_LABELS,
   _resetRemoteCache,
+  _setRunningShaForTest,
   restartServices,
   runUpdate,
   updateStatus,
@@ -31,7 +32,10 @@ const CLEAN = {
   "rev-list --count": "3",
 };
 
-beforeEach(() => _resetRemoteCache());
+beforeEach(() => {
+  _resetRemoteCache();
+  _setRunningShaForTest("");
+});
 
 describe("updateStatus", () => {
   it("fetches before reporting how far behind it is", async () => {
@@ -133,3 +137,21 @@ describe("remote check is cached", () => {
   });
 });
 
+
+describe("running vs checked-out commit", () => {
+  // The restart poll hung forever: it watched HEAD, which moves at PULL time,
+  // so "did the process restart" could never be answered by it.
+  it("reports the commit the process loaded, not the checkout", async () => {
+    const { runner } = fakeGit(CLEAN);
+    _setRunningShaForTest("old1111");
+    const s = await updateStatus(runner);
+    expect(s.running).toBe("old1111");
+    expect(s.current).toBe("aaa1111");
+  });
+
+  it("falls back to HEAD before the boot sha is captured", async () => {
+    const { runner } = fakeGit(CLEAN);
+    _setRunningShaForTest("");
+    expect((await updateStatus(runner)).running).toBe("aaa1111");
+  });
+});

@@ -804,6 +804,7 @@ function ToolsTab() {
 
 
 interface UpdateStatusDto {
+  running: string;
   current: string;
   currentSubject: string;
   latest: string;
@@ -853,7 +854,9 @@ function UpdateTab() {
 
   async function restart() {
     setBusy("restarting");
-    const before = status?.current;
+    // The RUNNING commit, not HEAD: HEAD already moved during the pull, so
+    // watching it could never tell whether the restart happened.
+    const before = status?.running;
     try {
       await apiPost("/api/update/restart", {});
     } catch {
@@ -866,10 +869,10 @@ function UpdateTab() {
       await new Promise((r) => setTimeout(r, 2000));
       try {
         const s = await apiGet<UpdateStatusDto>("/api/update");
-        if (s.current && s.current !== before) {
+        if (s.running && s.running !== before) {
           setStatus(s);
           setBusy("");
-          toast(`Now running ${s.current}.`);
+          toast(`Now running ${s.running}.`);
           return;
         }
       } catch {
@@ -903,7 +906,7 @@ function UpdateTab() {
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-label-sm mb-4">
           <dt className="text-on-surface">Running</dt>
           <dd className="text-on-surface-variant">
-            {status ? `${status.current} · ${status.currentSubject}` : "…"}
+            {status ? `${status.running}${status.running !== status.current ? " (restart pending)" : ` · ${status.currentSubject}`}` : "…"}
           </dd>
           <dt className="text-on-surface">Available</dt>
           <dd className="text-on-surface-variant">
@@ -933,7 +936,7 @@ function UpdateTab() {
         >
           {busy === "updating" ? "Updating…" : "Update now"}
         </Button>
-        {run?.needsRestart && (
+        {(run?.needsRestart || (!!status && !!status.running && status.running !== status.current)) && (
           <Button variant="ghost" onClick={() => void restart()} disabled={busy !== ""}>
             {busy === "restarting" ? "Restarting…" : "Restart to apply"}
           </Button>

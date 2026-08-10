@@ -36,7 +36,11 @@ async function git(runner: Runner, ...args: string[]): Promise<string> {
 }
 
 export interface UpdateStatus {
-  /** Short sha of what is running. */
+  /** Short sha the RUNNING process loaded. Only changes on a restart, which is
+   *  what makes it usable as the "did the restart happen" signal — HEAD moves
+   *  at pull time, so comparing HEAD could never detect a restart. */
+  running: string;
+  /** Short sha of the checkout. Ahead of `running` after a pull, before a restart. */
   current: string;
   currentSubject: string;
   /** Short sha available upstream, after a fetch. */
@@ -71,6 +75,17 @@ async function refreshRemote(runner: Runner, branch: string, now: number): Promi
   remoteCache = { at: now, branch, latest, behind: behind || 0 };
 }
 
+// Captured once per process: the commit this code was loaded from. Taken at
+// startup rather than lazily, because a lazy first read after a pull would
+// record the NEW sha and the restart would look like it never happened.
+let runningSha = "";
+export async function captureRunningSha(runner: Runner = defaultRunner): Promise<void> {
+  runningSha = await git(runner, "rev-parse", "--short", "HEAD").catch(() => "");
+}
+export function _setRunningShaForTest(sha: string): void {
+  runningSha = sha;
+}
+
 export async function updateStatus(
   runner: Runner = defaultRunner,
   opts: { force?: boolean; now?: () => number } = {},
@@ -96,6 +111,7 @@ export async function updateStatus(
     }
     const remote = remoteCache;
     return {
+      running: runningSha || current,
       current,
       currentSubject,
       latest: remote?.latest || current,
@@ -105,6 +121,7 @@ export async function updateStatus(
     };
   } catch (e) {
     return {
+      running: runningSha,
       current: "",
       currentSubject: "",
       latest: "",
