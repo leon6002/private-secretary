@@ -13,7 +13,7 @@
 // Legacy rendered everything as escaped HTML strings; React escapes by itself,
 // so escapeHtml has no counterpart here. The v3 persona's Chinese content
 // keeps its font-chinese treatment via isChinese(), same as legacy.
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Archive,
   ArrowDown,
@@ -31,10 +31,12 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { apiGet } from "../lib/api";
+import Button from "../components/Button";
+import { apiGet, apiPost } from "../lib/api";
 import { Avatar } from "../lib/avatar";
 import { cn } from "../lib/cn";
 import { clip, isChinese } from "../lib/text";
+import { toast } from "../lib/toast";
 
 // ─── payload types (GET /api/personas → { personas: Persona[] }) ─────
 // The server composes `fields` (Core Knowledge) and `tasks` (live queue items)
@@ -365,6 +367,110 @@ function Profile({ p }: { p: Persona }) {
 
 // ─── screen ──────────────────────────────────────────────────────────
 
+// The empty state used to be the words "No personas yet." and nothing else.
+// That is a dead end: personas are never created by the scan loop — building
+// them is a separate one-time job — so a fresh install sits here forever with
+// no way forward and no idea what it is missing.
+function NoPersonas() {
+  const [state, setState] = useState<{ started: boolean; counts: Record<string, number>; total: number } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [years, setYears] = useState(5);
+  const [top, setTop] = useState(20);
+
+  const load = useCallback(() => {
+    apiGet<{ started: boolean; counts: Record<string, number>; total: number }>(
+      "/api/personas/bootstrap",
+    )
+      .then(setState)
+      .catch(() => undefined);
+  }, []);
+  useEffect(load, [load]);
+
+  async function start(dryRun: boolean) {
+    setBusy(true);
+    try {
+      const r = await apiPost<{ prompt: string }>("/api/personas/bootstrap", {
+        contacts: `top:${top}`,
+        historyYears: years,
+        dryRun,
+      });
+      toast(`Started in a new window: ${r.prompt}`);
+      setTimeout(load, 4000);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const running = state?.started && (state.counts.pending ?? 0) > 0;
+
+  return (
+    <div className="p-6 max-w-[64ch]">
+      <h2 className="text-body-large text-on-surface font-medium mb-1">No profiles yet</h2>
+      <p className="text-body-base text-on-surface-variant leading-relaxed mb-4">
+        A profile is what the engine knows about one person — how they write, what they own, what
+        they are waiting on you for. It is what decides the tone of a draft and which language it
+        comes out in. Profiles are built once from message history; the scan loop keeps them
+        current but never creates them.
+      </p>
+
+      <div className="rounded-xl border border-outline bg-surface p-4">
+        <div className="flex items-center gap-3 flex-wrap text-label-sm text-on-surface">
+          <label className="flex items-center gap-1.5">
+            Top
+            <input
+              type="number"
+              min={1}
+              max={200}
+              value={top}
+              onChange={(e) => setTop(Number(e.target.value))}
+              className="w-16 rounded-lg border border-outline bg-surface px-2 py-1 text-on-surface"
+            />
+            contacts
+          </label>
+          <label className="flex items-center gap-1.5">
+            over
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={years}
+              onChange={(e) => setYears(Number(e.target.value))}
+              className="w-16 rounded-lg border border-outline bg-surface px-2 py-1 text-on-surface"
+            />
+            years of history
+          </label>
+        </div>
+
+        <div className="flex items-center gap-2 mt-3.5">
+          <Button disabled={busy} onClick={() => void start(false)}>
+            Build profiles
+          </Button>
+          <Button variant="ghost" disabled={busy} onClick={() => void start(true)}>
+            Preview first
+          </Button>
+        </div>
+
+        <p className="text-label-sm text-on-surface-variant mt-3 leading-relaxed">
+          Preview only counts and ranks the contacts — it reads no history and writes nothing, so
+          it is the honest way to see the size of a real run before paying for one. Both open a
+          Claude Code window and start there; the work needs the message history and one
+          confirmation from you, which is more than this page can do on its own.
+        </p>
+
+        {state?.started && (
+          <p className="text-label-sm text-on-surface-variant mt-3">
+            Last run: {state.counts.promoted ?? 0} built, {state.counts.staged ?? 0} staged,{" "}
+            {state.counts.failed ?? 0} failed
+            {running ? `, ${state.counts.pending} still to go` : ""} (of {state.total}).
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function PeopleScreen() {
   const [personas, setPersonas] = useState<Persona[] | null>(null);
   const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
@@ -434,11 +540,7 @@ export default function PeopleScreen() {
         )}
       </aside>
       <div ref={mainRef} className="flex-1 overflow-y-auto bg-background">
-        {person ? (
-          <Profile p={person} />
-        ) : (
-          <div className="p-6 text-on-surface-variant text-body-base">No personas yet.</div>
-        )}
+        {person ? <Profile p={person} /> : <NoPersonas />}
       </div>
     </div>
   );

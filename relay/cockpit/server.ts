@@ -57,6 +57,12 @@ import { identityStatus, InvalidIdentity, writeIdentity } from "../io/identity-s
 import { restartDaemon } from "./daemon-control.js";
 import { captureRunningSha, restartServices, runUpdate, updateStatus } from "./updater.js";
 import { loadSettings } from "../io/settings.js";
+import {
+  bootstrapState,
+  InvalidBootstrapRequest,
+  startPersonaBootstrap,
+  validateRequest,
+} from "./persona-bootstrap.js";
 import { spawn } from "node:child_process";
 import { InvalidActionTransition } from "../core/action-item.js";
 import {
@@ -450,6 +456,34 @@ export function createCockpitServer(opts: CockpitServerOptions): {
       const r = await runUpdate();
       sendJson(res, r.ok ? 200 : 400, r);
       if (r.ok && r.needsRestart) applyRestart();
+      return;
+    }
+
+    // Persona bootstrap. The cockpit does not run it — see persona-bootstrap.ts
+    // for why — it reports the ledger the skill writes, and starts the session.
+    if (path === "/api/personas/bootstrap" && method === "GET") {
+      sendJson(res, 200, bootstrapState(opts.statePath));
+      return;
+    }
+    if (path === "/api/personas/bootstrap" && method === "POST") {
+      const body = (await readBody(req)) as Record<string, unknown>;
+      try {
+        const started = startPersonaBootstrap(
+          opts.statePath,
+          validateRequest({
+            contacts: body.contacts as string,
+            historyYears: body.historyYears as number,
+            dryRun: body.dryRun === true,
+          }),
+          (file, args) => {
+            spawn(file, args, { detached: true, stdio: "ignore" }).unref();
+          },
+        );
+        sendJson(res, 200, { ok: true, ...started });
+      } catch (e) {
+        if (e instanceof InvalidBootstrapRequest) throw new CockpitBadRequestError(e.message);
+        throw e;
+      }
       return;
     }
 
