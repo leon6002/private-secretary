@@ -235,19 +235,31 @@ export function isSupersedeExempt(a: ActionItem): boolean {
 // Matched on the START time, not on wording. A refreshed card whose start
 // MOVED is a real change and still lands, so "the meeting shifted an hour"
 // is not swallowed; only an identical restatement is.
+// Start times are compared as INSTANTS, not strings. The model writes the same
+// moment in whatever offset the conversation used, so one meeting produced
+// "2026-08-13T22:00:00+08:00" and "2026-08-13T15:00:00+01:00" on consecutive
+// refreshes — identical instants that a string compare reads as two bookings.
+export function startInstant(a: ActionItem): number | undefined {
+  const raw = a.params?.start;
+  if (typeof raw !== "string" || !raw) return undefined;
+  const t = Date.parse(raw);
+  return Number.isNaN(t) ? undefined : t;
+}
+
 export function isCalendarRedundant(a: ActionItem, existing: ActionItem[]): boolean {
   if (a.action_type !== "calendar") return false;
-  const start = typeof a.params?.start === "string" ? a.params.start : undefined;
+  const start = startInstant(a);
   return existing.some((e) => {
     if (e.action_type !== "calendar") return false;
+    const eStart = startInstant(e);
     if (e.status === "executed") {
       // Already on the calendar: same task or same slot is a re-booking.
-      return !!((a.task_id && e.task_id === a.task_id) || (start !== undefined && e.params?.start === start));
+      return !!((a.task_id && e.task_id === a.task_id) || (start !== undefined && eStart === start));
     }
     if (e.status !== "suggested") return false;
-    // Still pending: only an identical slot is redundant. Same task with a
+    // Still pending: only the same instant is redundant. Same task at a
     // different time is the meeting moving, which the user needs to see.
-    return start !== undefined && e.params?.start === start;
+    return start !== undefined && eStart === start;
   });
 }
 
@@ -268,8 +280,8 @@ export function redundantPendingCalendarIds(actions: ActionItem[]): string[] {
   const bySlot = new Map<string, ActionItem[]>();
   for (const a of actions) {
     if (a.action_type !== "calendar" || a.status !== "suggested") continue;
-    const start = typeof a.params?.start === "string" ? a.params.start : "";
-    if (!start) continue; // no slot to compare on — leave it alone
+    const start = startInstant(a);
+    if (start === undefined) continue; // no slot to compare on — leave it alone
     const key = `${a.task_id ?? clusterOf(a)}|${start}`;
     const list = bySlot.get(key);
     if (list) list.push(a);

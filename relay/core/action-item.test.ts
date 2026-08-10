@@ -510,3 +510,40 @@ describe("redundantPendingCalendarIds — cleaning up what already accumulated",
     expect(redundantPendingCalendarIds([cal("c1"), other])).toEqual([]);
   });
 });
+
+describe("start times compare as instants, not strings", () => {
+  const cal = (id: string, start: string, over: Record<string, unknown> = {}) =>
+    ({
+      id,
+      action_type: "calendar",
+      status: "suggested",
+      created_at: `2026-08-10T0${id.slice(-1)}:00:00Z`,
+      source_message_id: "slack:D1:1",
+      task_id: "t1",
+      params: { start },
+      context: { sender_handle: "U1" },
+      ...over,
+    }) as never;
+
+  // Observed on a real machine: consecutive refreshes wrote the SAME moment in
+  // different offsets, and a string compare read them as two bookings.
+  it("collapses the same moment written in different offsets", () => {
+    const a = cal("c1", "2026-08-13T22:00:00+08:00"); // 14:00Z
+    const b = cal("c2", "2026-08-13T15:00:00+01:00"); // 14:00Z
+    expect(isCalendarRedundant(b, [a])).toBe(true);
+    expect(redundantPendingCalendarIds([a, b])).toEqual(["c1"]);
+  });
+
+  it("still separates genuinely different moments", () => {
+    const a = cal("c1", "2026-08-13T15:00:00+01:00"); // 14:00Z
+    const b = cal("c2", "2026-08-13T15:00:00Z"); // 15:00Z
+    expect(isCalendarRedundant(b, [a])).toBe(false);
+    expect(redundantPendingCalendarIds([a, b])).toEqual([]);
+  });
+
+  it("leaves an unparseable start alone rather than guessing", () => {
+    const a = cal("c1", "next Thursday");
+    const b = cal("c2", "next Thursday");
+    expect(redundantPendingCalendarIds([a, b])).toEqual([]);
+  });
+});
