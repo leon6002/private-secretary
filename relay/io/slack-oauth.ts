@@ -381,5 +381,13 @@ export async function saveLegacyToken(account: string, token: string): Promise<v
   if (!t.startsWith("xoxp-")) {
     throw new Error("Expected a user token starting with xoxp- (not a bot xoxb- token)");
   }
+  // A pre-split install keeps its OAuth bundle in THIS slot, so writing here
+  // blind would destroy it — the exact overwrite the two-slot split exists to
+  // prevent. Relocate it first; reads already accept a bundle from either slot,
+  // so moving it changes nothing except that it now survives.
+  const existing = await readSlot(SLACK_TOKEN_SERVICE, account);
+  if (existing && typeof existing !== "string") {
+    await setJSON(SLACK_OAUTH_TOKEN_SERVICE, account, existing);
+  }
   await setSecret(SLACK_TOKEN_SERVICE, account, t);
 }

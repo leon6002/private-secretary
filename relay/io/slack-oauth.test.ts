@@ -303,3 +303,30 @@ describe("two coexisting credentials", () => {
     expect(store.get(`${SLACK_TOKEN_SERVICE}|me@taiv.tv`)).toBe("xoxp-pasted");
   });
 });
+
+describe("pasting an own-app token never destroys the one-click credential", () => {
+  const OAUTH = "taiv-secretary-slack-oauth";
+
+  // REGRESSION: a pre-split install keeps its OAuth bundle in the LEGACY slot,
+  // and the paste path wrote there blind — so restoring the unthrottled token
+  // silently deleted the one-click one. Observed on a real machine.
+  it("relocates a bundle out of the legacy slot before writing the token", async () => {
+    const store = fakeKeychainStore({
+      [`${SLACK_TOKEN_SERVICE}|me@taiv.tv`]: JSON.stringify(bundle({ access_token: "xoxe.ours" })),
+    });
+    await saveLegacyToken("me@taiv.tv", "xoxp-own-app");
+
+    expect(store.get(`${SLACK_TOKEN_SERVICE}|me@taiv.tv`)).toBe("xoxp-own-app");
+    expect(JSON.parse(store.get(`${OAUTH}|me@taiv.tv`)!).access_token).toBe("xoxe.ours");
+    // And the runtime still prefers the unthrottled one.
+    expect(await readSlackToken("me@taiv.tv")).toBe("xoxp-own-app");
+  });
+
+  it("leaves an already-separated bundle alone", async () => {
+    const store = fakeKeychainStore({
+      [`${OAUTH}|me@taiv.tv`]: JSON.stringify(bundle({ access_token: "xoxe.ours" })),
+    });
+    await saveLegacyToken("me@taiv.tv", "xoxp-own-app");
+    expect(JSON.parse(store.get(`${OAUTH}|me@taiv.tv`)!).access_token).toBe("xoxe.ours");
+  });
+});
