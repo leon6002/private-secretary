@@ -11,28 +11,31 @@
 @tailwind utilities;
 
 :root {
-  --background: #f7f7f8;
-  --surface: #ffffff;
-  --surface-variant: #f1f2f4;
-  --outline: #e5e7eb;
-  --on-surface: #1a1d21;
-  --on-surface-variant: #64748b;
-  /* RGB channels, not a hex: tailwind composes this with <alpha-value> so
-     opacity modifiers (bg-primary/10, border-primary/40) generate at all —
-     with a plain var() color it silently drops those classes. */
+  /* EVERY token is RGB channels, never a hex: tailwind composes them with
+     <alpha-value>, which is what makes opacity modifiers (border-outline/60,
+     bg-primary/10) work at all. A hex here does not merely lose the opacity —
+     the generated rule is invalid and the element falls back to some other
+     value entirely. That is how the calendar's hour lines ended up painting
+     the LIGHT outline on the dark theme: border-outline/60, silently wrong. */
+  --background: 247 247 248;
+  --surface: 255 255 255;
+  --surface-variant: 241 242 244;
+  --outline: 229 231 235;
+  --on-surface: 26 29 33;
+  --on-surface-variant: 100 116 139;
   --primary: 37 99 235;
-  --error: #ef4444;
+  --error: 239 68 68;
 }
 
 .dark {
-  --background: #0f1115;
-  --surface: #171a21;
-  --surface-variant: #1e222b;
-  --outline: #262b36;
-  --on-surface: #e6e8ec;
-  --on-surface-variant: #9aa3b2;
+  --background: 15 17 21;
+  --surface: 23 26 33;
+  --surface-variant: 30 34 43;
+  --outline: 38 43 54;
+  --on-surface: 230 232 236;
+  --on-surface-variant: 154 163 178;
   --primary: 59 130 246;
-  --error: #f87171;
+  --error: 248 113 113;
 }
 
 body {
