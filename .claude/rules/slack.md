@@ -49,6 +49,19 @@ leaves existing entries byte-identical.
 Docs: `.claude/docs/slack-oauth.html` (flow + rate limits),
 `.claude/docs/slack-app-setup.html` (console walkthrough).
 
+## Which credential is actually used (decision, 2026-08-10)
+
+**Until the app is listed on the Marketplace, this product runs on own-app
+tokens.** The one-click PKCE flow works end to end, but 1 request a minute and
+15 objects per request is not usable for a real mailbox — that is the owner's
+call, not a temporary workaround.
+
+The daemon's Slack cadence follows from it: every workspace on a legacy
+(own-app) token polls every 60s; anything on our distributed app falls back to
+600s, because at a one-minute cadence a throttled workspace spends every round
+backing off and arrives later than if it had waited. Mixed setups take the
+conservative value. `--slack-ms` overrides.
+
 ## Rate limits — open item
 
 Distributed non-Marketplace apps get **1 request/minute and 15 objects per

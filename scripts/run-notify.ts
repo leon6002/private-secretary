@@ -31,6 +31,7 @@ import type { PlanDeps } from "../relay/proc/plan.js";
 import type { PersonaUpdateDeps } from "../relay/proc/persona-update.js";
 import { wechatDecodeImage, wechatHistory } from "../relay/io/wechat-cli.js";
 import { createSlackClientFromKeychain, SLACK_ACCOUNTS, type SlackClient } from "../relay/io/slack-api.js";
+import { resolveSlackCredential } from "../relay/io/slack-oauth.js";
 import { GmailClient, getHeader } from "../relay/io/gmail-api.js";
 import { extractText } from "../relay/sources/gmail-direct.js";
 import { KNOWN_MAILBOXES } from "../relay/io/google-oauth.js";
@@ -85,10 +86,38 @@ const personaDir = resolve(str("--personas", resolve(process.cwd(), "personas"))
 const projectsDir = resolve(str("--projects", resolve(process.cwd(), "projects/_staged")));
 const leoProfilePath = resolve(process.cwd(), "projects/LEO-DECISION-PROFILE.md");
 const leoFactsPath = resolve(process.cwd(), "projects/LEO-FACTS.md");
+// Slack's cadence follows the CREDENTIAL, because the two differ by ~50x.
+//
+// A token from the user's own Slack app is an internal custom app to Slack:
+// 50+ requests a minute, so polling every minute is comfortable. Our
+// distributed app is capped at 1 request a minute until it is listed on the
+// Marketplace — at a one-minute cadence a workspace with six conversations
+// would spend every round being throttled, backing off, and arriving later
+// than if it had simply waited. Conservative wins there.
+//
+// Mixed setups take the conservative value: one throttled workspace is enough
+// to make a fast loop counterproductive.
+const SLACK_MS_UNTHROTTLED = 60_000;
+const SLACK_MS_THROTTLED = 600_000;
+
+async function slackIntervalMs(): Promise<number> {
+  const explicit = process.argv.some((a) => a.startsWith("--slack-ms"));
+  if (explicit) return num("--slack-ms", SLACK_MS_THROTTLED);
+  if (SLACK_ACCOUNTS.length === 0) return SLACK_MS_THROTTLED;
+  try {
+    const kinds = await Promise.all(
+      SLACK_ACCOUNTS.map(async ({ account }) => (await resolveSlackCredential(account))?.kind),
+    );
+    return kinds.every((k) => k === "legacy") ? SLACK_MS_UNTHROTTLED : SLACK_MS_THROTTLED;
+  } catch {
+    return SLACK_MS_THROTTLED;
+  }
+}
+
 const intervals: Record<Source, number> = {
   wechat: num("--wechat-ms", 10_000),
   gmail: num("--gmail-ms", 180_000),
-  slack: num("--slack-ms", 600_000),
+  slack: await slackIntervalMs(),
 };
 const maxDraft = num("--max-draft", 20);
 // Drafting backend: "cli" (Claude Code subscription via `claude -p`, no API
@@ -509,7 +538,10 @@ async function main(): Promise<void> {
   }
   console.log(`[notify] state=${statePath}`);
   console.log(`[notify] ${describeIdentity()}`);
-  console.log(`[notify] cadence: wechat=${intervals.wechat / 1000}s gmail=${intervals.gmail / 1000}s slack=${intervals.slack / 1000}s`);
+  console.log(
+  `[notify] cadence: wechat=${intervals.wechat / 1000}s gmail=${intervals.gmail / 1000}s ` +
+    `slack=${intervals.slack / 1000}s (${intervals.slack === SLACK_MS_UNTHROTTLED ? "own-app token, unthrottled" : "rate-limited credential or override"})`,
+);
   const draft = await buildDraft();
   const consolidate = await buildConsolidate();
   const refresh = await buildRefresh();
