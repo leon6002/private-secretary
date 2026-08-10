@@ -15,6 +15,8 @@
 // No new motion: DESIGN.md allows exactly two product-wide motions and neither
 // is here. Colour transitions on hover only, matching Tabs and the buttons.
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { ChevronRight } from "lucide-react";
 import ConnectorIcon, { type ConnectorId } from "../components/ConnectorIcon";
 import Tabs from "../components/Tabs";
 import { apiGet, apiPost } from "../lib/api";
@@ -425,6 +427,9 @@ export default function ConnectionsScreen() {
   // boolean would disable every row while one of them is connecting.
   const [slackPendingAccount, setSlackPendingAccount] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
+  // The own-app token path stays folded away until asked for — see the section
+  // near the bottom of the table.
+  const [ownTokenOpen, setOwnTokenOpen] = useState(false);
   const [tools, setTools] = useState<ToolsConfig | null>(null);
   const [pendingTool, setPendingTool] = useState<string | null>(null);
   const [openNote, setOpenNote] = useState<string | null>(null);
@@ -800,30 +805,62 @@ export default function ConnectionsScreen() {
             </p>
           )}
 
-          {/* Two ways in, because they are not interchangeable: one click is
-              convenient but rate-limited until the app is on the Marketplace,
-              and a heavy mailbox needs the user's own app token. */}
-          <div className="mt-6 grid gap-4 md:grid-cols-2 max-w-[62ch] md:max-w-none">
-            <div>
+          {/* Two ways in, but they are not equals, and showing them as two
+              anonymous columns said they were. One click is the path almost
+              everyone takes; a token from your own Slack app is the escape
+              hatch for a mailbox too busy for our rate cap, and it belongs one
+              level deeper — not as a bare password field sitting in the open. */}
+          <section className="mt-6 rounded-xl border border-outline bg-surface p-4 max-w-[62ch]">
+            <div className="flex items-center gap-2.5">
+              <ConnectorIcon id="slack" />
+              <h2 className="text-body-medium text-on-surface flex-1">Add a Slack workspace</h2>
               <ActionButton
                 disabled={slackPendingAccount === ADD_PENDING}
                 onClick={() => void connectSlack("add")}
               >
-                {slackPendingAccount === ADD_PENDING ? "Opening browser…" : "Add a Slack workspace"}
+                {slackPendingAccount === ADD_PENDING ? "Opening browser…" : "Connect"}
               </ActionButton>
-              <p className="text-label-sm text-on-surface-variant mt-2">
-                One click. You pick the workspace on Slack's page. Rate-limited to 1 request a
-                minute until our app is listed on the Slack Marketplace.
-              </p>
             </div>
-            <div>
-              <AddLegacyWorkspaceForm onAdded={loadSlack} />
-              <p className="text-label-sm text-on-surface-variant mt-2">
-                A user token from a Slack app you created yourself. No rate cap — use this for a
-                busy workspace. The token says which workspace it belongs to.
-              </p>
-            </div>
-          </div>
+            <p className="text-label-sm text-on-surface-variant mt-1.5">
+              You pick the workspace on Slack's own page. Rate-limited to 1 request a minute until
+              our app is listed on the Slack Marketplace.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setOwnTokenOpen((v) => !v)}
+              aria-expanded={ownTokenOpen}
+              className={cn(
+                "mt-3 flex items-center gap-1 text-label-sm text-on-surface-variant",
+                "hover:text-on-surface transition-colors",
+              )}
+            >
+              <ChevronRight
+                size={14}
+                className={cn("transition-transform", ownTokenOpen && "rotate-90")}
+              />
+              Use a token from your own Slack app
+            </button>
+            <AnimatePresence initial={false}>
+              {ownTokenOpen && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ type: "spring", bounce: 0, duration: 0.3 }}
+                  className="overflow-hidden"
+                >
+                  <div className="pt-3">
+                    <p className="text-label-sm text-on-surface-variant mb-2">
+                      No rate cap — this is what a busy workspace needs. The token itself says
+                      which workspace it belongs to.
+                    </p>
+                    <AddLegacyWorkspaceForm onAdded={loadSlack} />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </section>
 
           <p className="text-label-sm text-on-surface-variant mt-6 leading-relaxed">
             Detection runs continuously; analysis happens only when something arrives.
