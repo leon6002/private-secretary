@@ -16,7 +16,7 @@ Runs entirely on your machine. Inference goes through the Claude Code CLI
 ## Quick start (macOS)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/noobsplzwin/private-secretary/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/noobsplzwin/private-secretary/dev/scripts/install.sh | bash
 ```
 
 One line installs Node.js if needed (via Homebrew), clones into the hidden

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Private Secretary one-liner installer for macOS.
-# Usage: curl -fsSL https://raw.githubusercontent.com/noobsplzwin/private-secretary/main/scripts/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/noobsplzwin/private-secretary/dev/scripts/install.sh | bash
 #
 # What it does:
 #   1. Ensures Node.js (>= 20) + Git (installs via Homebrew; installs Homebrew if missing)
