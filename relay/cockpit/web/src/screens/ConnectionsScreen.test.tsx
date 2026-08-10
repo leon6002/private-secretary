@@ -31,7 +31,7 @@ const TOOLS = {
 
 function stubApi(
   state: unknown,
-  slack: unknown = { kind: "none", connected: false, expiresAt: 0, reconnectBy: 0 },
+  slack: unknown = { workspaces: [ws({ active: "none", oauth: NONE })] },
   tools: unknown = TOOLS,
 ) {
   mockApiGet.mockImplementation((path: string) => {
@@ -43,18 +43,28 @@ function stubApi(
   });
 }
 
-const PKCE_OK = {
-  account: "me@example.com",
-  label: "slack:direct",
-  kind: "pkce",
-  connected: true,
+const NONE = { present: false, expiresAt: 0, reconnectBy: 0 };
+const OAUTH_CRED = {
+  present: true,
   team: "leotest",
   // Access token is always ~12h out; that must NOT trigger a warning.
   expiresAt: Date.now() + 12 * 60 * 60 * 1000,
   // Re-consent deadline comfortably beyond the 7-day warning window.
   reconnectBy: Date.now() + 30 * 24 * 60 * 60 * 1000,
-  detail: "connected · leotest",
 };
+// Ours connected, no legacy token — the state after a plain one-click connect.
+function ws(over: Record<string, unknown> = {}) {
+  return {
+    account: "me@example.com",
+    label: "slack:leotest",
+    active: "oauth",
+    legacy: NONE,
+    oauth: OAUTH_CRED,
+    ...over,
+  };
+}
+// Ours connected, no own-app token — the state after a plain one-click connect.
+const PKCE_OK = { workspaces: [ws()] };
 
 const GMAIL_DEAD = {
   sourceErrors: {
@@ -81,11 +91,11 @@ describe("ConnectionsScreen", () => {
     stubApi({ sourceErrors: {} }, PKCE_OK);
     render(<ConnectionsScreen />);
 
-    await screen.findByText("Slack");
+    await screen.findByText("Slack · leotest");
     expect(screen.getByRole("columnheader", { name: "Connector" })).toBeTruthy();
     expect(screen.getByRole("columnheader", { name: "Status" })).toBeTruthy();
     await screen.findByText("Jira");
-    expect(screen.getAllByRole("row")).toHaveLength(5); // header + 4 connectors
+    expect(screen.getAllByRole("row")).toHaveLength(6); // header + 5 rows (Slack x2)
     expect(screen.getByText("Gmail")).toBeTruthy();
     expect(screen.getByText("Google Calendar")).toBeTruthy();
   });
@@ -95,7 +105,7 @@ describe("ConnectionsScreen", () => {
   it("does not list WeChat", async () => {
     stubApi({ sourceErrors: {} }, PKCE_OK);
     render(<ConnectionsScreen />);
-    await screen.findByText("Slack");
+    await screen.findByText("Slack · leotest");
     expect(screen.queryByText("WeChat")).toBeNull();
   });
 
@@ -104,44 +114,72 @@ describe("ConnectionsScreen", () => {
   it("uses a real table, not cards", async () => {
     stubApi({ sourceErrors: {} }, PKCE_OK);
     const { container } = render(<ConnectionsScreen />);
-    await screen.findByText("Slack");
+    await screen.findByText("Slack · leotest");
     expect(container.querySelector("table")).toBeTruthy();
   });
 
   // The workspace is the USER's own, chosen on Slack's consent screen — worth
-  // showing, and not to be confused with the workspace our app is registered in.
-  it("shows the connected account and the user's own workspace", async () => {
+  // naming, and not to be confused with the workspace our app is registered in.
+  it("names the user's own workspace on the row", async () => {
     stubApi({ sourceErrors: {} }, PKCE_OK);
     render(<ConnectionsScreen />);
-    await screen.findByText("me@example.com · leotest");
-    expect(within(row("Slack")).getByRole("button", { name: "Disconnect" })).toBeTruthy();
+    const ours = (await screen.findByText("Slack · leotest")).closest("tr") as HTMLElement;
+    expect(within(ours).getByText("me@example.com")).toBeTruthy();
+    expect(within(ours).getByRole("button", { name: "Disconnect" })).toBeTruthy();
   });
 
   // The multi-account fix: a machine that reads Taiv AND OSYX must show BOTH
-  // workspaces as their own rows, not just the default one. The endpoint
-  // returns one status per configured workspace.
-  it("renders one row per configured Slack workspace", async () => {
-    stubApi({ sourceErrors: {} }, [
-      { ...PKCE_OK, account: "leo@taiv.tv", label: "slack:direct", team: "Taiv" },
-      { ...PKCE_OK, account: "huizhezheng@gmail.com", label: "slack:osyx", team: "OSYX" },
-    ]);
+  // workspaces as their own rows, not just the default one. Preserved from
+  // 27bb03b; the workspace now names the row and the account is its subtitle,
+  // and each workspace carries its own pair of credential rows.
+  it("renders a row per configured Slack workspace, each naming its account", async () => {
+    stubApi({ sourceErrors: {} }, {
+      workspaces: [
+        ws({ account: "leo@taiv.tv", label: "slack:direct", oauth: { ...OAUTH_CRED, team: "Taiv" } }),
+        ws({ account: "huizhezheng@gmail.com", label: "slack:osyx", oauth: { ...OAUTH_CRED, team: "OSYX" } }),
+      ],
+    });
     render(<ConnectionsScreen />);
-    await screen.findByText("leo@taiv.tv · Taiv");
-    await screen.findByText("huizhezheng@gmail.com · OSYX");
+
+    const taiv = (await screen.findByText("Slack · Taiv")).closest("tr") as HTMLElement;
+    expect(within(taiv).getByText("leo@taiv.tv")).toBeTruthy();
+    const osyx = (await screen.findByText("Slack · OSYX")).closest("tr") as HTMLElement;
+    expect(within(osyx).getByText("huizhezheng@gmail.com")).toBeTruthy();
+  });
+
+  // Also from 27bb03b: one workspace failing must not paint the others red.
+  it("keys each workspace's error to its own source label", async () => {
+    stubApi(
+      { sourceErrors: { "slack:osyx": { message: "boom", at: "2026-08-09T00:00:00Z" } } },
+      {
+        workspaces: [
+          ws({ account: "leo@taiv.tv", label: "slack:direct", oauth: { ...OAUTH_CRED, team: "Taiv" } }),
+          ws({ account: "huizhezheng@gmail.com", label: "slack:osyx", oauth: { ...OAUTH_CRED, team: "OSYX" } }),
+        ],
+      },
+    );
+    render(<ConnectionsScreen />);
+
+    const osyx = (await screen.findByText("Slack · OSYX")).closest("tr") as HTMLElement;
+    expect(within(osyx).getByText(/token issue/)).toBeTruthy();
+    const taiv = (await screen.findByText("Slack · Taiv")).closest("tr") as HTMLElement;
+    expect(within(taiv).queryByText(/token issue/)).toBeNull();
   });
 
   it("offers Connect, not Reconnect, when nothing is stored", async () => {
-    stubApi({ sourceErrors: {} }, { kind: "none", connected: false, expiresAt: 0, reconnectBy: 0 });
+    stubApi({ sourceErrors: {} }, { workspaces: [ws({ active: "none", oauth: NONE })] });
     render(<ConnectionsScreen />);
     await screen.findByRole("button", { name: "Connect" });
-    expect(within(row("Slack")).getByText("not connected")).toBeTruthy();
+    expect(within(row("Slack · leotest")).getByText("not connected")).toBeTruthy();
   });
 
-  // A degraded /api/connections/slack must not paint the row as connected.
-  it("treats an unrecognised Slack payload as not connected", async () => {
+  // A degraded /api/connections/slack must not blank the screen. Showing no
+  // Slack rows is the safe reading — better than inventing a connected one.
+  it("renders the rest of the table when the Slack payload is unrecognised", async () => {
     stubApi({ sourceErrors: {} }, { nonsense: true });
     render(<ConnectionsScreen />);
-    await screen.findByRole("button", { name: "Connect" });
+    await screen.findByText("Gmail");
+    expect(screen.queryByText(/^Slack · /)).toBeNull();
   });
 
   // The 30-day refresh window is the failure mode a closed laptop hits, so the
@@ -149,7 +187,7 @@ describe("ConnectionsScreen", () => {
   it("flags the re-consent deadline before it lands", async () => {
     stubApi(
       { sourceErrors: {} },
-      { ...PKCE_OK, reconnectBy: Date.now() + 2 * 24 * 60 * 60 * 1000 },
+      { workspaces: [ws({ oauth: { ...OAUTH_CRED, reconnectBy: Date.now() + 2 * 24 * 60 * 60 * 1000 } })] },
     );
     const { container } = render(<ConnectionsScreen />);
     await screen.findByText("reconnect within 2 days");
@@ -157,7 +195,7 @@ describe("ConnectionsScreen", () => {
   });
 
   it("reports an expired sign-in", async () => {
-    stubApi({ sourceErrors: {} }, { ...PKCE_OK, reconnectBy: Date.now() - 1000 });
+    stubApi({ sourceErrors: {} }, { workspaces: [ws({ oauth: { ...OAUTH_CRED, reconnectBy: Date.now() - 1000 } })] });
     render(<ConnectionsScreen />);
     await screen.findByText("sign-in expired — reconnect to resume");
   });
@@ -165,16 +203,19 @@ describe("ConnectionsScreen", () => {
   // REGRESSION: the access token is ~12h out by design and refreshes itself.
   // Treating it as a deadline made the row permanently red.
   it("stays green while only the 12h access token is near expiry", async () => {
-    stubApi({ sourceErrors: {} }, { ...PKCE_OK, expiresAt: Date.now() + 60 * 1000 });
+    stubApi({ sourceErrors: {} }, { workspaces: [ws({ oauth: { ...OAUTH_CRED, expiresAt: Date.now() + 60 * 1000 } })] });
     const { container } = render(<ConnectionsScreen />);
     await screen.findByText("connected");
     expect(container.querySelectorAll(".bg-error")).toHaveLength(0);
   });
 
   it("invites migration off a legacy hand-pasted token", async () => {
-    stubApi({ sourceErrors: {} }, { account: "me@example.com", kind: "legacy", connected: true, expiresAt: 0, reconnectBy: 0 });
+    stubApi({ sourceErrors: {} }, {
+      workspaces: [ws({ active: "legacy", legacy: { present: true, expiresAt: 0, reconnectBy: 0 }, oauth: NONE })],
+    });
     render(<ConnectionsScreen />);
-    await screen.findByText("connected · legacy token");
+    const legacy = (await screen.findByText("Slack · leotest · your own app")).closest("tr") as HTMLElement;
+    expect(within(legacy).getByText("connected · in use")).toBeTruthy();
   });
 
   it("gives one Reconnect button per failing mailbox on the Gmail row", async () => {
@@ -191,11 +232,11 @@ describe("ConnectionsScreen", () => {
     it("Needs attention narrows to the broken connector", async () => {
       stubApi(GMAIL_DEAD, PKCE_OK);
       render(<ConnectionsScreen />);
-      await screen.findByText("Slack");
+      await screen.findByText("Slack · leotest");
 
       fireEvent.click(screen.getByRole("tab", { name: "Needs attention" }));
       expect(screen.getByText("Gmail")).toBeTruthy();
-      expect(screen.queryByText("Slack")).toBeNull();
+      expect(screen.queryByText("Slack · leotest")).toBeNull();
       expect(screen.queryByText("WeChat")).toBeNull();
     });
 
@@ -206,14 +247,14 @@ describe("ConnectionsScreen", () => {
 
       fireEvent.click(screen.getByRole("tab", { name: "Connected" }));
       expect(screen.queryByText("Jira")).toBeNull();
-      expect(screen.getByText("Slack")).toBeTruthy();
+      expect(screen.getByText("Slack · leotest")).toBeTruthy();
     });
 
     // Empty states teach rather than say "nothing here".
     it("explains an empty Needs attention list instead of rendering a blank table", async () => {
       stubApi({ sourceErrors: {} }, PKCE_OK);
       render(<ConnectionsScreen />);
-      await screen.findByText("Slack");
+      await screen.findByText("Slack · leotest");
 
       fireEvent.click(screen.getByRole("tab", { name: "Needs attention" }));
       expect(
@@ -247,7 +288,7 @@ describe("ConnectionsScreen", () => {
         return Promise.resolve({ sourceErrors: {} }) as never;
       });
       render(<ConnectionsScreen />);
-      await screen.findByText("Slack");
+      await screen.findByText("Slack · leotest");
       expect(screen.queryByText("Jira")).toBeNull();
     });
   });
@@ -285,7 +326,9 @@ describe("ConnectionsScreen", () => {
         if (path.startsWith("/api/identity"))
           return Promise.resolve({ configured: true, primaryEmail: "me@example.com" }) as never;
         if (path.startsWith("/api/connections/slack"))
-          return Promise.resolve(connected ? PKCE_OK : { kind: "none", connected: false, expiresAt: 0, reconnectBy: 0 }) as never;
+          return Promise.resolve(
+            connected ? PKCE_OK : { workspaces: [ws({ active: "none", oauth: NONE })] },
+          ) as never;
         if (path.startsWith("/api/settings/tools")) return Promise.resolve(TOOLS) as never;
         return Promise.resolve({ sourceErrors: {} }) as never;
       });
@@ -295,12 +338,14 @@ describe("ConnectionsScreen", () => {
       });
 
       render(<ConnectionsScreen />);
-      // Scoped to the Slack row: Jira renders a Disconnect of its own.
-      const slack = (await screen.findByText("Slack")).closest("tr") as HTMLElement;
+      // Scoped to our Slack row: Jira and the own-app row have their own.
+      const slack = (await screen.findByText("Slack · leotest")).closest("tr") as HTMLElement;
       fireEvent.click(within(slack).getByRole("button", { name: "Disconnect" }));
 
       await screen.findByRole("button", { name: "Connect" });
+      // Names which credential: the default must never be the unrecoverable one.
       expect(mockApiPost).toHaveBeenCalledWith("/api/connections/slack/disconnect", {
+        which: "oauth",
         account: "me@example.com",
       });
       mockApiPost.mockReset();
@@ -309,7 +354,7 @@ describe("ConnectionsScreen", () => {
     it("posts deauthorize for an MCP tool", async () => {
       const mockApiPost = vi.mocked(apiPost);
       mockApiPost.mockResolvedValue({} as never);
-      stubApi({ sourceErrors: {} }, { kind: "none", connected: false, expiresAt: 0, reconnectBy: 0 });
+      stubApi({ sourceErrors: {} }, { workspaces: [ws({ active: "none", oauth: NONE })] });
       render(<ConnectionsScreen />);
 
       const jira = (await screen.findByText("Jira")).closest("tr") as HTMLElement;
@@ -327,7 +372,7 @@ describe("ConnectionsScreen", () => {
         if (path.startsWith("/api/identity"))
           return Promise.resolve({ configured: false, primaryEmail: "" }) as never;
         if (path.startsWith("/api/connections/slack"))
-          return Promise.resolve({ kind: "none", connected: false, expiresAt: 0, reconnectBy: 0 }) as never;
+          return Promise.resolve({ workspaces: [ws({ active: "none", oauth: NONE })] }) as never;
         if (path.startsWith("/api/settings/tools")) return Promise.resolve(TOOLS) as never;
         return Promise.resolve({ sourceErrors: {} }) as never;
       });
@@ -368,8 +413,60 @@ describe("ConnectionsScreen", () => {
       });
       render(<ConnectionsScreen />);
 
-      await screen.findByText("Slack");
+      await screen.findByText("Slack · leotest");
       expect(screen.queryByLabelText("Your work email")).toBeNull();
+    });
+  });
+
+  // Both credentials must be visible and independent: ours is rate-limited
+  // until the Slack app is on the Marketplace, so the user's own app token
+  // stays the only workable path for a heavy mailbox.
+  describe("legacy credential alongside the one-click one", () => {
+    const BOTH = {
+      workspaces: [ws({ active: "legacy", legacy: { present: true, expiresAt: 0, reconnectBy: 0 } })],
+    };
+
+    it("shows both rows and marks which one is actually in use", async () => {
+      stubApi({ sourceErrors: {} }, BOTH);
+      render(<ConnectionsScreen />);
+
+      const legacy = (await screen.findByText("Slack · leotest · your own app")).closest("tr") as HTMLElement;
+      expect(within(legacy).getByText("connected · in use")).toBeTruthy();
+      const ours = row("Slack · leotest");
+      expect(within(ours).getByText("connected · standby")).toBeTruthy();
+    });
+
+    // One stray click would cost the only unthrottled credential, and our flow
+    // cannot reissue it — it only ever mints our own app's token.
+    it("disables Disconnect on the legacy row", async () => {
+      stubApi({ sourceErrors: {} }, BOTH);
+      render(<ConnectionsScreen />);
+
+      const legacy = (await screen.findByText("Slack · leotest · your own app")).closest("tr") as HTMLElement;
+      const btn = within(legacy).getByRole("button", { name: "Disconnect" }) as HTMLButtonElement;
+      expect(btn.disabled).toBe(true);
+      expect(btn.title).toMatch(/cannot be restored/i);
+    });
+
+    it("still allows disconnecting our own credential, and names which one", async () => {
+      const mockApiPost = vi.mocked(apiPost);
+      mockApiPost.mockResolvedValue({ detail: "Disconnected." } as never);
+      stubApi({ sourceErrors: {} }, BOTH);
+      render(<ConnectionsScreen />);
+
+      const ours = (await screen.findByText("Slack · leotest")).closest("tr") as HTMLElement;
+      fireEvent.click(within(ours).getByRole("button", { name: "Disconnect" }));
+      expect(mockApiPost).toHaveBeenCalledWith("/api/connections/slack/disconnect", {
+        which: "oauth",
+        account: "me@example.com",
+      });
+      mockApiPost.mockReset();
+    });
+
+    it("offers a paste field when no legacy token is stored", async () => {
+      stubApi({ sourceErrors: {} }, PKCE_OK);
+      render(<ConnectionsScreen />);
+      await screen.findByLabelText("User token from your own Slack app");
     });
   });
 });

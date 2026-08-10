@@ -22,18 +22,38 @@ import { cn } from "../lib/cn";
 import { toast } from "../lib/toast";
 import { useCockpitState, type SourceError } from "../lib/useCockpitState";
 
-interface SlackConnection {
-  account: string;
-  /** Source label (slack:direct, slack:osyx, …) — keys this account's sourceError. */
-  label: string;
-  kind: "none" | "legacy" | "pkce";
-  connected: boolean;
+interface SlackCredential {
+  present: boolean;
   team?: string;
   /** Access-token expiry. Machinery — never surfaced; see reconnectBy. */
   expiresAt: number;
   /** When re-consent becomes necessary (refresh window), 0 if never. */
   reconnectBy: number;
-  detail: string;
+}
+
+interface SlackWorkspace {
+  account: string;
+  label: string;
+  active: "legacy" | "oauth" | "none";
+  legacy: SlackCredential;
+  oauth: SlackCredential;
+}
+
+interface SlackConnection {
+  workspaces: SlackWorkspace[];
+}
+
+// "slack:leo-test" → "leo test". The label is the only stable name we have
+// before a credential exists; the team name only arrives with a bundle.
+function workspaceName(w: SlackWorkspace): string {
+  return w.oauth?.team || w.label.replace(/^slack:/, "").replace(/-/g, " ");
+}
+
+// The Keychain key is shown only when it means something to a human. Older
+// entries use an email; one-click ones use "team:T0123ABCD", which is an
+// internal key and would be noise on the row.
+function workspaceIdentity(w: SlackWorkspace): string | undefined {
+  return w.account.includes("@") ? w.account : undefined;
 }
 
 // Warn a week out from the re-consent deadline. The deadline itself moves
@@ -41,6 +61,10 @@ interface SlackConnection {
 // fires for a machine that has been off, which is exactly when a week of
 // notice is useful.
 const RECONNECT_WARN_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Sentinel for the "add a workspace" flow, which has no account yet — the
+// user only picks the workspace on Slack's page.
+const ADD_PENDING = "__add__";
 
 type RowState = "ok" | "attention" | "manual";
 
@@ -132,6 +156,49 @@ function IdentitySetup({ onSaved }: { onSaved: () => void }) {
   );
 }
 
+// Restoring the unthrottled path means pasting a token from the user's own
+// Slack app — our OAuth flow can only ever issue OUR app's token, which is the
+// rate-limited one.
+function LegacyTokenForm({ account, onSaved }: { account: string; onSaved: () => void }) {
+  const [token, setToken] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await apiPost("/api/connections/slack/legacy", { token: token.trim(), account });
+      setToken("");
+      toast("Saved. This token is now the one in use.");
+      onSaved();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err), true);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={save} className="flex gap-2 items-start">
+      <input
+        type="password"
+        value={token}
+        onChange={(ev) => setToken(ev.target.value)}
+        placeholder="xoxp-…"
+        aria-label="User token from your own Slack app"
+        className={cn(
+          "w-[15rem] text-label-sm text-on-surface bg-surface border border-outline rounded",
+          "px-2 py-1 placeholder:text-on-surface-variant",
+          "focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary",
+        )}
+      />
+      <ActionButton disabled={saving || !token.trim()} onClick={() => {}} type="submit">
+        {saving ? "Saving…" : "Save"}
+      </ActionButton>
+    </form>
+  );
+}
+
 interface ToolSpec {
   key: string;
   label: string;
@@ -152,9 +219,10 @@ function hostOf(url: string): string {
 }
 
 interface ConnectorRow {
+  /** Which brand mark to draw. Two rows share "slack" on purpose. */
   id: ConnectorId;
-  /** Unique React key + filter identity. Defaults to `id`; set when one
-   *  connector (e.g. Slack) renders several rows so keys stay unique. */
+  /** Unique per row; defaults to id. Needed because the two Slack rows share
+   *  an icon but must not share a React key or a disclosure toggle. */
   rowKey?: string;
   name: string;
   /** Who/what it is connected as — the second line under the name. */
@@ -206,75 +274,74 @@ function failingGmailMailboxes(msg: string | undefined): string[] {
   return [...out];
 }
 
-function slackRow(
-  conn: SlackConnection | null,
+// The one-click credential (our Slack app). Rate-limited until the app is on
+// the Marketplace, so it is NOT automatically the one in use.
+function oauthRow(
+  w: SlackWorkspace,
   hasError: boolean,
 ): Pick<ConnectorRow, "identity" | "access" | "state" | "status"> {
   const access = "read · send after approval";
-  if (hasError) {
-    return {
-      identity: conn?.account,
-      access,
-      state: "attention",
-      status: "token issue — cursor frozen, nothing lost",
-    };
+  const inUse = w.active === "oauth";
+  if (hasError && inUse) {
+    return { identity: workspaceIdentity(w), access, state: "attention", status: "token issue — cursor frozen, nothing lost" };
   }
-  // Anything that is not a kind we recognise counts as not connected. Falling
-  // through to the connected branch would render an undefined status.
-  if (!conn || (conn.kind !== "legacy" && conn.kind !== "pkce")) {
-    return { access, state: "manual", status: "not connected" };
+  const c = w.oauth;
+  if (!c?.present) {
+    return { identity: workspaceIdentity(w), access, state: "manual", status: "not connected" };
   }
-  if (conn.kind === "legacy") {
-    return {
-      identity: conn.account,
-      access,
-      state: "ok",
-      status: "connected · legacy token",
-    };
+  const identity = workspaceIdentity(w);
+  // Deliberately NOT expiresAt: that is the ~12h access token the runtime
+  // refreshes silently. Warning on it would paint this row red permanently.
+  const left = c.reconnectBy - Date.now();
+  if (c.reconnectBy && left <= 0) {
+    return { identity, access, state: "attention", status: "sign-in expired — reconnect to resume" };
   }
-  // Deliberately NOT conn.expiresAt: that is the ~12h access token, which the
-  // runtime refreshes silently. Warning on it would paint this row red
-  // permanently — alarm theater for normal machinery.
-  const left = conn.reconnectBy - Date.now();
-  if (conn.reconnectBy && left <= 0) {
+  if (c.reconnectBy && left < RECONNECT_WARN_MS) {
     return {
-      identity: conn.account,
-      access,
-      state: "attention",
-      status: "sign-in expired — reconnect to resume",
-    };
-  }
-  if (conn.reconnectBy && left < RECONNECT_WARN_MS) {
-    return {
-      identity: conn.account,
+      identity,
       access,
       state: "attention",
       status: `reconnect within ${Math.max(1, Math.ceil(left / 86_400_000))} days`,
     };
   }
-  // The workspace shown here is the USER's own — the one they picked on Slack's
-  // consent screen, which is also the workspace their rate-limit bucket belongs
-  // to. It is never the workspace our app happens to be registered in.
-  return {
-    identity: conn.team ? `${conn.account} · ${conn.team}` : conn.account,
-    access,
-    state: "ok",
-    status: "connected",
-  };
+  return { identity, access, state: "ok", status: inUse ? "connected · in use" : "connected · standby" };
+}
+
+// A token pasted from the user's OWN Slack app. Slack treats that as an
+// internal custom app: 50+ requests/minute against our 1/minute, which is why
+// it wins when both exist and why removing it is not casually reversible.
+function legacyRow(
+  w: SlackWorkspace,
+  hasError: boolean,
+): Pick<ConnectorRow, "identity" | "access" | "state" | "status"> {
+  const access = "read · send after approval · no rate cap";
+  const inUse = w.active === "legacy";
+  if (hasError && inUse) {
+    return { identity: workspaceIdentity(w), access, state: "attention", status: "token issue — cursor frozen, nothing lost" };
+  }
+  if (!w.legacy?.present) {
+    return { identity: workspaceIdentity(w), access, state: "manual", status: "not set" };
+  }
+  return { identity: workspaceIdentity(w), access, state: "ok", status: "connected · in use" };
 }
 
 function ActionButton({
   children,
   disabled,
   onClick,
+  type = "button",
+  title,
 }: {
   children: React.ReactNode;
   disabled?: boolean;
-  onClick: () => void;
+  onClick?: () => void;
+  type?: "button" | "submit";
+  title?: string;
 }) {
   return (
     <button
-      type="button"
+      type={type}
+      title={title}
       disabled={disabled}
       onClick={onClick}
       // Neutral secondary button, not a tinted primary. Slack, Notion and
@@ -303,7 +370,9 @@ const FILTERS = [
 export default function ConnectionsScreen() {
   const { state } = useCockpitState();
   const [pendingMailbox, setPendingMailbox] = useState<string | null>(null);
-  const [slackConns, setSlackConns] = useState<SlackConnection[]>([]);
+  const [slackConn, setSlackConn] = useState<SlackConnection | null>(null);
+  // Per ACCOUNT, not a single flag: with several workspaces one global
+  // boolean would disable every row while one of them is connecting.
   const [slackPendingAccount, setSlackPendingAccount] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
   const [tools, setTools] = useState<ToolsConfig | null>(null);
@@ -358,10 +427,13 @@ export default function ConnectionsScreen() {
     }
   }
 
-  async function disconnectSlack(account: string) {
-    setSlackPendingAccount(account);
+  async function disconnectSlack(which: "legacy" | "oauth", account: string) {
+    setSlackPendingAccount(account ?? ADD_PENDING);
     try {
-      const r = await apiPost<{ detail?: string }>("/api/connections/slack/disconnect", { account });
+      const r = await apiPost<{ detail?: string }>("/api/connections/slack/disconnect", {
+        which,
+        account,
+      });
       toast(r.detail || "Disconnected.");
       loadSlack();
     } catch (e) {
@@ -374,11 +446,9 @@ export default function ConnectionsScreen() {
   // One-shot read, not part of the cockpit poll: the credential only changes
   // when the user acts, so re-fetch after a connect rather than every tick.
   const loadSlack = useCallback(() => {
-    apiGet<SlackConnection[] | SlackConnection>("/api/connections/slack")
-      // The endpoint returns one status per configured workspace. Tolerate a
-      // lone object too, so an older server (or a stub) still renders a row.
-      .then((d) => setSlackConns(Array.isArray(d) ? d : [d]))
-      .catch(() => setSlackConns([]));
+    apiGet<SlackConnection>("/api/connections/slack")
+      .then(setSlackConn)
+      .catch(() => setSlackConn(null));
   }, []);
   useEffect(loadSlack, [loadSlack]);
 
@@ -389,10 +459,13 @@ export default function ConnectionsScreen() {
 
   // The browser flow finishes out of band, so re-read a few seconds later —
   // the row turns green without the user reloading the page.
-  async function connectSlack(account: string) {
-    setSlackPendingAccount(account);
+  async function connectSlack(mode: "reauth" | "add", account?: string) {
+    setSlackPendingAccount(account ?? ADD_PENDING);
     try {
-      const r = await apiPost<{ detail?: string }>("/api/connections/slack/connect", { account });
+      const r = await apiPost<{ detail?: string }>("/api/connections/slack/connect", {
+        mode,
+        ...(account ? { account } : {}),
+      });
       toast(r.detail || "Opening the browser…");
       setTimeout(() => {
         loadSlack();
@@ -457,31 +530,59 @@ export default function ConnectionsScreen() {
   );
 
   const rows: ConnectorRow[] = useMemo(() => {
-    // One row per configured Slack workspace (Taiv + OSYX, …). Each carries its
-    // OWN sourceError (keyed by the account's label) and its own connect /
-    // disconnect action, so a dead OSYX token no longer hides behind Taiv.
-    const slackRows: ConnectorRow[] = slackConns.map((conn, i) => {
-      const pending = slackPendingAccount === conn.account;
-      return {
-        id: "slack" as const,
-        rowKey: `slack:${conn.account}`,
-        name: "Slack",
-        ...slackRow(conn, !!errs[conn.label]),
-        // The privacy note is identical for every workspace — show it once.
-        ...(i === 0 ? { note: <SlackPrivacyNote /> } : {}),
-        actions: conn.connected ? (
-          <ActionButton disabled={pending} onClick={() => void disconnectSlack(conn.account)}>
-            {pending ? "Working…" : "Disconnect"}
-          </ActionButton>
-        ) : (
-          <ActionButton disabled={pending} onClick={() => void connectSlack(conn.account)}>
-            {pending ? "Opening browser…" : "Connect"}
-          </ActionButton>
-        ),
-      };
-    });
     return [
-      ...slackRows,
+      // Two rows per workspace: ours and the user's own app token. They are
+      // separate credentials with very different rate limits, so collapsing
+      // them would hide which one is actually carrying the traffic.
+      ...(slackConn?.workspaces ?? []).flatMap((w): ConnectorRow[] => {
+        const name = workspaceName(w);
+        // Its OWN sourceError, keyed by this workspace's label — a shared
+        // lookup would paint a healthy workspace red for another's failure.
+        const err = errs[w.label];
+        return [
+          {
+            id: "slack",
+            rowKey: `${w.account}-oauth`,
+            name: `Slack · ${name}`,
+            ...oauthRow(w, !!err),
+            note: <SlackPrivacyNote />,
+            actions: w.oauth?.present ? (
+              <ActionButton
+                disabled={slackPendingAccount === w.account}
+                onClick={() => void disconnectSlack("oauth", w.account)}
+              >
+                {slackPendingAccount === w.account ? "Working…" : "Disconnect"}
+              </ActionButton>
+            ) : (
+              <ActionButton
+                disabled={slackPendingAccount === w.account}
+                onClick={() => void connectSlack("reauth", w.account)}
+              >
+                {slackPendingAccount === w.account ? "Opening browser…" : "Connect"}
+              </ActionButton>
+            ),
+          },
+          {
+            id: "slack",
+            rowKey: `${w.account}-legacy`,
+            name: `Slack · ${name} · your own app`,
+            ...legacyRow(w, !!err),
+            actions: w.legacy?.present ? (
+              // Deliberately disabled. This credential cannot be reissued from
+              // here — our flow only ever mints OUR app's (rate-limited) token
+              // — so a stray click would cost the only unthrottled path.
+              <ActionButton
+                disabled
+                title="Protected: this token comes from your own Slack app and cannot be restored from here. Remove it in Keychain if you really mean to."
+              >
+                Disconnect
+              </ActionButton>
+            ) : (
+              <LegacyTokenForm account={w.account} onSaved={loadSlack} />
+            ),
+          },
+        ];
+      }),
       {
         id: "gmail",
         name: "Gmail",
@@ -516,7 +617,7 @@ export default function ConnectionsScreen() {
       // the specs stay — this only hides the row.
       ...mcpRows,
     ];
-  }, [slackConns, errs, slackPendingAccount, gmailErr, pendingMailbox, mcpRows]);
+  }, [slackConn, errs, slackPendingAccount, gmailErr, pendingMailbox, mcpRows]);
 
   const visible = rows.filter((r) =>
     filter === "connected" ? r.state === "ok" : filter === "attention" ? r.state === "attention" : true,
@@ -585,14 +686,14 @@ export default function ConnectionsScreen() {
                         {r.note && (
                           <button
                             type="button"
-                            aria-expanded={openNote === r.id}
-                            onClick={() => setOpenNote(openNote === r.id ? null : r.id)}
+                            aria-expanded={openNote === (r.rowKey ?? r.id)}
+                            onClick={() => setOpenNote(openNote === (r.rowKey ?? r.id) ? null : (r.rowKey ?? r.id))}
                             className={cn(
                               "text-label-sm text-primary mt-1 transition-colors hover:underline",
                               "focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary",
                             )}
                           >
-                            {openNote === r.id ? "Hide details" : "What access means"}
+                            {openNote === (r.rowKey ?? r.id) ? "Hide details" : "What access means"}
                           </button>
                         )}
                       </div>
@@ -607,7 +708,9 @@ export default function ConnectionsScreen() {
                           cell it read as a bullet; here it is the status. */}
                       <span
                         className={cn(
-                          "text-label-sm flex items-start gap-2",
+                          // nowrap: the paste form shares this cell, and a
+                          // two-word status was wrapping mid-phrase beside it.
+                          "text-label-sm flex items-start gap-2 whitespace-nowrap",
                           r.state === "attention" ? "text-error" : "text-on-surface-variant",
                         )}
                       >
@@ -627,7 +730,7 @@ export default function ConnectionsScreen() {
                 {/* The disclosure spans the full width directly under its own
                     row rather than squeezing into the name cell — it is prose,
                     not a column. */}
-                {r.note && openNote === r.id && (
+                {r.note && openNote === (r.rowKey ?? r.id) && (
                   <tr>
                     <td colSpan={3} className="pb-4 pl-[30px] pr-4">
                       <div className="bg-surface-variant rounded p-3.5">{r.note}</div>
@@ -646,6 +749,19 @@ export default function ConnectionsScreen() {
                 : "No connector is connected yet — connect one from the All tab."}
             </p>
           )}
+
+          <div className="mt-5">
+            <ActionButton
+              disabled={slackPendingAccount === ADD_PENDING}
+              onClick={() => void connectSlack("add")}
+            >
+              {slackPendingAccount === ADD_PENDING ? "Opening browser…" : "Add a Slack workspace"}
+            </ActionButton>
+            <p className="text-label-sm text-on-surface-variant mt-2 max-w-[62ch]">
+              You pick the workspace on Slack's page; it is registered here under whatever
+              workspace you approve. Each one is polled separately and keeps its own history.
+            </p>
+          </div>
 
           <p className="text-label-sm text-on-surface-variant mt-6 leading-relaxed">
             Detection runs continuously; analysis happens only when something arrives.

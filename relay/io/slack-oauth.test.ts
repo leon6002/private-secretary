@@ -10,6 +10,9 @@ import {
   parseStoredToken,
   readSlackToken,
   refreshBundle,
+  resolveSlackCredential,
+  saveLegacyToken,
+  saveSlackBundle,
   SLACK_TOKEN_SERVICE,
   slackRedirectUri,
   type SlackTokenBundle,
@@ -235,5 +238,68 @@ describe("readSlackToken", () => {
       throw new Error("must not refresh a live token");
     });
     expect(await readSlackToken("me@taiv.tv", 1_000)).toBe("xoxe.xoxp-old");
+  });
+});
+
+describe("two coexisting credentials", () => {
+  const OAUTH = "taiv-secretary-slack-oauth";
+
+  // The whole reason the slots are separate: the hand-pasted token comes from
+  // the user's OWN Slack app (50+/min, 1000 objects) while ours is capped at
+  // 1/min and 15. Preferring the newer credential would cut throughput ~50x.
+  it("prefers the legacy token when both exist", async () => {
+    fakeKeychainStore({
+      [`${SLACK_TOKEN_SERVICE}|me@taiv.tv`]: "xoxp-own-app",
+      [`${OAUTH}|me@taiv.tv`]: JSON.stringify(bundle({ access_token: "xoxe.ours" })),
+    });
+    const cred = await resolveSlackCredential("me@taiv.tv");
+    expect(cred?.kind).toBe("legacy");
+    expect(await readSlackToken("me@taiv.tv")).toBe("xoxp-own-app");
+  });
+
+  it("falls back to the OAuth bundle when there is no legacy token", async () => {
+    fakeKeychainStore({
+      [`${OAUTH}|me@taiv.tv`]: JSON.stringify(bundle({ access_token: "xoxe.ours" })),
+    });
+    const cred = await resolveSlackCredential("me@taiv.tv");
+    expect(cred?.kind).toBe("pkce");
+    expect(cred?.service).toBe(OAUTH);
+  });
+
+  // Installs from before the split hold a bundle in the ORIGINAL slot. It must
+  // keep working, and a refresh must write back to the same slot rather than
+  // silently leaving a stale copy behind.
+  it("resolves a pre-split bundle from the legacy slot and refreshes in place", async () => {
+    const store = fakeKeychainStore({
+      [`${SLACK_TOKEN_SERVICE}|me@taiv.tv`]: JSON.stringify(bundle({ expires_at: 5_000 })),
+    });
+    __setSlackOAuthFetch(async () =>
+      new Response(
+        JSON.stringify({ ok: true, access_token: "xoxe.refreshed", refresh_token: "r2", expires_in: 43_200 }),
+        { status: 200 },
+      ),
+    );
+    expect(await readSlackToken("me@taiv.tv", 4_000)).toBe("xoxe.refreshed");
+    expect(JSON.parse(store.get(`${SLACK_TOKEN_SERVICE}|me@taiv.tv`)!).access_token).toBe("xoxe.refreshed");
+    expect(store.has(`${OAUTH}|me@taiv.tv`)).toBe(false);
+  });
+
+  // Connect must never clobber the unthrottled credential.
+  it("saveSlackBundle writes the OAuth slot, leaving the legacy token intact", async () => {
+    const store = fakeKeychainStore({ [`${SLACK_TOKEN_SERVICE}|me@taiv.tv`]: "xoxp-own-app" });
+    await saveSlackBundle("me@taiv.tv", bundle());
+    expect(store.get(`${SLACK_TOKEN_SERVICE}|me@taiv.tv`)).toBe("xoxp-own-app");
+    expect(store.has(`${OAUTH}|me@taiv.tv`)).toBe(true);
+  });
+
+  it("rejects a pasted bot token, whose whole point would be lost", async () => {
+    fakeKeychainStore();
+    await expect(saveLegacyToken("me@taiv.tv", "xoxb-bot")).rejects.toThrow(/xoxp-/);
+  });
+
+  it("stores a pasted user token in the legacy slot", async () => {
+    const store = fakeKeychainStore();
+    await saveLegacyToken("me@taiv.tv", "  xoxp-pasted  ");
+    expect(store.get(`${SLACK_TOKEN_SERVICE}|me@taiv.tv`)).toBe("xoxp-pasted");
   });
 });

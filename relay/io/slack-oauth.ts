@@ -15,17 +15,26 @@
 // closed for a month comes back needing full re-consent, which the cockpit
 // must surface rather than failing silently.
 //
-// Keychain layout — SAME service/account as the legacy hand-pasted token, so
-// existing installs keep working:
-//   service: taiv-secretary-slack
-//   account: <the identity.json slackAccounts[].account>
-//   value:   either a raw "xoxp-…" string   (legacy, never expires)
-//            or a SlackTokenBundle JSON     (PKCE, rotates)
-// readSlackToken() accepts both — see the dual-mode note there.
+// Keychain layout — two slots, one account key each (from identity.json):
+//   taiv-secretary-slack        "xoxp-…"  the user's OWN app token, unthrottled
+//   taiv-secretary-slack-oauth  {bundle}  ours, one-click, rate-limited
+// Both may exist at once; resolveSlackCredential() decides which is used, and
+// prefers the legacy one. Installs that predate the split hold a bundle in the
+// first slot — that still resolves, and refreshes write back where they were
+// found, so there is nothing to migrate.
 
-import { getSecret, setJSON } from "./keychain.js";
+import { getSecret, KeychainEntryMissing, setJSON, setSecret } from "./keychain.js";
 
+// TWO slots, because the two credentials must coexist rather than overwrite
+// each other. A hand-pasted token comes from the USER's own Slack app, which
+// Slack treats as an internal custom app: 50+ req/min and 1000 objects per
+// request. A token from our distributed app is capped at 1/min and 15 objects
+// until we are listed on the Marketplace. Sharing one slot meant clicking
+// Connect silently destroyed the only high-throughput credential — and it
+// cannot be restored from here, because our flow can only ever issue OUR
+// app's token.
 export const SLACK_TOKEN_SERVICE = "taiv-secretary-slack";
+export const SLACK_OAUTH_TOKEN_SERVICE = "taiv-secretary-slack-oauth";
 export const SLACK_OAUTH_AUTHORIZE_URL = "https://slack.com/oauth/v2/authorize";
 export const SLACK_OAUTH_TOKEN_URL = "https://slack.com/api/oauth.v2.access";
 
@@ -295,28 +304,82 @@ export function needsRefresh(bundle: SlackTokenBundle, now: number = Date.now())
   return bundle.expires_at - now <= REFRESH_BUFFER_MS;
 }
 
+async function readSlot(
+  service: string,
+  account: string,
+): Promise<SlackTokenBundle | string | null> {
+  try {
+    return parseStoredToken(await getSecret(service, account));
+  } catch {
+    return null;
+  }
+}
+
+export interface ResolvedCredential {
+  /** A hand-pasted token from the user's own app, or our OAuth bundle. */
+  kind: "legacy" | "pkce";
+  token: string;
+  bundle?: SlackTokenBundle;
+  /** Which Keychain service it came from — refreshes write back to the same one. */
+  service: string;
+}
+
+// Which credential the runtime actually uses when both exist. LEGACY WINS, and
+// that is the whole point: it is the unthrottled one. Preferring the newer
+// credential would quietly cut a heavy user's throughput by ~50x.
+export async function resolveSlackCredential(
+  account: string,
+): Promise<ResolvedCredential | null> {
+  const primary = await readSlot(SLACK_TOKEN_SERVICE, account);
+  if (typeof primary === "string") {
+    return { kind: "legacy", token: primary, service: SLACK_TOKEN_SERVICE };
+  }
+  // A bundle can sit in EITHER slot: installs that predate the split wrote
+  // theirs into the original slot. Refreshes write back where they were found,
+  // so no migration step is needed.
+  const bundle = primary ?? (await readSlot(SLACK_OAUTH_TOKEN_SERVICE, account));
+  if (bundle && typeof bundle !== "string") {
+    return {
+      kind: "pkce",
+      token: bundle.access_token,
+      bundle,
+      service: primary ? SLACK_TOKEN_SERVICE : SLACK_OAUTH_TOKEN_SERVICE,
+    };
+  }
+  return null;
+}
+
 // THE read path every Slack caller goes through. Returns a usable bearer
 // token, refreshing first when the stored bundle is close to expiry.
-//
-// Dual-mode on purpose: users who set up before the PKCE flow have a static
-// xoxp- token that still works and must not be broken by this change. They get
-// migrated when they next click Connect, not by force.
 export async function readSlackToken(
   account: string,
   now: number = Date.now(),
 ): Promise<string> {
-  const raw = await getSecret(SLACK_TOKEN_SERVICE, account);
-  const stored = parseStoredToken(raw);
-  if (typeof stored === "string") return stored; // legacy static token
-  if (!needsRefresh(stored, now)) return stored.access_token;
-  const next = await refreshBundle(stored, now);
-  await setJSON(SLACK_TOKEN_SERVICE, account, next);
+  const cred = await resolveSlackCredential(account);
+  if (!cred) throw new KeychainEntryMissing(SLACK_TOKEN_SERVICE, account);
+  if (cred.kind === "legacy" || !cred.bundle) return cred.token;
+  if (!needsRefresh(cred.bundle, now)) return cred.token;
+  const next = await refreshBundle(cred.bundle, now);
+  await setJSON(cred.service, account, next);
   return next.access_token;
 }
 
+// The Connect flow writes to the OAuth slot only, so it can never clobber a
+// hand-pasted token sitting in the legacy slot.
 export async function saveSlackBundle(
   account: string,
   bundle: SlackTokenBundle,
 ): Promise<void> {
-  await setJSON(SLACK_TOKEN_SERVICE, account, bundle);
+  await setJSON(SLACK_OAUTH_TOKEN_SERVICE, account, bundle);
+}
+
+// Store a token pasted from the user's own Slack app. Shape-checked here
+// because the whole value of this path is that it is the unthrottled one — a
+// bundle pasted in by mistake would silently be the throttled credential.
+export async function saveLegacyToken(account: string, token: string): Promise<void> {
+  const t = token.trim();
+  if (!t.startsWith("xoxp-")) {
+    throw new Error("Expected a user token starting with xoxp- (not a bot xoxb- token)");
+  }
+  await setSecret(SLACK_TOKEN_SERVICE, account, t);
 }

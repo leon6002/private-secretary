@@ -31,6 +31,21 @@ side. Never add a token broker.
 - Disconnect calls `auth.revoke` BEFORE deleting the Keychain entry — deleting
   first leaves a live grant nothing can withdraw.
 
+## Two credentials, N workspaces
+
+Two Keychain slots per workspace, because they must coexist:
+`taiv-secretary-slack` holds a hand-pasted `xoxp-` from the USER's own Slack
+app (an internal custom app to Slack: 50+ req/min, 1000 objects);
+`taiv-secretary-slack-oauth` holds ours (1/min, 15 objects until Marketplace).
+`resolveSlackCredential` prefers the LEGACY one — it is the unthrottled path,
+and it cannot be reissued from the cockpit, so its Disconnect is disabled.
+
+Workspaces come from `identity.json.slackAccounts`, one Keychain key each.
+One-click additions are keyed `team:<team_id>` (ids survive renames, names do
+not) and labelled from the team name. **A label keys cursors and sourceErrors —
+never regenerate one**, which is why `appendSlackAccount` is idempotent and
+leaves existing entries byte-identical.
+
 Docs: `.claude/docs/slack-oauth.html` (flow + rate limits),
 `.claude/docs/slack-app-setup.html` (console walkthrough).
 

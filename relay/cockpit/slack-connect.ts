@@ -14,8 +14,16 @@ import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deleteSecret, getSecret } from "../io/keychain.js";
-import { SlackClient, SLACK_ACCOUNTS, SLACK_TOKEN_ACCOUNT } from "../io/slack-api.js";
-import { parseStoredToken, SLACK_REFRESH_TTL_MS, SLACK_TOKEN_SERVICE } from "../io/slack-oauth.js";
+import { SlackClient, SLACK_TOKEN_ACCOUNT } from "../io/slack-api.js";
+import { loadIdentity } from "../io/identity.js";
+import {
+  parseStoredToken,
+  resolveSlackCredential,
+  SLACK_OAUTH_TOKEN_SERVICE,
+  SLACK_REFRESH_TTL_MS,
+  SLACK_TOKEN_SERVICE,
+  type SlackTokenBundle,
+} from "../io/slack-oauth.js";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const CONSENT_SCRIPT = join(REPO_ROOT, "scripts", "auth", "slack-oauth.ts");
@@ -35,15 +43,8 @@ const defaultSlackConsentSpawn: SlackConsentSpawn = (argv) => {
   child.unref();
 };
 
-export type SlackCredentialKind =
-  | "none" // nothing stored — first-time Connect
-  | "legacy" // hand-pasted xoxp-, never expires
-  | "pkce"; // rotating bundle from the Connect flow
-
-export interface SlackConnectionStatus {
-  account: string;
-  kind: SlackCredentialKind;
-  connected: boolean;
+export interface SlackCredentialState {
+  present: boolean;
   team?: string;
   // ms epoch of ACCESS token expiry; 0 when the credential does not expire.
   // Machinery, not a user-facing deadline — it is ~12h out by design and the
@@ -54,63 +55,80 @@ export interface SlackConnectionStatus {
   // window, restarted by every refresh. THIS is the one worth showing, and it
   // only closes on a machine that stopped running.
   reconnectBy: number;
-  detail: string;
 }
 
-export async function slackConnectionStatus(
-  account: string = SLACK_TOKEN_ACCOUNT,
-): Promise<SlackConnectionStatus> {
-  let raw: string;
-  try {
-    raw = await getSecret(SLACK_TOKEN_SERVICE, account);
-  } catch {
-    return {
-      account,
-      kind: "none",
-      connected: false,
-      expiresAt: 0,
-      reconnectBy: 0,
-      detail: "not connected",
-    };
-  }
-  const stored = parseStoredToken(raw);
-  if (typeof stored === "string") {
-    return {
-      account,
-      kind: "legacy",
-      connected: true,
-      expiresAt: 0,
-      reconnectBy: 0,
-      detail: "connected · legacy token (no expiry)",
-    };
-  }
+export interface SlackWorkspace {
+  /** Keychain key. "team:T…" for workspaces added through the one-click flow;
+   *  older entries keep whatever key identity.json already had. */
+  account: string;
+  /** Source label. Keys cursors and sourceErrors — never regenerate it. */
+  label: string;
+  /** Which credential the runtime actually uses for THIS workspace. Legacy
+   *  wins — it is the unthrottled one, and preferring ours would cut
+   *  throughput ~50x. */
+  active: "legacy" | "oauth" | "none";
+  /** The user's own Slack app token: unthrottled, and unrecoverable from here
+   *  once removed, because our flow can only ever issue OUR app's token. */
+  legacy: SlackCredentialState;
+  /** Ours: one click to obtain, rate-limited until the app is on the
+   *  Marketplace. */
+  oauth: SlackCredentialState;
+}
+
+export interface SlackConnectionStatus {
+  workspaces: SlackWorkspace[];
+}
+
+const ABSENT: SlackCredentialState = { present: false, expiresAt: 0, reconnectBy: 0 };
+
+function bundleState(b: SlackTokenBundle): SlackCredentialState {
   return {
-    account,
-    kind: "pkce",
-    connected: true,
-    team: stored.team_name || stored.team_id || undefined,
-    expiresAt: stored.expires_at,
+    present: true,
+    team: b.team_name || b.team_id || undefined,
+    expiresAt: b.expires_at,
     // Pre-refreshed_at bundles fall back to the original consent time.
-    reconnectBy: (stored.refreshed_at ?? stored.granted_at) + SLACK_REFRESH_TTL_MS,
-    detail: stored.team_name ? `connected · ${stored.team_name}` : "connected",
+    reconnectBy: (b.refreshed_at ?? b.granted_at) + SLACK_REFRESH_TTL_MS,
   };
 }
 
-// Status for EVERY configured Slack workspace, each tagged with its source
-// `label` so the cockpit can key sourceErrors and render one row per account
-// (a machine can read Taiv + OSYX at once). The single-account
-// slackConnectionStatus stays for the connect/disconnect callers that act on
-// one workspace at a time.
-export async function slackConnectionStatuses(): Promise<
-  Array<SlackConnectionStatus & { label: string }>
-> {
-  return Promise.all(
-    SLACK_ACCOUNTS.map(async (a) => ({
-      ...(await slackConnectionStatus(a.account)),
-      label: a.label,
-    })),
-  );
+async function workspaceStatus(account: string, label: string): Promise<SlackWorkspace> {
+  const cred = await resolveSlackCredential(account);
+  const legacy: SlackCredentialState =
+    cred?.kind === "legacy" ? { present: true, expiresAt: 0, reconnectBy: 0 } : ABSENT;
+
+  // The OAuth bundle may resolve from either slot (pre-split installs kept
+  // theirs in the original one), and it is only reachable through resolve when
+  // no legacy token outranks it — so read the OAuth slot directly as well.
+  let oauth: SlackCredentialState = ABSENT;
+  if (cred?.kind === "pkce" && cred.bundle) oauth = bundleState(cred.bundle);
+  else {
+    try {
+      const raw = parseStoredToken(await getSecret(SLACK_OAUTH_TOKEN_SERVICE, account));
+      if (typeof raw !== "string") oauth = bundleState(raw);
+    } catch {
+      /* absent */
+    }
+  }
+
+  return {
+    account,
+    label,
+    active: cred ? (cred.kind === "legacy" ? "legacy" : "oauth") : "none",
+    legacy,
+    oauth,
+  };
 }
+
+// Reads identity FRESH rather than the module-load snapshot: adding a
+// workspace rewrites identity.json mid-process, and a cached list would leave
+// the new one invisible until the cockpit restarted.
+export async function slackConnectionStatus(): Promise<SlackConnectionStatus> {
+  const accounts = loadIdentity().slackAccounts;
+  return {
+    workspaces: await Promise.all(accounts.map((a) => workspaceStatus(a.account, a.label))),
+  };
+}
+
 
 export interface SlackDisconnect {
   ok: boolean;
@@ -132,10 +150,14 @@ const defaultSlackRevoke: SlackRevoke = async (token) =>
 export async function disconnectSlack(
   account: string = SLACK_TOKEN_ACCOUNT,
   revoke: SlackRevoke = defaultSlackRevoke,
+  which: "legacy" | "oauth" = "oauth",
 ): Promise<SlackDisconnect> {
+  // Only ever our own slot by default. Removing the legacy token is a
+  // different, unrecoverable act and has to be asked for explicitly.
+  const service = which === "legacy" ? SLACK_TOKEN_SERVICE : SLACK_OAUTH_TOKEN_SERVICE;
   let token: string | undefined;
   try {
-    const stored = parseStoredToken(await getSecret(SLACK_TOKEN_SERVICE, account));
+    const stored = parseStoredToken(await getSecret(service, account));
     token = typeof stored === "string" ? stored : stored.access_token;
   } catch {
     return { ok: true, revoked: false, detail: "Already disconnected." };
@@ -149,7 +171,7 @@ export async function disconnectSlack(
     revokeError = e instanceof Error ? e.message : String(e);
   }
 
-  await deleteSecret(SLACK_TOKEN_SERVICE, account).catch(() => {});
+  await deleteSecret(service, account).catch(() => {});
 
   return {
     ok: true,
@@ -174,12 +196,15 @@ export interface SlackConnectStart {
 export function startSlackConnect(
   account: string = SLACK_TOKEN_ACCOUNT,
   spawnFn: SlackConsentSpawn = defaultSlackConsentSpawn,
+  mode: "reauth" | "add" = "reauth",
 ): SlackConnectStart {
   const trimmed = account.trim();
-  if (!trimmed) {
+  // "add" needs no account: the key is derived from whichever workspace the
+  // user picks on Slack's page, which we only learn afterwards.
+  if (mode === "reauth" && !trimmed) {
     return { started: false, account, detail: "account required" };
   }
-  spawnFn(["tsx", CONSENT_SCRIPT, "consent", trimmed]);
+  spawnFn(mode === "add" ? ["tsx", CONSENT_SCRIPT, "add"] : ["tsx", CONSENT_SCRIPT, "consent", trimmed]);
   return {
     started: true,
     account: trimmed,

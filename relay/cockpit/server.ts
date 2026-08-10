@@ -43,7 +43,9 @@ import {
 } from "./api.js";
 import { checkRequest, loadOrMintCsrfToken } from "./security.js";
 import { startGmailReauth } from "./reauth.js";
-import { disconnectSlack, slackConnectionStatuses, startSlackConnect } from "./slack-connect.js";
+import { disconnectSlack, slackConnectionStatus, startSlackConnect } from "./slack-connect.js";
+import { saveLegacyToken } from "../io/slack-oauth.js";
+import { SLACK_TOKEN_ACCOUNT } from "../io/slack-api.js";
 import { loadIdentity } from "../io/identity.js";
 import { identityStatus, InvalidIdentity, writeIdentity } from "../io/identity-store.js";
 import { restartDaemon } from "./daemon-control.js";
@@ -417,7 +419,7 @@ export function createCockpitServer(opts: CockpitServerOptions): {
     // connected" (first run), a legacy hand-pasted token, and a rotating PKCE
     // bundle with an expiry.
     if (path === "/api/connections/slack" && method === "GET") {
-      sendJson(res, 200, await slackConnectionStatuses());
+      sendJson(res, 200, await slackConnectionStatus());
       return;
     }
 
@@ -425,7 +427,29 @@ export function createCockpitServer(opts: CockpitServerOptions): {
     if (path === "/api/connections/slack/disconnect" && method === "POST") {
       const body = (await readBody(req)) as Record<string, unknown>;
       const account = typeof body.account === "string" ? body.account.trim() : "";
-      sendJson(res, 200, account ? await disconnectSlack(account) : await disconnectSlack());
+      // Defaults to our own credential. Removing the user's own app token is
+      // unrecoverable from here, so it must be named.
+      const which = body.which === "legacy" ? "legacy" : "oauth";
+      sendJson(res, 200, await disconnectSlack(account || undefined, undefined, which));
+      return;
+    }
+
+    // Store a token pasted from the user's OWN Slack app. That credential is
+    // an internal custom app to Slack — 50+ req/min against our 1/min — so it
+    // stays the only workable path for a heavy mailbox until we are listed.
+    if (path === "/api/connections/slack/legacy" && method === "POST") {
+      const body = (await readBody(req)) as Record<string, unknown>;
+      const token = typeof body.token === "string" ? body.token : "";
+      const target = typeof body.account === "string" && body.account.trim()
+        ? body.account.trim()
+        : SLACK_TOKEN_ACCOUNT;
+      try {
+        await saveLegacyToken(target, token);
+      } catch (e) {
+        sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) });
+        return;
+      }
+      sendJson(res, 200, await slackConnectionStatus());
       return;
     }
 
@@ -434,7 +458,11 @@ export function createCockpitServer(opts: CockpitServerOptions): {
     if (path === "/api/connections/slack/connect" && method === "POST") {
       const body = (await readBody(req)) as Record<string, unknown>;
       const account = typeof body.account === "string" ? body.account.trim() : "";
-      const result = account ? startSlackConnect(account) : startSlackConnect();
+      // mode "add" authorizes an ADDITIONAL workspace and registers it in
+      // identity.json; the account key is only knowable after the user picks a
+      // workspace on Slack's page.
+      const mode = body.mode === "add" ? "add" : "reauth";
+      const result = startSlackConnect(account || undefined, undefined, mode);
       sendJson(res, result.started ? 200 : 400, result);
       return;
     }

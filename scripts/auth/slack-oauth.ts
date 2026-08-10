@@ -33,9 +33,12 @@ import {
   SLACK_CLIENT_ID,
   SLACK_REDIRECT_PATH,
   SLACK_REDIRECT_PORTS,
+  SLACK_OAUTH_TOKEN_SERVICE,
   SLACK_TOKEN_SERVICE,
   slackRedirectUri,
 } from "../../relay/io/slack-oauth.js";
+import { appendSlackAccount } from "../../relay/io/identity-store.js";
+import { restartDaemon } from "../../relay/cockpit/daemon-control.js";
 
 // The browser dance should take well under two minutes. Fail loudly rather
 // than hanging forever if the user closes the tab.
@@ -84,7 +87,10 @@ function openBrowser(url: string): void {
   spawn("open", [url], { detached: true, stdio: "ignore" }).unref();
 }
 
-async function cmdConsent(account: string): Promise<void> {
+// `add` authorizes a NEW workspace: the Keychain key is not known up front,
+// because the user only picks the workspace on Slack's own page. auth.test
+// tells us which team the token belongs to, and that is what it gets keyed on.
+async function cmdConsent(account: string, mode: "reauth" | "add" = "reauth"): Promise<void> {
   if (!SLACK_CLIENT_ID) {
     throw new Error(
       "SLACK_CLIENT_ID is empty. Set the shipped client id in relay/io/slack-oauth.ts " +
@@ -175,7 +181,27 @@ async function cmdConsent(account: string): Promise<void> {
     // Prove the token actually works before writing it — a stored-but-dead
     // credential is worse than none, because the daemon only finds out mid-scan.
     const who = await new SlackClient({ token: bundle.access_token }).authTest();
-    await saveSlackBundle(account, bundle);
+
+    // For a new workspace the account key comes from the team we just learned,
+    // and identity.json gains an entry so the scan loop starts polling it.
+    let target = account;
+    if (mode === "add") {
+      const reg = appendSlackAccount({ teamId: who.team_id, teamName: who.team });
+      target = reg.account;
+      console.log(
+        reg.added
+          ? `   registered ${who.team} as ${reg.label} in ${reg.path}`
+          : `   ${who.team} was already registered as ${reg.label}`,
+      );
+      if (reg.added) {
+        // The daemon reads slackAccounts once at startup, so without this the
+        // new workspace sits registered but unpolled until something else
+        // restarts it — the user would add it and see nothing happen.
+        const r = await restartDaemon();
+        console.log(`   ${r.detail}`);
+      }
+    }
+    await saveSlackBundle(target, bundle);
 
     cb.respond(
       page({
@@ -187,7 +213,7 @@ async function cmdConsent(account: string): Promise<void> {
     );
 
     console.log(`✅ ${who.team} — signed in as ${who.user}`);
-    console.log(`   stored: ${SLACK_TOKEN_SERVICE} / ${account}`);
+    console.log(`   stored: ${SLACK_OAUTH_TOKEN_SERVICE} / ${target}`);
     console.log(
       bundle.expires_at
         ? `   rotating token, expires ${new Date(bundle.expires_at).toLocaleString()}`
@@ -226,7 +252,8 @@ async function cmdShow(account: string): Promise<void> {
 
 function usage(): never {
   console.error("usage:");
-  console.error("  slack-oauth.ts consent [account]");
+  console.error("  slack-oauth.ts consent [account]   re-authorize an existing workspace");
+  console.error("  slack-oauth.ts add                 authorize an ADDITIONAL workspace");
   console.error("  slack-oauth.ts show    [account]");
   process.exit(2);
 }
@@ -234,6 +261,7 @@ function usage(): never {
 async function main(): Promise<void> {
   const [sub, account] = process.argv.slice(2);
   if (sub === "consent") await cmdConsent(account || defaultAccount());
+  else if (sub === "add") await cmdConsent(defaultAccount(), "add");
   else if (sub === "show") await cmdShow(account || defaultAccount());
   else usage();
 }
