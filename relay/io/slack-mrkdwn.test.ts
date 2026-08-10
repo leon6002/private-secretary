@@ -52,3 +52,44 @@ describe("renderSlackText", () => {
     expect(renderSlackText("a < b and c > d", names)).toBe("a < b and c > d");
   });
 });
+
+describe("emoji shortcodes", () => {
+  const names = new Map<string, string>();
+
+  // The reported case: three in a row, rendered as raw codes in the cockpit.
+  it("renders repeated shortcodes with no separator", () => {
+    expect(
+      renderSlackText(
+        "Omg :rolling_on_the_floor_laughing::rolling_on_the_floor_laughing:",
+        names,
+      ),
+    ).toBe("Omg 🤣🤣");
+  });
+
+  it("uses Slack's names, not GitHub's", () => {
+    // gemoji calls these rofl / thinking / roll_eyes. Slack does not, and a
+    // table built from the wrong project misses exactly these.
+    expect(renderSlackText(":thinking_face: :face_with_rolling_eyes:", names)).toBe("🤔 🙄");
+  });
+
+  // A custom workspace emoji has no Unicode equivalent. Dropping it would
+  // delete part of the message; leaving it costs two colons.
+  it("leaves an unknown shortcode as written", () => {
+    expect(renderSlackText("ship it :taiv-logo:", names)).toBe("ship it :taiv-logo:");
+  });
+
+  it("drops a trailing skin-tone modifier rather than rendering a swatch", () => {
+    expect(renderSlackText(":+1::skin-tone-4:", names)).toBe("👍");
+  });
+
+  // ":b:" is a real emoji name (🅱️), so an unguarded pass rewrites links.
+  it("does not touch colons inside a URL", () => {
+    expect(renderSlackText("see https://ex.com/a:b:c now", names)).toBe(
+      "see https://ex.com/a:b:c now",
+    );
+  });
+
+  it("leaves a clock time alone", () => {
+    expect(renderSlackText("at 10:30:00 sharp", names)).toBe("at 10:30:00 sharp");
+  });
+});
