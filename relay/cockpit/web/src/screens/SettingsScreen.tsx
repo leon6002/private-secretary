@@ -31,6 +31,7 @@ interface KeyStatus {
 
 interface SettingsData {
   llm: { mode: LlmMode; draftModel: string };
+  timezone: string;
   keys: { anthropic: KeyStatus; deepseek: KeyStatus };
 }
 
@@ -43,40 +44,142 @@ interface ActivityRecord {
 
 // ─── General ─────────────────────────────────────────────────────────
 
-const THEME_OPTIONS: Array<{ id: ThemePreference; label: string; hint: string }> = [
-  { id: "system", label: "System", hint: "follows macOS appearance" },
-  { id: "light", label: "Light", hint: "always light" },
-  { id: "dark", label: "Dark", hint: "always dark" },
+// A settings row: label and description on the left, the control on the right.
+// Apple's settings pattern, and the reason General can hold several unrelated
+// controls without becoming a wall of headings.
+function Row({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-6 py-3.5 border-b border-outline last:border-b-0">
+      <div className="min-w-0">
+        <div className="text-body-medium text-on-surface">{label}</div>
+        {hint && <div className="text-label-sm text-on-surface-variant mt-0.5">{hint}</div>}
+      </div>
+      <div className="flex-shrink-0">{children}</div>
+    </div>
+  );
+}
+
+const THEME_OPTIONS: Array<{ id: ThemePreference; label: string }> = [
+  { id: "system", label: "Auto" },
+  { id: "light", label: "Light" },
+  { id: "dark", label: "Dark" },
 ];
 
-function GeneralTab() {
+// A segmented control, not three described buttons. The preference has THREE
+// states — Auto is not decoration, it tracks the OS live — so a binary switch
+// could not express it. Segmented keeps all three visible at a glance and the
+// selection is the only thing that moves.
+function ThemeSegmented() {
   const { preference, setPreference } = useTheme();
   return (
-    <div className="flex flex-col gap-3">
-      <div className="text-body-medium text-on-surface">Theme</div>
-      <div className="flex gap-2">
-        {THEME_OPTIONS.map((o) => (
-          <button
-            key={o.id}
-            type="button"
-            aria-pressed={preference === o.id}
-            onClick={() => setPreference(o.id)}
-            className={cn(
-              "rounded border px-3 py-2 text-left transition-colors",
-              preference === o.id
-                ? "border-primary text-primary bg-primary/5"
-                : "border-outline text-on-surface-variant hover:text-on-surface",
-            )}
-          >
-            <div className="text-body-medium">{o.label}</div>
-            <div className="text-label-sm opacity-70">{o.hint}</div>
-          </button>
-        ))}
+    <div
+      role="radiogroup"
+      aria-label="Theme"
+      className="inline-flex rounded-md bg-surface-variant p-0.5"
+    >
+      {THEME_OPTIONS.map((o) => (
+        <button
+          key={o.id}
+          type="button"
+          role="radio"
+          aria-checked={preference === o.id}
+          onClick={() => setPreference(o.id)}
+          className={cn(
+            "px-3 py-1 rounded text-label-sm transition-colors",
+            preference === o.id
+              ? "bg-surface text-on-surface shadow-none"
+              : "text-on-surface-variant hover:text-on-surface",
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// The owner's zone: the clock every relative date ("tomorrow 9am") resolves
+// against, and the zone a meeting is read in when the conversation does not
+// name one. A wrong value is silent, so the detected machine zone is offered
+// as an explicit reset rather than left implicit.
+function TimezoneRow() {
+  const [tz, setTz] = useState<string>("");
+  const [saved, setSaved] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+  const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  useEffect(() => {
+    apiGet<{ timezone?: string }>("/api/settings")
+      .then((s) => {
+        setTz(s.timezone ?? "");
+        setSaved(s.timezone ?? "");
+      })
+      .catch(() => undefined);
+  }, []);
+
+  async function save(next: string) {
+    setBusy(true);
+    try {
+      const r = await apiPost<{ timezone: string }>("/api/settings/timezone", { timezone: next });
+      setTz(r.timezone);
+      setSaved(r.timezone);
+      toast(`Timezone set to ${r.timezone}. Takes effect on the next daemon start.`);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Row
+      label="Timezone"
+      hint={`Anchors dates like "tomorrow 9am" and reads meetings stated without a zone. Detected: ${detected}`}
+    >
+      <div className="flex gap-2 items-center">
+        <input
+          value={tz}
+          onChange={(e) => setTz(e.target.value)}
+          placeholder={detected}
+          aria-label="Timezone"
+          className={cn(
+            "w-[13rem] text-label-sm text-on-surface bg-surface border border-outline rounded",
+            "px-2 py-1 placeholder:text-on-surface-variant",
+            "focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary",
+          )}
+        />
+        <Button
+          variant="ghost"
+          disabled={busy || tz.trim() === saved}
+          onClick={() => void save(tz.trim())}
+        >
+          Save
+        </Button>
+        {saved !== detected && (
+          <Button variant="ghost" disabled={busy} onClick={() => void save("")}>
+            Use {detected}
+          </Button>
+        )}
       </div>
-      <p className="text-label-sm text-on-surface-variant leading-relaxed">
-        Stored on this machine only. System tracks the macOS appearance setting,
-        including live changes while the cockpit is open.
-      </p>
+    </Row>
+  );
+}
+
+function GeneralTab() {
+  return (
+    <div className="max-w-[62ch]">
+      <Row label="Theme" hint="Auto follows the macOS appearance, including live changes.">
+        <ThemeSegmented />
+      </Row>
+      <TimezoneRow />
     </div>
   );
 }

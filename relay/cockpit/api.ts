@@ -675,7 +675,7 @@ export class CockpitApi {
   // chars ("…1234") — enough to tell WHICH key is stored, nothing more.
 
   async getSettings(): Promise<CockpitSettings> {
-    const { llm } = loadSettings(this.opts.statePath);
+    const { llm, timezone } = loadSettings(this.opts.statePath);
     // "configured" = a key resolves at all. The resolvers also honor the
     // ANTHROPIC_API_KEY / DEEPSEEK_API_KEY env vars — deliberately: an env-
     // supplied key is just as usable by the daemon, so hiding it would lie.
@@ -690,6 +690,7 @@ export class CockpitApi {
     };
     return {
       llm,
+      timezone,
       keys: {
         anthropic: await probe(() => resolveAnthropicKey()),
         deepseek: await probe(() => resolveDeepseekKey()),
@@ -1233,6 +1234,8 @@ export type ApiKeyService = "anthropic" | "deepseek";
 
 export interface CockpitSettings {
   llm: { mode: LlmMode; draftModel: string };
+  /** The owner's IANA zone — always resolved, never blank (falls back to the machine). */
+  timezone: string;
   keys: Record<ApiKeyService, KeyStatus>;
 }
 
