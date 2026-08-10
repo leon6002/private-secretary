@@ -1,0 +1,94 @@
+import { describe, expect, it } from "vitest";
+import { AGENT_LABELS, restartServices, runUpdate, updateStatus, type Runner } from "./updater.js";
+
+function fakeGit(over: Record<string, string> = {}, fail?: string): { runner: Runner; calls: string[][] } {
+  const calls: string[][] = [];
+  const runner: Runner = async (file, args) => {
+    calls.push([file, ...args]);
+    if (fail && `${file} ${args[0]}`.startsWith(fail))
+      throw new Error([`${fail} exploded`, "line2", "line3", "TAIL_NOISE"].join("\n"));
+    const key = args.join(" ");
+    for (const [k, v] of Object.entries(over)) if (key.startsWith(k)) return { stdout: v };
+    return { stdout: "" };
+  };
+  return { runner, calls };
+}
+
+const CLEAN = {
+  "rev-parse --abbrev-ref": "dev",
+  "status --porcelain": "",
+  "rev-parse --short HEAD": "aaa1111",
+  "log -1": "some commit",
+  "rev-parse --short origin/dev": "bbb2222",
+  "rev-list --count": "3",
+};
+
+describe("updateStatus", () => {
+  it("fetches before reporting how far behind it is", async () => {
+    const { runner, calls } = fakeGit(CLEAN);
+    const s = await updateStatus(runner);
+    expect(s).toMatchObject({ current: "aaa1111", latest: "bbb2222", behind: 3, dirty: false });
+    expect(calls.some((c) => c[1] === "fetch")).toBe(true);
+  });
+
+  // A machine with no git, or a broken checkout, must not take the UI down.
+  it("reports an error instead of throwing", async () => {
+    const { runner } = fakeGit({}, "git rev-parse");
+    expect((await updateStatus(runner)).error).toBeTruthy();
+  });
+});
+
+describe("runUpdate", () => {
+  it("runs pull, install and build in order, then asks for a restart", async () => {
+    const { runner, calls } = fakeGit(CLEAN);
+    const r = await runUpdate(runner);
+    expect(r.ok).toBe(true);
+    expect(r.needsRestart).toBe(true);
+    expect(r.steps.map((s) => s.step)).toEqual(["pull", "dependencies", "build"]);
+    const order = calls.filter((c) => c[1] === "pull" || c[1] === "install" || c[1] === "run");
+    expect(order.map((c) => c[1])).toEqual(["pull", "install", "run"]);
+  });
+
+  // Discarding a user's edits to get an update through trades a small
+  // inconvenience for silent data loss.
+  it("refuses to touch a dirty checkout", async () => {
+    const { runner, calls } = fakeGit({ ...CLEAN, "status --porcelain": " M file.ts" });
+    const r = await runUpdate(runner);
+    expect(r.ok).toBe(false);
+    expect(r.steps[0]!.detail).toMatch(/uncommitted/i);
+    expect(calls.some((c) => c[1] === "pull")).toBe(false);
+  });
+
+  it("does nothing when already current", async () => {
+    const { runner, calls } = fakeGit({ ...CLEAN, "rev-list --count": "0" });
+    const r = await runUpdate(runner);
+    expect(r.ok).toBe(true);
+    expect(r.needsRestart).toBe(false);
+    expect(calls.some((c) => c[1] === "pull")).toBe(false);
+  });
+
+  // Restarting onto a half-applied update is how a working install breaks.
+  it("stops at the first failing step and does not ask for a restart", async () => {
+    const { runner, calls } = fakeGit(CLEAN, "npm install");
+    const r = await runUpdate(runner);
+    expect(r.ok).toBe(false);
+    expect(r.needsRestart).toBe(false);
+    expect(r.steps.map((s) => s.ok)).toEqual([true, false]);
+    expect(calls.some((c) => c[2] === "cockpit:build")).toBe(false);
+    // A failing npm prints hundreds of lines; only the head reaches the UI.
+    expect(r.steps[1]!.detail).toMatch(/exploded/);
+    expect(r.steps[1]!.detail).not.toMatch(/TAIL_NOISE/);
+  });
+});
+
+describe("restartServices", () => {
+  it("kickstarts both agents", () => {
+    const calls: string[][] = [];
+    restartServices((f, a) => calls.push([f, ...a]));
+    expect(calls).toHaveLength(AGENT_LABELS.length);
+    for (const c of calls) {
+      expect(c[0]).toBe("launchctl");
+      expect(c.slice(1, 3)).toEqual(["kickstart", "-k"]);
+    }
+  });
+});

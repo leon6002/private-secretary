@@ -802,6 +802,157 @@ function ToolsTab() {
 
 // ─── screen ──────────────────────────────────────────────────────────
 
+
+interface UpdateStatusDto {
+  current: string;
+  currentSubject: string;
+  latest: string;
+  behind: number;
+  dirty: boolean;
+  branch: string;
+  error?: string;
+}
+interface UpdateRunDto {
+  ok: boolean;
+  from: string;
+  to: string;
+  steps: Array<{ step: string; ok: boolean; detail?: string }>;
+  needsRestart: boolean;
+}
+
+// Updating without a terminal. The three phases are separate on purpose: the
+// cockpit is one of the processes the restart kills, so it cannot report the
+// outcome of its own restart — the page confirms by watching the running
+// commit change.
+function UpdateTab() {
+  const [status, setStatus] = useState<UpdateStatusDto | null>(null);
+  const [run, setRun] = useState<UpdateRunDto | null>(null);
+  const [busy, setBusy] = useState<"" | "checking" | "updating" | "restarting">("");
+
+  const load = useCallback(() => {
+    setBusy("checking");
+    apiGet<UpdateStatusDto>("/api/update")
+      .then(setStatus)
+      .catch(() => setStatus(null))
+      .finally(() => setBusy(""));
+  }, []);
+  useEffect(load, [load]);
+
+  async function update() {
+    setBusy("updating");
+    setRun(null);
+    try {
+      setRun(await apiPost<UpdateRunDto>("/api/update", {}));
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy("");
+      load();
+    }
+  }
+
+  async function restart() {
+    setBusy("restarting");
+    const before = status?.current;
+    try {
+      await apiPost("/api/update/restart", {});
+    } catch {
+      // Expected: the server dies mid-response. Not an error to report.
+    }
+    // Poll until the cockpit is back on a different commit — the only honest
+    // confirmation available when the process answering was restarted.
+    const deadline = Date.now() + 90_000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 2000));
+      try {
+        const s = await apiGet<UpdateStatusDto>("/api/update");
+        if (s.current && s.current !== before) {
+          setStatus(s);
+          setBusy("");
+          toast(`Now running ${s.current}.`);
+          return;
+        }
+      } catch {
+        /* still down — keep waiting */
+      }
+    }
+    setBusy("");
+    toast("Restart is taking longer than expected — check the logs.", true);
+  }
+
+  const upToDate = !!status && !status.error && status.behind === 0;
+
+  return (
+    <div className="max-w-[62ch]">
+      <h2 className="text-body-large text-on-surface font-medium mb-1">Software update</h2>
+      <p className="text-label-sm text-on-surface-variant mb-4">
+        Pulls the latest version, installs it and restarts the background daemon. Nothing here
+        needs a terminal.
+      </p>
+
+      {status?.error ? (
+        <p className="text-label-sm text-error">Could not check for updates: {status.error}</p>
+      ) : (
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-label-sm mb-4">
+          <dt className="text-on-surface">Running</dt>
+          <dd className="text-on-surface-variant">
+            {status ? `${status.current} · ${status.currentSubject}` : "…"}
+          </dd>
+          <dt className="text-on-surface">Available</dt>
+          <dd className="text-on-surface-variant">
+            {!status
+              ? "…"
+              : upToDate
+                ? "up to date"
+                : `${status.latest} · ${status.behind} commit${status.behind === 1 ? "" : "s"} ahead`}
+          </dd>
+        </dl>
+      )}
+
+      {status?.dirty && (
+        <p className="text-label-sm text-error mb-3">
+          This install has local changes, so updating is blocked — applying one would discard
+          them.
+        </p>
+      )}
+
+      <div className="flex gap-2">
+        <Button variant="ghost" onClick={load} disabled={busy !== ""}>
+          {busy === "checking" ? "Checking…" : "Check again"}
+        </Button>
+        <Button
+          onClick={() => void update()}
+          disabled={busy !== "" || upToDate || !!status?.dirty || !!status?.error}
+        >
+          {busy === "updating" ? "Updating…" : "Update now"}
+        </Button>
+        {run?.needsRestart && (
+          <Button variant="ghost" onClick={() => void restart()} disabled={busy !== ""}>
+            {busy === "restarting" ? "Restarting…" : "Restart to apply"}
+          </Button>
+        )}
+      </div>
+
+      {run && (
+        <ul className="mt-4 flex flex-col gap-1">
+          {run.steps.map((s) => (
+            <li key={s.step} className="text-label-sm flex gap-2">
+              <span className={s.ok ? "text-emerald-500" : "text-error"}>{s.ok ? "✓" : "✗"}</span>
+              <span className="text-on-surface">{s.step}</span>
+              {s.detail && <span className="text-on-surface-variant">— {s.detail}</span>}
+            </li>
+          ))}
+          {run.ok && run.needsRestart && (
+            <li className="text-label-sm text-on-surface-variant mt-1">
+              Built {run.from} → {run.to}. Restart to run it.
+            </li>
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 const TABS = [
   { id: "general", label: "General" },
   { id: "model", label: "Model" },
@@ -809,6 +960,7 @@ const TABS = [
   { id: "google", label: "Google" },
   { id: "tools", label: "Tools" },
   { id: "activity", label: "Activity" },
+  { id: "update", label: "Update" },
 ];
 
 export default function SettingsScreen() {
@@ -833,6 +985,7 @@ export default function SettingsScreen() {
         <div className="w-full max-w-[720px] flex flex-col gap-4">
           <Tabs tabs={TABS} active={tab} onChange={setTab} />
           {tab === "general" && <GeneralTab />}
+          {tab === "update" && <UpdateTab />}
           {tab === "model" && settings && <ModelTab llm={settings.llm} />}
           {tab === "keys" && settings && <KeysTab keys={settings.keys} onChanged={reload} />}
           {tab === "google" && <GoogleTab />}

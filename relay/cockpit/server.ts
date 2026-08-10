@@ -55,6 +55,8 @@ import { SLACK_TOKEN_ACCOUNT } from "../io/slack-api.js";
 import { loadIdentity } from "../io/identity.js";
 import { identityStatus, InvalidIdentity, writeIdentity } from "../io/identity-store.js";
 import { restartDaemon } from "./daemon-control.js";
+import { restartServices, runUpdate, updateStatus } from "./updater.js";
+import { spawn } from "node:child_process";
 import { InvalidActionTransition } from "../core/action-item.js";
 import {
   EXISTENCE_VERDICTS,
@@ -390,6 +392,28 @@ export function createCockpitServer(opts: CockpitServerOptions): {
       }
       const result = await startGmailReauth(mailbox);
       sendJson(res, result.started ? 200 : 400, result);
+      return;
+    }
+
+    // Software update. Split into inspect / apply / restart because the
+    // cockpit is one of the processes being restarted: it cannot answer a
+    // request it is being killed during, so the browser confirms by watching
+    // the reported commit change instead.
+    if (path === "/api/update" && method === "GET") {
+      sendJson(res, 200, await updateStatus());
+      return;
+    }
+    if (path === "/api/update" && method === "POST") {
+      const r = await runUpdate();
+      sendJson(res, r.ok ? 200 : 400, r);
+      return;
+    }
+    if (path === "/api/update/restart" && method === "POST") {
+      // Answer FIRST — the restart kills this process moments later.
+      sendJson(res, 200, { ok: true, detail: "Restarting…" });
+      restartServices((file, args) => {
+        spawn(file, args, { detached: true, stdio: "ignore" }).unref();
+      });
       return;
     }
 
