@@ -36,9 +36,11 @@ export interface SecretarySettings {
    */
   timezone: string;
   /**
-   * Apply updates without being asked. Off by default: an update restarts the
-   * daemon and the cockpit, so turning it on has to be the owner's decision,
-   * not something they inherit from a default.
+   * Apply updates without being asked. ON by default, the way every desktop
+   * app the owner already runs behaves. An install that quietly falls years
+   * behind is the worse failure: it keeps shipping bugs that were fixed, to
+   * someone with no terminal and no reason to suspect anything is wrong.
+   * The checkbox is right there for anyone who disagrees.
    */
   autoUpdate: boolean;
 }
@@ -58,7 +60,7 @@ export function machineTimeZone(): string {
 export const DEFAULT_SETTINGS: SecretarySettings = {
   llm: { mode: "cli", draftModel: "opus" },
   timezone: "",
-  autoUpdate: false,
+  autoUpdate: true,
 };
 
 // settingsPathFor follows the same convention as CockpitApi.projectsDir():
@@ -92,9 +94,10 @@ export function loadSettings(statePath: string): SecretarySettings {
       // guess like UTC: booking someone's meetings in the wrong zone is the
       // failure this whole area exists to prevent.
       timezone: tz && isValidTimeZone(tz) ? tz : machineTimeZone(),
-      // Anything other than a literal true is off. A half-written file must
-      // never be read as consent to restart the machine's daemon unattended.
-      autoUpdate: raw?.autoUpdate === true,
+      // Only a literal false turns it off. A missing key means an install
+      // that predates the setting, and those are exactly the ones that most
+      // need to catch up — defaulting them to off would freeze them there.
+      autoUpdate: raw?.autoUpdate !== false,
     };
   } catch {
     return { ...structuredClone(DEFAULT_SETTINGS), timezone: machineTimeZone() };

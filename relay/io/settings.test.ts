@@ -74,16 +74,24 @@ describe("saveSettings", () => {
 });
 
 describe("autoUpdate", () => {
-  // Unattended updates restart the daemon. Consent has to be explicit, so
-  // anything that is not a literal true reads as off — including the shapes a
-  // half-written or hand-edited file produces.
-  it("is off unless the file says exactly true", () => {
-    for (const v of [undefined, "true", 1, null]) {
-      mkdirSync(join(dir, "config"), { recursive: true });
-      writeFileSync(settingsPathFor(statePath), JSON.stringify({ autoUpdate: v }));
-      expect(loadSettings(statePath).autoUpdate).toBe(false);
-    }
-    writeFileSync(settingsPathFor(statePath), JSON.stringify({ autoUpdate: true }));
+  // On unless the owner said otherwise. An install with no setting is one that
+  // predates it, and those are the installs that most need to catch up.
+  it("is on for a file that never mentions it", () => {
+    mkdirSync(join(dir, "config"), { recursive: true });
+    writeFileSync(settingsPathFor(statePath), JSON.stringify({ llm: { mode: "cli" } }));
+    expect(loadSettings(statePath).autoUpdate).toBe(true);
+  });
+
+  it("is on when the file is missing entirely", () => {
+    expect(loadSettings(statePath).autoUpdate).toBe(true);
+  });
+
+  // Turning it OFF is the deliberate act, so only the literal false does it.
+  it("is off only when the file says exactly false", () => {
+    mkdirSync(join(dir, "config"), { recursive: true });
+    writeFileSync(settingsPathFor(statePath), JSON.stringify({ autoUpdate: false }));
+    expect(loadSettings(statePath).autoUpdate).toBe(false);
+    writeFileSync(settingsPathFor(statePath), JSON.stringify({ autoUpdate: "false" }));
     expect(loadSettings(statePath).autoUpdate).toBe(true);
   });
 });
