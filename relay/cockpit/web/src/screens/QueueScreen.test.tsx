@@ -6,7 +6,7 @@
 // with restore. Drag-to-re-tier is NOT covered — jsdom's drag support is
 // too poor; it is verified manually in the browser.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 vi.mock("../lib/api", () => ({
@@ -381,3 +381,66 @@ describe("QueueScreen", () => {
     expect(screen.getAllByRole("button", { name: /Create ticket/ }).length).toBeGreaterThan(0);
   });
 });
+
+describe("Show original", () => {
+  function stateWithContext(context: Record<string, unknown>) {
+    const st = makeState();
+    st.clusters[0]!.actions = [makeAction({ context })];
+    return st;
+  }
+
+  it("names the speaker and stamps the time instead of printing a raw user id", async () => {
+    const at = Date.UTC(2026, 7, 9, 14, 5);
+    mockApiGet.mockResolvedValue(
+      stateWithContext({
+        original_message: "U07VD53V7M3: Thursday 3pm",
+        original_transcript: [{ speaker: "Sandro Pinto", self: false, at, text: "Thursday 3pm" }],
+      }),
+    );
+    renderQueue();
+
+    // Both Show-original blocks live in the DOM (collapsed != unrendered), so
+    // scope to the one under test.
+    const d = (await screen.findAllByText("Show original"))[0]!.closest("details")!;
+    fireEvent.click(screen.getAllByText("Show original")[0]!);
+    expect(within(d).getByText("Sandro Pinto")).toBeTruthy();
+    expect(within(d).getByText("Thursday 3pm")).toBeTruthy();
+    expect(d.querySelector("time")?.getAttribute("datetime")).toBe(new Date(at).toISOString());
+    // The raw line must not be dumped alongside it.
+    // Both "Show original" blocks (summary and per-action) use the structured
+    // form, so the raw id never reaches the screen.
+    expect(screen.queryByText(/U07VD53V7M3/)).toBeNull();
+  });
+
+  // Slack's grouping rule. Without it a burst of one-line messages reads as
+  // that many separate speakers, which is what the old plain-text view did.
+  it("collapses the header for consecutive messages from one speaker", async () => {
+    const t0 = Date.UTC(2026, 7, 9, 14, 0);
+    mockApiGet.mockResolvedValue(
+      stateWithContext({
+        original_transcript: [
+          { speaker: "Leo", self: true, at: t0, text: "one" },
+          { speaker: "Leo", self: true, at: t0 + 30_000, text: "two" },
+          { speaker: "Sandro", self: false, at: t0 + 60_000, text: "three" },
+        ],
+      }),
+    );
+    renderQueue();
+
+    const d = (await screen.findAllByText("Show original"))[0]!.closest("details")!;
+    fireEvent.click(screen.getAllByText("Show original")[0]!);
+    expect(within(d).getAllByText("Leo")).toHaveLength(1);
+    expect(within(d).getByText("two")).toBeTruthy();
+    expect(within(d).getAllByText("Sandro")).toHaveLength(1);
+  });
+
+  // Cards written before the reader carried structure keep working.
+  it("falls back to the raw text when there is no transcript", async () => {
+    mockApiGet.mockResolvedValue(stateWithContext({ original_message: "me: hi\nU07: yo" }));
+    renderQueue();
+
+    fireEvent.click((await screen.findAllByText("Show original"))[0]!);
+    expect(screen.getAllByText(/U07: yo/).length).toBeGreaterThan(0);
+  });
+});
+

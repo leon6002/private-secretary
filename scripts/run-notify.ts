@@ -35,7 +35,8 @@ import { GmailClient, getHeader } from "../relay/io/gmail-api.js";
 import { extractText } from "../relay/sources/gmail-direct.js";
 import { KNOWN_MAILBOXES } from "../relay/io/google-oauth.js";
 import type { InboundMessage, Persona } from "../relay/core/types.js";
-import type { ActionItem } from "../relay/core/action-item.js";
+import type { ActionItem, TranscriptMessage } from "../relay/core/action-item.js";
+import { resolveSlackUserNames } from "../relay/io/slack-users.js";
 
 // Decode a message's image attachments to local file paths the LLM can read.
 // WeChat: decode_image (the V2 AES image key must be in the decrypt config).
@@ -116,6 +117,8 @@ const refreshTtlMin = num("--refresh-ttl-min", 10);
 const refreshMaxPerTick = num("--refresh-max", 12);
 const heartbeatPath = `${dirname(statePath)}/notify-heartbeat.json`;
 const daemonLockPath = `${dirname(statePath)}/run-notify.pid`;
+// Same disk cache the scan loop uses, so a name looked up there is free here.
+const SLACK_NAME_CACHE = `${dirname(statePath)}/slack-users.json`;
 
 // Single-instance guard. Parallel Claude sessions kept launching duplicate daemons
 // that raced the shared state file (cost real work on 2026-06-28). Refuse to start
@@ -225,7 +228,16 @@ function gmailClientFor(email: string): GmailClient {
   return c;
 }
 
-async function fetchThread(card: ActionItem): Promise<string | null> {
+// Returns the LLM-facing text AND, when the reader can supply it, the same
+// conversation as structured messages. The text keeps the exact shape the
+// refresh prompt was tuned on; the structured form exists because the cockpit
+// cannot render a name or a time out of "U07VD53V7M3: hi".
+export interface FetchedThread {
+  text: string;
+  messages?: TranscriptMessage[];
+}
+
+async function fetchThread(card: ActionItem): Promise<FetchedThread | null> {
   const prefix = card.source_message_id.split(":")[0];
   try {
     if (prefix === "wechat") {
@@ -241,7 +253,9 @@ async function fetchThread(card: ActionItem): Promise<string | null> {
       //     which TRUNCATES the newest messages in a busy conversation — so 詹毅's
       //     07-06 Damon update was cut off and the card stayed stale.
       // Newest-anchored always includes the latest reply, whatever the volume.
-      return await wechatHistory(name, { limit: 60 });
+      // WeChat's reader hands back pre-formatted prose, so there is no
+      // structure to extract — the cockpit falls back to the text for these.
+      return { text: await wechatHistory(name, { limit: 60 }) };
     }
     if (prefix === "slack") {
       const channel = card.source_message_id.split(":")[1];
@@ -258,8 +272,22 @@ async function fetchThread(card: ActionItem): Promise<string | null> {
           if (!r.messages || r.messages.length === 0) continue;
           const ordered = [...r.messages].reverse(); // oldest-first for reading
           const lines: string[] = [];
+          const structured: TranscriptMessage[] = [];
+          // One users.info round per unseen id, cached on disk across ticks.
+          const ids = new Set<string>();
+          for (const m of ordered) if (m.user && m.user !== self) ids.add(m.user);
+          const names = await resolveSlackUserNames(client, [...ids], SLACK_NAME_CACHE);
+          const nameOf = (u?: string): string =>
+            u === self ? "me" : (u ? names.get(u) ?? u : "?");
+          const atOf = (ts?: string): number => (ts ? Math.round(Number(ts) * 1000) : 0);
           for (const m of ordered) {
             lines.push(`${m.user === self ? "me" : (m.user ?? "?")}: ${m.text ?? ""}`);
+            structured.push({
+              speaker: nameOf(m.user),
+              self: m.user === self,
+              at: atOf(m.ts),
+              text: m.text ?? "",
+            });
             // Pull thread REPLIES too — conversations.history returns only top-level
             // messages, so a decision made in a thread (e.g. a meeting time confirmed
             // in a reply: "That works for me") is otherwise invisible to the refresh.
@@ -267,14 +295,23 @@ async function fetchThread(card: ActionItem): Promise<string | null> {
             if (rc > 0 && m.ts) {
               try {
                 const rep = await client.conversationsReplies({ channel, ts: m.ts, limit: 30 });
-                for (const t of (rep.messages ?? []).slice(1)) // slice(1): skip the parent (already added)
+                for (const t of (rep.messages ?? []).slice(1)) {
+                  // slice(1): skip the parent (already added)
                   lines.push(`  ↳ ${t.user === self ? "me" : (t.user ?? "?")}: ${t.text ?? ""}`);
+                  structured.push({
+                    speaker: nameOf(t.user),
+                    self: t.user === self,
+                    at: atOf(t.ts),
+                    text: t.text ?? "",
+                    threadReply: true,
+                  });
+                }
               } catch {
                 /* replies unavailable for this parent → skip */
               }
             }
           }
-          return lines.join("\n");
+          return { text: lines.join("\n"), messages: structured };
         } catch {
           /* not this workspace (channel_not_found) → try the next account */
         }
@@ -286,9 +323,20 @@ async function fetchThread(card: ActionItem): Promise<string | null> {
       if (!threadId) return null; // legacy card without the thread locator
       const mailbox = typeof card.params?.mailbox === "string" ? card.params.mailbox : KNOWN_MAILBOXES[0]!;
       const t = await gmailClientFor(mailbox).getThread({ id: threadId, format: "full" });
-      return (t.messages ?? [])
-        .map((m) => `From ${getHeader(m.payload, "From") ?? "?"}:\n${extractText(m)}`)
-        .join("\n---\n");
+      const msgs = t.messages ?? [];
+      return {
+        text: msgs
+          .map((m) => `From ${getHeader(m.payload, "From") ?? "?"}:\n${extractText(m)}`)
+          .join("\n---\n"),
+        messages: msgs.map((m) => ({
+          speaker: getHeader(m.payload, "From") ?? "?",
+          // Gmail threads are read for a mailbox we own, but the reader has no
+          // cheap "is this me" signal here — leave it false rather than guess.
+          self: false,
+          at: Number(m.internalDate ?? 0),
+          text: extractText(m),
+        })),
+      };
     }
   } catch {
     return null; // reader unavailable / fetch failed → skip this conversation
@@ -425,7 +473,13 @@ async function buildPersonaUpdate(): Promise<PersonaUpdateDeps | undefined> {
           : createClaudeCliJsonCaller({ model: draftModel });
     const { resolve: resolvePersona } = buildPersonaResolver(loadPersonas(personaDir));
     console.log(`[notify] persona commitments update enabled via ${llmMode}`);
-    return { json, resolvePersona, fetchThread, personaDir };
+    return {
+      json,
+      resolvePersona,
+      // persona-update reads prose, not structure — hand it the text half.
+      fetchThread: async (card: ActionItem) => (await fetchThread(card))?.text ?? null,
+      personaDir,
+    };
   } catch (e) {
     console.log(`[notify] persona update DISABLED — ${(e as Error).message.split("\n")[0]}`);
     return undefined;

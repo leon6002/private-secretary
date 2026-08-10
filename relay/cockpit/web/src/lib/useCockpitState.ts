@@ -33,6 +33,15 @@
 import { createContext, useCallback, useEffect, useState } from "react";
 import { apiGet } from "./api";
 
+export interface TranscriptMessage {
+  speaker: string;
+  self: boolean;
+  /** ms epoch; 0 when the reader had no timestamp. */
+  at: number;
+  text: string;
+  threadReply?: boolean;
+}
+
 export interface SourceError {
   message: string;
   at: string; // ISO timestamp
@@ -70,6 +79,8 @@ export interface QueueAction {
   target?: { platform?: string; personaKey?: string };
   context?: {
     original_message?: string;
+    /** Structured form of the same conversation; absent on older cards. */
+    original_transcript?: TranscriptMessage[];
     sender_handle?: string;
     sent_at?: string;
   };

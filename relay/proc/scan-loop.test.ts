@@ -571,7 +571,7 @@ describe("runScanTick", () => {
         headline: "实车测试 周三 9:30", summary: "时间已定", next_actions: [],
       }],
       resolvePersona: () => null,
-      fetchThread: async () => "me: 时间定了告诉我\n张工: 周三九点半",
+      fetchThread: async () => ({ text: "me: 时间定了告诉我\n张工: 周三九点半" }),
       now: () => "2026-06-23T12:00:00Z",
     };
     await runScanTick({ statePath, sources: [], refresh });
@@ -613,7 +613,7 @@ describe("runScanTick", () => {
         headline: "Q3 评审", summary: "已定", next_actions: [],
       }],
       resolvePersona: () => null,
-      fetchThread: async () => "me: 周三九点半见\n张工: 好",
+      fetchThread: async () => ({ text: "me: 周三九点半见\n张工: 好" }),
       now: () => "2026-06-23T12:00:00Z",
     };
     await runScanTick({ statePath, sources: [], refresh });
@@ -950,7 +950,7 @@ describe("runScanTick", () => {
         headline: "实车测试 周三 14:00", summary: "时间已改", next_actions: [],
       }],
       resolvePersona: () => null,
-      fetchThread: async () => "me: 时间定了告诉我\n张工: 改到下午两点",
+      fetchThread: async () => ({ text: "me: 时间定了告诉我\n张工: 改到下午两点" }),
       now: () => "2026-06-23T12:00:00Z",
       ttlMs: 0, // the module-level TTL map persists across tests in this file
     };

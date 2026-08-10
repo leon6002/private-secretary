@@ -26,7 +26,10 @@ function deps(over: Partial<RefreshDeps> & { actions?: DraftedAction[]; thread?:
   return {
     llm: async () => over.actions ?? [],
     resolvePersona: () => null,
-    fetchThread: async () => (over.thread === undefined ? "me: ...\n张工: 周三九点半定了" : over.thread),
+    fetchThread: async () => {
+      const t = over.thread === undefined ? "me: ...\n张工: 周三九点半定了" : over.thread;
+      return t === null ? null : { text: t };
+    },
     now: () => "2026-06-23T12:00:00Z",
     nowMs: () => 10_000_000,
     ...over,

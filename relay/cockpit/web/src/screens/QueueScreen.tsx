@@ -61,6 +61,7 @@ import {
 } from "lucide-react";
 import { apiGet, apiPost } from "../lib/api";
 import { Avatar } from "../lib/avatar";
+import type { TranscriptMessage } from "../lib/useCockpitState";
 import { cn } from "../lib/cn";
 import { isChinese } from "../lib/text";
 import { timeAgo } from "../lib/time";
@@ -726,7 +727,64 @@ export default function QueueScreen() {
   // ─── render pieces (function-call style, per the header comment) ──
 
   // One task card in the Today list.
-  function renderTaskCard(c: TaskCluster, tierMeta: (typeof TIERS)[number] | null) {
+  // A conversation, rendered as one. The old view printed the raw
+// "U07VD53V7M3: text" lines the reader produced — no name, no time, no sense of
+// who is speaking. Cards written before the reader carried structure fall back
+// to that string, so both paths stay supported.
+function Transcript({ messages }: { messages: TranscriptMessage[] }) {
+  return (
+    <div className="mt-2 flex flex-col gap-0.5">
+      {messages.map((m, i) => {
+        const prev = messages[i - 1];
+        // Slack's grouping rule: consecutive messages from the same speaker
+        // within a few minutes lose the repeated header. Without this a burst
+        // of one-line messages reads as ten separate people.
+        const grouped =
+          !!prev &&
+          prev.self === m.self &&
+          prev.speaker === m.speaker &&
+          !!m.at &&
+          !!prev.at &&
+          m.at - prev.at < 5 * 60 * 1000;
+        return (
+          <div key={i} className={cn("flex gap-2", grouped ? "mt-0" : "mt-2.5")}>
+            <div className="w-6 flex-shrink-0">
+              {!grouped && <Avatar label={m.speaker} hueKey={m.speaker} size={24} />}
+            </div>
+            <div className="min-w-0 flex-1">
+              {!grouped && (
+                <div className="flex items-baseline gap-2">
+                  <span className="text-label-sm text-on-surface font-medium">{m.speaker}</span>
+                  {m.at > 0 && (
+                    <time
+                      className="text-label-xs text-on-surface-variant"
+                      dateTime={new Date(m.at).toISOString()}
+                    >
+                      {new Date(m.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                    </time>
+                  )}
+                  {m.threadReply && (
+                    <span className="text-label-xs text-on-surface-variant opacity-70">in thread</span>
+                  )}
+                </div>
+              )}
+              <div
+                className={cn(
+                  "text-body-medium text-on-surface whitespace-pre-wrap break-words",
+                  isChinese(m.text) && "font-chinese",
+                )}
+              >
+                {m.text}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function renderTaskCard(c: TaskCluster, tierMeta: (typeof TIERS)[number] | null) {
     const key = taskKey(c);
     const selected = key === selectedTaskId && !editCardId;
     const title = c.title || (c.actions[0] && (c.actions[0].headline || c.actions[0].reason)) || "Task";
@@ -1103,19 +1161,23 @@ export default function QueueScreen() {
             </div>
           )}
           {renderProvenance(a)}
-          {a.context?.original_message && (
-            <details className="mb-2">
-              <summary className="text-label-xs text-on-surface-variant cursor-pointer select-none">
+                    {(a.context?.original_transcript?.length || a.context?.original_message) && (
+            <details className="mt-2">
+              <summary className="text-label-sm text-on-surface-variant cursor-pointer select-none">
                 Show original
               </summary>
-              <p
-                className={cn(
-                  "mt-1 text-label-sm text-on-surface-variant whitespace-pre-wrap border-l-2 border-outline pl-2",
-                  isChinese(a.context.original_message) && "font-chinese",
-                )}
-              >
-                {a.context.original_message}
-              </p>
+              {a.context.original_transcript?.length ? (
+                <Transcript messages={a.context.original_transcript} />
+              ) : (
+                <p
+                  className={cn(
+                    "mt-1.5 text-label-sm text-on-surface-variant whitespace-pre-wrap border-l-2 border-outline pl-3",
+                    isChinese(a.context.original_message ?? "") && "font-chinese",
+                  )}
+                >
+                  {a.context.original_message}
+                </p>
+              )}
             </details>
           )}
           <div className="mt-2">{control}</div>
@@ -1266,19 +1328,23 @@ export default function QueueScreen() {
             <p className={cn("text-body-base text-on-surface leading-relaxed", isChinese(primary.summary) && "font-chinese")}>
               {primary.summary}
             </p>
-            {primary.context?.original_message && (
+            {(primary.context?.original_transcript?.length || primary.context?.original_message) && (
               <details className="mt-3">
                 <summary className="text-label-sm text-on-surface-variant cursor-pointer select-none">
                   Show original
                 </summary>
-                <p
-                  className={cn(
-                    "mt-2 text-body-medium text-on-surface-variant whitespace-pre-wrap border-l-2 border-outline pl-3",
-                    isChinese(primary.context.original_message) && "font-chinese",
-                  )}
-                >
-                  {primary.context.original_message}
-                </p>
+                {primary.context.original_transcript?.length ? (
+                  <Transcript messages={primary.context.original_transcript} />
+                ) : (
+                  <p
+                    className={cn(
+                      "mt-2 text-body-medium text-on-surface-variant whitespace-pre-wrap border-l-2 border-outline pl-3",
+                      isChinese(primary.context.original_message ?? "") && "font-chinese",
+                    )}
+                  >
+                    {primary.context.original_message}
+                  </p>
+                )}
               </details>
             )}
           </section>
@@ -1791,7 +1857,11 @@ export default function QueueScreen() {
           )}
           <div className="pt-2">{renderDrawer()}</div>
         </div>
-        <div className="flex-1 bg-background overflow-y-auto flex justify-center p-6">
+        {/* Padding lives on the SCROLLED child, not the scroll container. A
+            flex container with overflow drops its trailing padding, so p-6 here
+            meant the last card sat flush against the bottom edge with nothing
+            to scroll into — the pane looked cut off and would not go further. */}
+        <div className="flex-1 bg-background overflow-y-auto flex justify-center">
           <AnimatePresence>
             <motion.div
               key={detailKey}
@@ -1799,7 +1869,7 @@ export default function QueueScreen() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.15 }}
-              className="w-full flex justify-center"
+              className="w-full flex justify-center p-6 pb-16"
             >
               {detail}
             </motion.div>

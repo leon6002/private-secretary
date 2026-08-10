@@ -15,6 +15,7 @@ import {
   validateActionItem,
   type ActionContext,
   type ActionItem,
+  type TranscriptMessage,
 } from "../core/action-item.js";
 import type { Persona, Platform } from "../core/types.js";
 import { clusterKey } from "../core/unit-key.js";
@@ -29,7 +30,9 @@ export interface RefreshDeps {
   // Re-read the recent thread (both sides) for a card's conversation. Returns
   // null when unavailable (no reader for the platform, or the fetch failed) —
   // that conversation is skipped this tick.
-  fetchThread: (card: ActionItem) => Promise<string | null>;
+  // Returns the LLM-facing text plus, when available, the same conversation as
+  // structured messages. The prompt still gets the text it was tuned on.
+  fetchThread: (card: ActionItem) => Promise<{ text: string; messages?: TranscriptMessage[] } | null>;
   // Full project catalog (renderProjectCatalog) so refresh can re-assign a wrong
   // project_id (e.g. a MISC card that actually belongs to a project).
   projectCatalog?: string;
@@ -89,7 +92,9 @@ export async function refreshOpenTasks(
   for (const [key, rep] of eligible) {
     lastRefreshMs.set(key, nowMs); // claim the slot even if the fetch/LLM no-ops
 
-    const thread = await deps.fetchThread(rep);
+    const fetched = await deps.fetchThread(rep);
+    if (!fetched) continue;
+    const thread = fetched.text;
     if (!thread) continue;
 
     const sender = rep.context!.sender_handle!;
@@ -117,6 +122,7 @@ export async function refreshOpenTasks(
     const ctx: ActionContext = {
       sender_handle: sender,
       original_message: thread,
+      ...(fetched.messages?.length ? { original_transcript: fetched.messages } : {}),
       ...(rep.context?.thread_ref ? { thread_ref: rep.context.thread_ref } : {}),
     };
     let produced = 0;

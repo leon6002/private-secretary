@@ -50,8 +50,25 @@ export interface ActionTarget {
 // cannot re-fetch the original from Slack/Gmail. evidence_consulted records the
 // R5 full-context pull (thread/ticket/page ids + permalinks) so the card can
 // show "what I read before drafting".
+export interface TranscriptMessage {
+  /** Display name if it could be resolved, else the raw handle. */
+  speaker: string;
+  /** True when the owner of this instance wrote it — drives side/alignment. */
+  self: boolean;
+  /** ms epoch. 0 when the reader had no timestamp. */
+  at: number;
+  text: string;
+  /** A reply inside a thread rather than a top-level message. */
+  threadReply?: boolean;
+}
+
 export interface ActionContext {
   original_message?: string;
+  // Structured form of the same conversation, when the reader could supply it.
+  // original_message stays as the LLM-facing text (and the fallback for cards
+  // written before this existed); this is what the cockpit renders, because a
+  // flat "U07VD53V7M3: hi" string has no name and no time to show.
+  original_transcript?: TranscriptMessage[];
   sender_handle?: string;
   // Slack display name resolved at scan time (relay/io/slack-users.ts). The
   // cockpit's fallback order is persona name → this → raw sender_handle.
