@@ -828,8 +828,13 @@ function renderTaskCard(c: TaskCluster, tierMeta: (typeof TIERS)[number] | null)
         draggable
         onClick={() => selectTask(key)}
         onDragStart={(e) => {
-          e.dataTransfer.setData("text/plain", key);
-          e.dataTransfer.effectAllowed = "move";
+          // This is a motion.div, so framer types onDragStart as ITS gesture
+          // handler (PointerEvent) — but `draggable` means the browser fires a
+          // real HTML5 dragstart, which does carry dataTransfer. The cast says
+          // which of the two this actually is.
+          const dt = (e as unknown as React.DragEvent).dataTransfer;
+          dt.setData("text/plain", key);
+          dt.effectAllowed = "move";
           setDragKey(key);
         }}
         onDragEnd={() => setDragKey(null)}
