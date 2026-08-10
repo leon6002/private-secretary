@@ -133,6 +133,92 @@ function zoneLabel(): string {
   }`;
 }
 
+// The month picker from Google's left rail. It is not decoration: the week
+// arrows walk one week at a time, so "jump to the 3rd of next month" was a
+// dozen clicks. Clicking a day here selects that day's week.
+function MiniMonth({
+  weekStart,
+  onPick,
+}: {
+  weekStart: Date;
+  onPick: (d: Date) => void;
+}) {
+  // Which month the picker is showing — starts on the selected week's month
+  // and then moves on its own, so browsing ahead does not disturb the grid.
+  const [cursor, setCursor] = useState(() => new Date(weekStart.getFullYear(), weekStart.getMonth(), 1));
+  useEffect(() => {
+    setCursor(new Date(weekStart.getFullYear(), weekStart.getMonth(), 1));
+  }, [weekStart]);
+
+  const today = new Date();
+  const gridStart = startOfWeek(cursor);
+  // Six rows always: a month that fits in five would otherwise resize the rail
+  // every time you paged through it.
+  const cells = Array.from({ length: 42 }, (_, i) => addDays(gridStart, i));
+  const weekEnd = addDays(weekStart, 6);
+
+  return (
+    <div className="select-none">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-body-medium text-on-surface">
+          {MONTHS[cursor.getMonth()]} {cursor.getFullYear()}
+        </div>
+        <div className="flex">
+          <button
+            type="button"
+            aria-label="Previous month"
+            onClick={() => setCursor((c) => new Date(c.getFullYear(), c.getMonth() - 1, 1))}
+            className="w-6 h-6 flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-variant"
+          >
+            <ChevronLeft size={14} strokeWidth={1.75} />
+          </button>
+          <button
+            type="button"
+            aria-label="Next month"
+            onClick={() => setCursor((c) => new Date(c.getFullYear(), c.getMonth() + 1, 1))}
+            className="w-6 h-6 flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-variant"
+          >
+            <ChevronRight size={14} strokeWidth={1.75} />
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-7 gap-y-0.5 text-center">
+        {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
+          <div key={i} className="text-[11px] text-on-surface-variant py-1">
+            {d}
+          </div>
+        ))}
+        {cells.map((d) => {
+          const inMonth = d.getMonth() === cursor.getMonth();
+          const isToday = sameDay(d, today);
+          const inWeek = d >= weekStart && d <= weekEnd;
+          return (
+            <button
+              key={dayKey(d)}
+              type="button"
+              onClick={() => onPick(d)}
+              className={cn(
+                "h-7 text-[12px] rounded-full transition-colors",
+                // The selected week reads as a band; today is the filled disc,
+                // same two markers as the main grid so they mean one thing.
+                inWeek && !isToday && "bg-primary/15",
+                isToday
+                  ? "bg-primary text-white"
+                  : inMonth
+                    ? "text-on-surface hover:bg-surface-variant"
+                    : "text-on-surface-variant/50 hover:bg-surface-variant",
+              )}
+            >
+              {d.getDate()}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function CalendarScreen() {
   // The App shell provides the single shared feed; rendered standalone
   // (tests) the screen falls back to its own instance.
@@ -314,6 +400,16 @@ export default function CalendarScreen() {
         </div>
       )}
 
+      {/* Sidebar + an INSET grid, both Google's. The grid used to bleed to all
+          four window edges, which made a dense thing denser: nothing separated
+          the last column from the chrome, and the whole page read as one wall.
+          Sitting it on a card with a margin gives the eye an edge to stop at. */}
+      <div className="flex-1 flex min-h-0 bg-background gap-4 p-4">
+        <aside className="w-[232px] flex-shrink-0 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <MiniMonth weekStart={weekStart} onPick={(d) => setWeekStart(startOfWeek(d))} />
+        </aside>
+
+        <div className="flex-1 min-w-0 flex flex-col rounded-xl border border-outline bg-surface overflow-hidden">
       <div ref={scrollRef} className="flex-1 bg-background overflow-y-auto min-h-0">
         {/* Header + all-day strip are sticky; only the hour grid scrolls,
             which is what keeps the date row readable at 6 PM. */}
@@ -504,6 +600,8 @@ export default function CalendarScreen() {
             nothing on the calendar this week
           </div>
         )}
+      </div>
+        </div>
       </div>
 
       {/* Read-only event detail. A fixed backdrop swallows outside clicks so
