@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   approveAction,
   isCalendarRedundant,
+  redundantPendingCalendarIds,
   hasReceipt,
   InvalidActionTransition,
   markDone,
@@ -455,5 +456,57 @@ describe("isCalendarRedundant — pending duplicates", () => {
 
   it("ignores cards the user already acted on", () => {
     expect(isCalendarRedundant(cal({ id: "new" }), [cal({ id: "skipped", status: "rejected" })])).toBe(false);
+  });
+});
+
+describe("redundantPendingCalendarIds — cleaning up what already accumulated", () => {
+  const cal = (id: string, over: Record<string, unknown> = {}) =>
+    ({
+      id,
+      action_type: "calendar",
+      status: "suggested",
+      created_at: `2026-08-10T0${id.slice(-1)}:00:00Z`,
+      source_message_id: "slack:D1:1",
+      task_id: "t1",
+      params: { start: "2026-08-13T22:00:00Z" },
+      context: { sender_handle: "U1" },
+      ...over,
+    }) as never;
+
+  // The state observed on a real machine: one card per refresh tick.
+  it("keeps only the newest card for a slot", () => {
+    const drop = redundantPendingCalendarIds([cal("c1"), cal("c2"), cal("c3")]);
+    expect(drop.sort()).toEqual(["c1", "c2"]);
+  });
+
+  it("leaves a single card alone", () => {
+    expect(redundantPendingCalendarIds([cal("c1")])).toEqual([]);
+  });
+
+  // A meeting that moved is a real change, not a duplicate.
+  it("keeps both when the start differs", () => {
+    const moved = cal("c2", { params: { start: "2026-08-13T21:00:00Z" } });
+    expect(redundantPendingCalendarIds([cal("c1"), moved])).toEqual([]);
+  });
+
+  // Anything the user acted on is their decision, not ours to tidy.
+  it("never touches approved, executed or rejected cards", () => {
+    const drop = redundantPendingCalendarIds([
+      cal("c1", { status: "approved" }),
+      cal("c2", { status: "executed" }),
+      cal("c3", { status: "rejected" }),
+      cal("c4"),
+    ]);
+    expect(drop).toEqual([]);
+  });
+
+  it("ignores calendar cards with no start to compare on", () => {
+    const noStart = (id: string) => cal(id, { params: {} });
+    expect(redundantPendingCalendarIds([noStart("c1"), noStart("c2")])).toEqual([]);
+  });
+
+  it("does not merge different conversations that share a slot", () => {
+    const other = cal("c2", { task_id: "t2" });
+    expect(redundantPendingCalendarIds([cal("c1"), other])).toEqual([]);
   });
 });

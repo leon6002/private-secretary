@@ -30,7 +30,11 @@ import { acquireLock, loadState, releaseLock, saveState, type LoopState } from "
 import { appendLabels, buildLabel, labelsPathFor } from "../io/labels.js";
 import type { InboundMessage } from "../core/types.js";
 import type { ActionItem } from "../core/action-item.js";
-import { isCalendarRedundant, isSupersedeExempt } from "../core/action-item.js";
+import {
+  isCalendarRedundant,
+  isSupersedeExempt,
+  redundantPendingCalendarIds,
+} from "../core/action-item.js";
 import { draftActions, type DraftDeps } from "./draft.js";
 import { consolidateTasks, type ConsolidateDeps } from "./consolidate.js";
 import { refreshOpenTasks, type RefreshDeps } from "./refresh.js";
@@ -812,6 +816,26 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
   // thread for conversations that already have an open card and re-decide the
   // card — keeps it current as the conversation evolves and emits a calendar
   // action when a meeting was agreed. TTL- and per-tick-capped inside the pass.
+  // Self-healing sweep: clear duplicate pending calendar cards left on disk by
+  // the version that had no pending-redundancy check. Runs every round and is a
+  // no-op once clean, so an upgraded machine tidies itself instead of asking
+  // the user to delete six cards by hand.
+  if (!opts.dryRun) {
+    let swept = 0;
+    const sweptOk = await commitUnderLock((fresh) => {
+      const doomed = new Set(redundantPendingCalendarIds(fresh.actions));
+      if (doomed.size === 0) return;
+      fresh.actions = fresh.actions.filter((a) => !doomed.has(a.id));
+      swept = doomed.size;
+    });
+    if (sweptOk && swept > 0) {
+      logActivity("supersede", `cleared ${swept} duplicate pending calendar card(s)`, {
+        phase: "dedupe",
+        dropped: swept,
+      });
+    }
+  }
+
   // Supersedes the stale suggested card(s) for each refreshed conversation.
   if (!opts.dryRun && opts.refresh) {
     const snapshot = loadState(opts.statePath);

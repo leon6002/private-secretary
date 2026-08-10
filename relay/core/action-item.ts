@@ -251,6 +251,44 @@ export function isCalendarRedundant(a: ActionItem, existing: ActionItem[]): bool
   });
 }
 
+// Ids of pending calendar cards that merely restate one already in the queue.
+//
+// isCalendarRedundant stops NEW duplicates; this clears the ones already on
+// disk. Both are needed: a machine that ran the old code accumulated a card per
+// refresh tick, and upgrading must not leave the user to delete six cards by
+// hand — on someone else's laptop that means a terminal session.
+//
+// Keeps the NEWEST card per slot, because it reflects the most recent read of
+// the conversation, and only ever touches "suggested" cards: anything the user
+// approved, skipped or executed is their decision, not ours to tidy.
+//
+// Grouped by start time, so a meeting that MOVED keeps both cards — the user
+// still needs to see the change.
+export function redundantPendingCalendarIds(actions: ActionItem[]): string[] {
+  const bySlot = new Map<string, ActionItem[]>();
+  for (const a of actions) {
+    if (a.action_type !== "calendar" || a.status !== "suggested") continue;
+    const start = typeof a.params?.start === "string" ? a.params.start : "";
+    if (!start) continue; // no slot to compare on — leave it alone
+    const key = `${a.task_id ?? clusterOf(a)}|${start}`;
+    const list = bySlot.get(key);
+    if (list) list.push(a);
+    else bySlot.set(key, [a]);
+  }
+  const drop: string[] = [];
+  for (const group of bySlot.values()) {
+    if (group.length < 2) continue;
+    const sorted = [...group].sort((x, y) => x.created_at.localeCompare(y.created_at));
+    for (const a of sorted.slice(0, -1)) drop.push(a.id);
+  }
+  return drop;
+}
+
+// Fallback grouping for cards with no task_id: the conversation they came from.
+function clusterOf(a: ActionItem): string {
+  return `${a.source_message_id.split(":").slice(0, 2).join(":")}::${a.context?.sender_handle ?? ""}`;
+}
+
 export type ValidationResult =
   | { ok: true; item: ActionItem }
   | { ok: false; errors: string[] };
