@@ -37,6 +37,7 @@ import { KNOWN_MAILBOXES } from "../relay/io/google-oauth.js";
 import type { InboundMessage, Persona } from "../relay/core/types.js";
 import type { ActionItem, TranscriptMessage } from "../relay/core/action-item.js";
 import { resolveSlackUserNames } from "../relay/io/slack-users.js";
+import { mentionedUserIds, renderSlackText } from "../relay/io/slack-mrkdwn.js";
 
 // Decode a message's image attachments to local file paths the LLM can read.
 // WeChat: decode_image (the V2 AES image key must be in the decrypt config).
@@ -274,8 +275,13 @@ async function fetchThread(card: ActionItem): Promise<FetchedThread | null> {
           const lines: string[] = [];
           const structured: TranscriptMessage[] = [];
           // One users.info round per unseen id, cached on disk across ticks.
+          // Speakers AND anyone mentioned inside the text: "<@U08M6C96P2P>"
+          // is unreadable, and the cockpit has no way to resolve it later.
           const ids = new Set<string>();
-          for (const m of ordered) if (m.user && m.user !== self) ids.add(m.user);
+          for (const m of ordered) {
+            if (m.user && m.user !== self) ids.add(m.user);
+            for (const id of mentionedUserIds(m.text ?? "")) ids.add(id);
+          }
           const names = await resolveSlackUserNames(client, [...ids], SLACK_NAME_CACHE);
           const nameOf = (u?: string): string =>
             u === self ? "me" : (u ? names.get(u) ?? u : "?");
@@ -286,7 +292,7 @@ async function fetchThread(card: ActionItem): Promise<FetchedThread | null> {
               speaker: nameOf(m.user),
               self: m.user === self,
               at: atOf(m.ts),
-              text: m.text ?? "",
+              text: renderSlackText(m.text ?? "", names),
             });
             // Pull thread REPLIES too — conversations.history returns only top-level
             // messages, so a decision made in a thread (e.g. a meeting time confirmed
@@ -302,7 +308,7 @@ async function fetchThread(card: ActionItem): Promise<FetchedThread | null> {
                     speaker: nameOf(t.user),
                     self: t.user === self,
                     at: atOf(t.ts),
-                    text: t.text ?? "",
+                    text: renderSlackText(t.text ?? "", names),
                     threadReply: true,
                   });
                 }

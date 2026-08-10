@@ -49,19 +49,60 @@ export interface UpdateStatus {
   error?: string;
 }
 
-export async function updateStatus(runner: Runner = defaultRunner): Promise<UpdateStatus> {
+// The remote check costs a network round trip; the local part costs nothing.
+// Fetching on every page load made the tab sit blank for seconds, so the fetch
+// is cached and refreshed in the background — the page always paints the local
+// state immediately and the remote figure catches up.
+const REMOTE_TTL_MS = 5 * 60 * 1000;
+let remoteCache: { at: number; branch: string; latest: string; behind: number } | null = null;
+let fetching: Promise<void> | null = null;
+
+export function _resetRemoteCache(): void {
+  remoteCache = null;
+  fetching = null;
+}
+
+async function refreshRemote(runner: Runner, branch: string, now: number): Promise<void> {
+  await runner("git", ["fetch", "--quiet", "origin", branch]).catch(() => ({ stdout: "" }));
+  const latest = await git(runner, "rev-parse", "--short", `origin/${branch}`).catch(() => "");
+  const behind = Number(
+    await git(runner, "rev-list", "--count", `HEAD..origin/${branch}`).catch(() => "0"),
+  );
+  remoteCache = { at: now, branch, latest, behind: behind || 0 };
+}
+
+export async function updateStatus(
+  runner: Runner = defaultRunner,
+  opts: { force?: boolean; now?: () => number } = {},
+): Promise<UpdateStatus> {
+  const now = (opts.now ?? Date.now)();
   try {
     const branch = await git(runner, "rev-parse", "--abbrev-ref", "HEAD");
     const dirty = (await git(runner, "status", "--porcelain")).length > 0;
     const current = await git(runner, "rev-parse", "--short", "HEAD");
     const currentSubject = await git(runner, "log", "-1", "--format=%s");
-    // Fetch so "behind" reflects the remote, not a stale ref.
-    await runner("git", ["fetch", "--quiet", "origin", branch]).catch(() => ({ stdout: "" }));
-    const latest = await git(runner, "rev-parse", "--short", `origin/${branch}`).catch(() => current);
-    const behindRaw = await git(runner, "rev-list", "--count", `HEAD..origin/${branch}`).catch(
-      () => "0",
-    );
-    return { current, currentSubject, latest, behind: Number(behindRaw) || 0, dirty, branch };
+
+    const fresh =
+      remoteCache && remoteCache.branch === branch && now - remoteCache.at < REMOTE_TTL_MS;
+    if (opts.force || !remoteCache || remoteCache.branch !== branch) {
+      // First load, a branch switch, or an explicit check: worth waiting for.
+      await refreshRemote(runner, branch, now);
+    } else if (!fresh && !fetching) {
+      // Stale: answer from cache now, refresh behind the response. A slow
+      // network must not hold up a page that already knows what it is running.
+      fetching = refreshRemote(runner, branch, now).finally(() => {
+        fetching = null;
+      });
+    }
+    const remote = remoteCache;
+    return {
+      current,
+      currentSubject,
+      latest: remote?.latest || current,
+      behind: remote?.behind ?? 0,
+      dirty,
+      branch,
+    };
   } catch (e) {
     return {
       current: "",
@@ -87,7 +128,7 @@ export interface UpdateRun {
 
 export async function runUpdate(runner: Runner = defaultRunner): Promise<UpdateRun> {
   const steps: UpdateRun["steps"] = [];
-  const before = await updateStatus(runner);
+  const before = await updateStatus(runner, { force: true });
   if (before.error) {
     return { ok: false, from: "", to: "", needsRestart: false, steps: [{ step: "inspect", ok: false, detail: before.error }] };
   }
@@ -139,7 +180,7 @@ export async function runUpdate(runner: Runner = defaultRunner): Promise<UpdateR
       return { ok: false, from: before.current, to: before.current, steps, needsRestart: false };
     }
   }
-  const after = await updateStatus(runner);
+  const after = await updateStatus(runner, { force: true });
   return { ok: true, from: before.current, to: after.current, steps, needsRestart: true };
 }
 

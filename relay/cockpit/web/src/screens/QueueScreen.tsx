@@ -770,7 +770,9 @@ function Transcript({ messages }: { messages: TranscriptMessage[] }) {
               )}
               <div
                 className={cn(
-                  "text-body-medium text-on-surface whitespace-pre-wrap break-words",
+                  // Regular weight, like Slack's message body. text-body-medium
+                  // is 500 and made a whole transcript read as emphasis.
+                  "text-body-base text-on-surface whitespace-pre-wrap break-words",
                   isChinese(m.text) && "font-chinese",
                 )}
               >

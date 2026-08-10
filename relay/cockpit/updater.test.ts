@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_LABELS, restartServices, runUpdate, updateStatus, type Runner } from "./updater.js";
+import { beforeEach } from "vitest";
+import {
+  AGENT_LABELS,
+  _resetRemoteCache,
+  restartServices,
+  runUpdate,
+  updateStatus,
+  type Runner,
+} from "./updater.js";
 
 function fakeGit(over: Record<string, string> = {}, fail?: string): { runner: Runner; calls: string[][] } {
   const calls: string[][] = [];
@@ -22,6 +30,8 @@ const CLEAN = {
   "rev-parse --short origin/dev": "bbb2222",
   "rev-list --count": "3",
 };
+
+beforeEach(() => _resetRemoteCache());
 
 describe("updateStatus", () => {
   it("fetches before reporting how far behind it is", async () => {
@@ -92,3 +102,34 @@ describe("restartServices", () => {
     }
   });
 });
+
+describe("remote check is cached", () => {
+  const fetches = (calls: string[][]) => calls.filter((c) => c[1] === "fetch").length;
+
+  // Fetching on every page load left the tab blank for seconds.
+  it("does not fetch again within the TTL", async () => {
+    const { runner, calls } = fakeGit(CLEAN);
+    await updateStatus(runner, { now: () => 1000 });
+    await updateStatus(runner, { now: () => 2000 });
+    expect(fetches(calls)).toBe(1);
+  });
+
+  // "Check again" must actually check.
+  it("fetches when forced", async () => {
+    const { runner, calls } = fakeGit(CLEAN);
+    await updateStatus(runner, { now: () => 1000 });
+    await updateStatus(runner, { now: () => 1500, force: true });
+    expect(fetches(calls)).toBe(2);
+  });
+
+  // Past the TTL the answer still comes from cache; the fetch happens behind it.
+  it("answers immediately from cache once stale, refreshing in the background", async () => {
+    const { runner, calls } = fakeGit(CLEAN);
+    await updateStatus(runner, { now: () => 0 });
+    const s = await updateStatus(runner, { now: () => 10 * 60 * 1000 });
+    expect(s.latest).toBe("bbb2222"); // served from cache, not blank
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fetches(calls)).toBe(2);
+  });
+});
+

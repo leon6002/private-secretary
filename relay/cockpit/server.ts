@@ -400,7 +400,8 @@ export function createCockpitServer(opts: CockpitServerOptions): {
     // request it is being killed during, so the browser confirms by watching
     // the reported commit change instead.
     if (path === "/api/update" && method === "GET") {
-      sendJson(res, 200, await updateStatus());
+      // ?force=1 is the explicit "Check again"; a plain load answers from cache.
+      sendJson(res, 200, await updateStatus(undefined, { force: url.searchParams.get("force") === "1" }));
       return;
     }
     if (path === "/api/update" && method === "POST") {
