@@ -10,11 +10,11 @@
 // 1. Never `git reset --hard`. If the checkout has local changes the update
 //    stops and says so. Discarding a user's edits to get an update through
 //    trades a small inconvenience for silent data loss.
-// 2. Never restart in the same request that builds. The cockpit is one of the
-//    processes being restarted, so it would be killing the connection it is
-//    answering on — the browser would see a dropped request and could not tell
-//    success from crash. Build and restart are separate calls, and the UI
-//    confirms by watching the reported commit change.
+// 2. Never restart BEFORE answering. The cockpit is one of the processes being
+//    restarted, so it would be killing the connection it is answering on — the
+//    browser would see a dropped request and could not tell success from
+//    crash. The response goes out first and the restart follows a beat later;
+//    the page confirms by watching the reported commit change.
 
 import { execFile } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -166,12 +166,22 @@ export async function runUpdate(runner: Runner = defaultRunner): Promise<UpdateR
     };
   }
   if (before.behind === 0) {
+    // Up to date on disk is not the same as up to date in memory. A machine
+    // that pulled but never restarted would otherwise sit on the old code
+    // forever, with nothing left to click — so say a restart is still needed.
+    const pending = !!before.running && before.running !== before.current;
     return {
       ok: true,
       from: before.current,
       to: before.current,
-      needsRestart: false,
-      steps: [{ step: "check", ok: true, detail: "Already up to date." }],
+      needsRestart: pending,
+      steps: [
+        {
+          step: "check",
+          ok: true,
+          detail: pending ? "Already downloaded — restarting to apply." : "Already up to date.",
+        },
+      ],
     };
   }
 

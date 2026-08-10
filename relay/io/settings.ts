@@ -35,6 +35,12 @@ export interface SecretarySettings {
    * 9am") silently resolves against the wrong day, so it has to be settable.
    */
   timezone: string;
+  /**
+   * Apply updates without being asked. Off by default: an update restarts the
+   * daemon and the cockpit, so turning it on has to be the owner's decision,
+   * not something they inherit from a default.
+   */
+  autoUpdate: boolean;
 }
 
 export const LLM_MODES: readonly LlmMode[] = ["cli", "anthropic", "deepseek"];
@@ -52,6 +58,7 @@ export function machineTimeZone(): string {
 export const DEFAULT_SETTINGS: SecretarySettings = {
   llm: { mode: "cli", draftModel: "opus" },
   timezone: "",
+  autoUpdate: false,
 };
 
 // settingsPathFor follows the same convention as CockpitApi.projectsDir():
@@ -68,6 +75,7 @@ export function loadSettings(statePath: string): SecretarySettings {
     const raw = JSON.parse(readFileSync(settingsPathFor(statePath), "utf8")) as {
       llm?: { mode?: unknown; draftModel?: unknown };
       timezone?: unknown;
+      autoUpdate?: unknown;
     };
     const mode = raw?.llm?.mode;
     const draftModel = raw?.llm?.draftModel;
@@ -84,6 +92,9 @@ export function loadSettings(statePath: string): SecretarySettings {
       // guess like UTC: booking someone's meetings in the wrong zone is the
       // failure this whole area exists to prevent.
       timezone: tz && isValidTimeZone(tz) ? tz : machineTimeZone(),
+      // Anything other than a literal true is off. A half-written file must
+      // never be read as consent to restart the machine's daemon unattended.
+      autoUpdate: raw?.autoUpdate === true,
     };
   } catch {
     return { ...structuredClone(DEFAULT_SETTINGS), timezone: machineTimeZone() };

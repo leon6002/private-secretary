@@ -38,7 +38,7 @@ describe("loadSettings", () => {
   });
 
   it("falls back per field: an invalid mode defaults while a valid draftModel survives", () => {
-    saveSettings(statePath, { llm: { mode: "anthropic", draftModel: "claude-opus-4-8" }, timezone: "Europe/Lisbon" });
+    saveSettings(statePath, { llm: { mode: "anthropic", draftModel: "claude-opus-4-8" }, timezone: "Europe/Lisbon", autoUpdate: false });
     // Hand-mangle just the mode.
     writeFileSync(
       settingsPathFor(statePath),
@@ -66,9 +66,25 @@ describe("saveSettings", () => {
     const settings = {
       llm: { mode: "deepseek" as const, draftModel: "deepseek-v4-pro" },
       timezone: "Asia/Shanghai",
+      autoUpdate: true,
     };
     saveSettings(statePath, settings);
     expect(loadSettings(statePath)).toEqual(settings);
+  });
+});
+
+describe("autoUpdate", () => {
+  // Unattended updates restart the daemon. Consent has to be explicit, so
+  // anything that is not a literal true reads as off — including the shapes a
+  // half-written or hand-edited file produces.
+  it("is off unless the file says exactly true", () => {
+    for (const v of [undefined, "true", 1, null]) {
+      mkdirSync(join(dir, "config"), { recursive: true });
+      writeFileSync(settingsPathFor(statePath), JSON.stringify({ autoUpdate: v }));
+      expect(loadSettings(statePath).autoUpdate).toBe(false);
+    }
+    writeFileSync(settingsPathFor(statePath), JSON.stringify({ autoUpdate: true }));
+    expect(loadSettings(statePath).autoUpdate).toBe(true);
   });
 });
 
@@ -85,7 +101,7 @@ describe("timezone", () => {
   it("keeps a valid configured zone", () => {
     const dir = mkdtempSync(join(tmpdir(), "settings-"));
     const state = join(dir, "state", "loop-state.json");
-    saveSettings(state, { llm: { mode: "cli", draftModel: "opus" }, timezone: "Asia/Shanghai" });
+    saveSettings(state, { llm: { mode: "cli", draftModel: "opus" }, timezone: "Asia/Shanghai", autoUpdate: false });
     expect(loadSettings(state).timezone).toBe("Asia/Shanghai");
   });
 

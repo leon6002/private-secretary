@@ -56,6 +56,7 @@ import { loadIdentity } from "../io/identity.js";
 import { identityStatus, InvalidIdentity, writeIdentity } from "../io/identity-store.js";
 import { restartDaemon } from "./daemon-control.js";
 import { captureRunningSha, restartServices, runUpdate, updateStatus } from "./updater.js";
+import { loadSettings } from "../io/settings.js";
 import { spawn } from "node:child_process";
 import { InvalidActionTransition } from "../core/action-item.js";
 import {
@@ -70,6 +71,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // The React app's build output (`npm run cockpit:build`). Served for "/" and
 // "/assets/**".
 const DEFAULT_WEB_DIST_DIR = join(__dirname, "web", "dist");
+// How often an auto-updating install looks for a new version. Half an hour is
+// slow enough that the git fetch is invisible and fast enough that a fix lands
+// the same working day.
+const AUTO_UPDATE_INTERVAL_MS = 30 * 60 * 1000;
 
 export interface CockpitServerOptions extends CockpitApiOptions {
   port?: number; // default 4317
@@ -153,6 +158,30 @@ export function createCockpitServer(opts: CockpitServerOptions): {
   const api = new CockpitApi(opts);
   // Record the commit THIS process loaded, before anything can pull a new one.
   void captureRunningSha();
+
+  // Kick both agents over. Deferred a beat so the HTTP response that triggered
+  // it is on the wire before launchctl kills the process writing it.
+  function applyRestart(): void {
+    setTimeout(() => {
+      restartServices((file, args) => {
+        spawn(file, args, { detached: true, stdio: "ignore" }).unref();
+      });
+    }, 500).unref();
+  }
+
+  // Unattended updates, when the owner asked for them. Checked here rather
+  // than in the daemon because the cockpit is what already knows how to
+  // update; the setting is re-read every tick so toggling it takes effect
+  // without a restart. A dirty checkout or a failed step just leaves the
+  // install where it was — runUpdate never resets or force-merges.
+  const t = setInterval(() => {
+    void (async () => {
+      if (!loadSettings(opts.statePath).autoUpdate) return;
+      const r = await runUpdate().catch(() => null);
+      if (r?.ok && r.needsRestart) applyRestart();
+    })();
+  }, AUTO_UPDATE_INTERVAL_MS);
+  t.unref(); // a background timer must never hold the process (or a test) open
   // Persisted in the state dir so a restart reuses the same token (open tabs
   // keep working instead of failing CSRF on the next approve).
   const csrfToken = loadOrMintCsrfToken(dirname(opts.statePath));
@@ -308,6 +337,11 @@ export function createCockpitServer(opts: CockpitServerOptions): {
       sendJson(res, 200, await api.getSettings());
       return;
     }
+    if (path === "/api/settings/auto-update" && method === "POST") {
+      const body = (await readBody(req)) as Record<string, unknown>;
+      sendJson(res, 200, api.setAutoUpdate({ autoUpdate: body.autoUpdate === true }));
+      return;
+    }
     if (path === "/api/settings/timezone" && method === "POST") {
       const body = (await readBody(req)) as Record<string, unknown>;
       sendJson(res, 200, api.setTimezone({ timezone: String(body.timezone ?? "") }));
@@ -402,26 +436,20 @@ export function createCockpitServer(opts: CockpitServerOptions): {
       return;
     }
 
-    // Software update. Split into inspect / apply / restart because the
-    // cockpit is one of the processes being restarted: it cannot answer a
-    // request it is being killed during, so the browser confirms by watching
-    // the reported commit change instead.
+    // Software update. Inspect and apply; the restart is not a third step the
+    // user has to find, it follows a successful apply automatically. The
+    // cockpit is one of the processes being restarted, so it cannot report the
+    // outcome of its own restart — the browser confirms by watching the
+    // reported commit change instead.
     if (path === "/api/update" && method === "GET") {
-      // ?force=1 is the explicit "Check again"; a plain load answers from cache.
+      // ?force=1 is the explicit check; a plain load answers from cache.
       sendJson(res, 200, await updateStatus(undefined, { force: url.searchParams.get("force") === "1" }));
       return;
     }
     if (path === "/api/update" && method === "POST") {
       const r = await runUpdate();
       sendJson(res, r.ok ? 200 : 400, r);
-      return;
-    }
-    if (path === "/api/update/restart" && method === "POST") {
-      // Answer FIRST — the restart kills this process moments later.
-      sendJson(res, 200, { ok: true, detail: "Restarting…" });
-      restartServices((file, args) => {
-        spawn(file, args, { detached: true, stdio: "ignore" }).unref();
-      });
+      if (r.ok && r.needsRestart) applyRestart();
       return;
     }
 

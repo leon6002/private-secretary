@@ -675,7 +675,7 @@ export class CockpitApi {
   // chars ("…1234") — enough to tell WHICH key is stored, nothing more.
 
   async getSettings(): Promise<CockpitSettings> {
-    const { llm, timezone } = loadSettings(this.opts.statePath);
+    const { llm, timezone, autoUpdate } = loadSettings(this.opts.statePath);
     // "configured" = a key resolves at all. The resolvers also honor the
     // ANTHROPIC_API_KEY / DEEPSEEK_API_KEY env vars — deliberately: an env-
     // supplied key is just as usable by the daemon, so hiding it would lie.
@@ -691,6 +691,7 @@ export class CockpitApi {
     return {
       llm,
       timezone,
+      autoUpdate,
       keys: {
         anthropic: await probe(() => resolveAnthropicKey()),
         deepseek: await probe(() => resolveDeepseekKey()),
@@ -732,6 +733,16 @@ export class CockpitApi {
     const applied = loadSettings(this.opts.statePath).timezone;
     this.activity("edit", `settings: timezone=${applied}`);
     return { ok: true, timezone: applied, restartRequired: true };
+  }
+
+  // Unattended updates. Unlike the other settings this one takes effect
+  // immediately — the cockpit's own timer reads the file each tick — so there
+  // is no restartRequired to report.
+  setAutoUpdate({ autoUpdate }: { autoUpdate: boolean }): { ok: true; autoUpdate: boolean } {
+    const current = loadSettings(this.opts.statePath);
+    saveSettings(this.opts.statePath, { ...current, autoUpdate });
+    this.activity("edit", `settings: autoUpdate=${autoUpdate}`);
+    return { ok: true, autoUpdate };
   }
 
   // Store or remove an API key in the Keychain. The whitelist is exactly two
@@ -1236,6 +1247,8 @@ export interface CockpitSettings {
   llm: { mode: LlmMode; draftModel: string };
   /** The owner's IANA zone — always resolved, never blank (falls back to the machine). */
   timezone: string;
+  /** Apply updates unattended. Off unless the owner turned it on. */
+  autoUpdate: boolean;
   keys: Record<ApiKeyService, KeyStatus>;
 }
 

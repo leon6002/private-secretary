@@ -53,6 +53,23 @@ describe("updateStatus", () => {
 });
 
 describe("runUpdate", () => {
+  // Nothing to pull is not the same as nothing to do: a machine that pulled
+  // but never restarted is still running the old code, and with no separate
+  // Restart button there would be nothing left to click.
+  it("still asks for a restart when the pull already happened", async () => {
+    const { runner, calls } = fakeGit({ ...CLEAN, "rev-list --count": "0" });
+    _setRunningShaForTest("old0000");
+    const r = await runUpdate(runner);
+    expect(r).toMatchObject({ ok: true, needsRestart: true });
+    expect(calls.some((c) => c[1] === "pull")).toBe(false);
+  });
+
+  it("is a no-op when the running code is already current", async () => {
+    const { runner } = fakeGit({ ...CLEAN, "rev-list --count": "0" });
+    _setRunningShaForTest("aaa1111");
+    expect(await runUpdate(runner)).toMatchObject({ ok: true, needsRestart: false });
+  });
+
   it("runs pull, install and build in order, then asks for a restart", async () => {
     const { runner, calls } = fakeGit(CLEAN);
     const r = await runUpdate(runner);

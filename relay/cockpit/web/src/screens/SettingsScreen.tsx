@@ -924,58 +924,85 @@ interface UpdateRunDto {
   needsRestart: boolean;
 }
 
-// Updating without a terminal. The three phases are separate on purpose: the
-// cockpit is one of the processes the restart kills, so it cannot report the
-// outcome of its own restart — the page confirms by watching the running
-// commit change.
+// A checkbox that persists on click, with no Save button — a two-state
+// preference has nothing to confirm, and a toggle that needs saving reads as
+// broken.
+function AutoUpdateRow() {
+  const [on, setOn] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    apiGet<{ autoUpdate?: boolean }>("/api/settings")
+      .then((s) => setOn(!!s.autoUpdate))
+      .catch(() => setOn(false));
+  }, []);
+
+  async function toggle(next: boolean) {
+    setBusy(true);
+    setOn(next); // optimistic: the checkbox must not lag the click
+    try {
+      await apiPost("/api/settings/auto-update", { autoUpdate: next });
+    } catch (e) {
+      setOn(!next);
+      toast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <label className="flex items-center gap-2 mt-4 cursor-pointer select-none w-fit">
+      <input
+        type="checkbox"
+        checked={!!on}
+        disabled={on === null || busy}
+        onChange={(e) => void toggle(e.target.checked)}
+        className="accent-primary"
+      />
+      <span className="text-label-sm text-on-surface">
+        Install updates automatically
+        <span className="text-on-surface-variant">
+          {" "}
+          — checked every half hour; the app restarts itself when one lands.
+        </span>
+      </span>
+    </label>
+  );
+}
+
+// Updating without a terminal. One button: it checks when there is nothing to
+// install and installs when there is, because "check" and "update" were never
+// really two decisions the user wanted to make.
+//
+// The restart is not a third button either — it follows the install. The
+// cockpit is one of the processes being restarted, so it cannot report the
+// outcome of its own restart; the page confirms by watching the running commit
+// change, then reloads itself so it is not left on the old bundle.
 function UpdateTab() {
   const [status, setStatus] = useState<UpdateStatusDto | null>(null);
   const [run, setRun] = useState<UpdateRunDto | null>(null);
   const [busy, setBusy] = useState<"" | "checking" | "updating" | "restarting">("");
 
-  const load = useCallback(() => {
+  const load = useCallback((force = false) => {
     setBusy("checking");
-    apiGet<UpdateStatusDto>("/api/update")
+    apiGet<UpdateStatusDto>(`/api/update${force ? "?force=1" : ""}`)
       .then(setStatus)
       .catch(() => setStatus(null))
       .finally(() => setBusy(""));
   }, []);
-  useEffect(load, [load]);
+  useEffect(() => load(), [load]);
 
-  async function update() {
-    setBusy("updating");
-    setRun(null);
-    try {
-      setRun(await apiPost<UpdateRunDto>("/api/update", {}));
-    } catch (e) {
-      toast(e instanceof Error ? e.message : String(e), true);
-    } finally {
-      setBusy("");
-      load();
-    }
-  }
-
-  async function restart() {
+  // Wait for the restart the server fired after answering, then reload — a tab
+  // left on the previous bundle would render old markup against the new API.
+  async function awaitRestart(before: string | undefined) {
     setBusy("restarting");
-    // The RUNNING commit, not HEAD: HEAD already moved during the pull, so
-    // watching it could never tell whether the restart happened.
-    const before = status?.running;
-    try {
-      await apiPost("/api/update/restart", {});
-    } catch {
-      // Expected: the server dies mid-response. Not an error to report.
-    }
-    // Poll until the cockpit is back on a different commit — the only honest
-    // confirmation available when the process answering was restarted.
     const deadline = Date.now() + 90_000;
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 2000));
       try {
         const s = await apiGet<UpdateStatusDto>("/api/update");
         if (s.running && s.running !== before) {
-          setStatus(s);
-          setBusy("");
-          toast(`Now running ${s.running}.`);
+          window.location.reload();
           return;
         }
       } catch {
@@ -986,14 +1013,49 @@ function UpdateTab() {
     toast("Restart is taking longer than expected — check the logs.", true);
   }
 
+  async function check() {
+    setRun(null);
+    load(true);
+  }
+
+  async function update() {
+    setBusy("updating");
+    setRun(null);
+    // The RUNNING commit, not HEAD: HEAD moves during the pull, so watching it
+    // could never tell whether the restart happened.
+    const before = status?.running;
+    try {
+      const r = await apiPost<UpdateRunDto>("/api/update", {});
+      setRun(r);
+      if (r.ok && r.needsRestart) {
+        await awaitRestart(before);
+        return;
+      }
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), true);
+    }
+    setBusy("");
+    load();
+  }
+
   const upToDate = !!status && !status.error && status.behind === 0;
+  const blocked = !!status?.dirty || !!status?.error;
+  const label =
+    busy === "updating"
+      ? "Updating…"
+      : busy === "restarting"
+        ? "Restarting…"
+        : busy === "checking"
+          ? "Checking…"
+          : upToDate
+            ? "Check for updates"
+            : "Update now";
 
   return (
     <div className="max-w-[62ch]">
       <h2 className="text-body-large text-on-surface font-medium mb-1">Software update</h2>
       <p className="text-label-sm text-on-surface-variant mb-4">
-        Pulls the latest version, installs it and restarts the background daemon. Nothing here
-        needs a terminal.
+        Pulls the latest version, installs it and restarts itself. Nothing here needs a terminal.
       </p>
 
       {status && !status.error && status.behind > 0 && (
@@ -1029,22 +1091,14 @@ function UpdateTab() {
         </p>
       )}
 
-      <div className="flex gap-2">
-        <Button variant="ghost" onClick={load} disabled={busy !== ""}>
-          {busy === "checking" ? "Checking…" : "Check again"}
-        </Button>
-        <Button
-          onClick={() => void update()}
-          disabled={busy !== "" || upToDate || !!status?.dirty || !!status?.error}
-        >
-          {busy === "updating" ? "Updating…" : "Update now"}
-        </Button>
-        {(run?.needsRestart || (!!status && !!status.running && status.running !== status.current)) && (
-          <Button variant="ghost" onClick={() => void restart()} disabled={busy !== ""}>
-            {busy === "restarting" ? "Restarting…" : "Restart to apply"}
-          </Button>
-        )}
-      </div>
+      <Button
+        onClick={() => void (upToDate ? check() : update())}
+        disabled={busy !== "" || (blocked && !status?.error) || (!status && busy === "")}
+      >
+        {label}
+      </Button>
+
+      <AutoUpdateRow />
 
       {run && (
         <ul className="mt-4 flex flex-col gap-1">
@@ -1055,11 +1109,6 @@ function UpdateTab() {
               {s.detail && <span className="text-on-surface-variant">— {s.detail}</span>}
             </li>
           ))}
-          {run.ok && run.needsRestart && (
-            <li className="text-label-sm text-on-surface-variant mt-1">
-              Built {run.from} → {run.to}. Restart to run it.
-            </li>
-          )}
         </ul>
       )}
     </div>
