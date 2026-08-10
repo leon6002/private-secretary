@@ -6,25 +6,29 @@
 // clicking a real event opens a read-only detail popover. NOTHING here writes
 // — no endpoint this screen calls mutates anything.
 //
-// Grid decisions (deliberate simplifications, per the screen's scope):
-// - Week starts Monday (the owner's business week; Google Calendar's default
-//   Sunday start was the alternative).
-// - Full 0–24 hour range with compact rows. A compact 6–22 band would need
-//   clamping for early/late events; full-day avoids that edge case entirely.
-// - A timed event is placed by its START time into that day+hour cell — no
-//   duration-proportional blocks, no overlap layout. The block shows the
-//   real time range, so the position is a hint, not the source of truth.
-// - All-day events live in an "all-day" strip at the top of each day column.
-//   Google's all-day end date is EXCLUSIVE, so a multi-day all-day event is
-//   fanned out over [start, end) day cells. Timed multi-day events are not
-//   fanned out — they render at their start cell only (same simplification).
-// - Times render in the browser's local timezone; the RFC 3339 offsets from
-//   the API carry the absolute instant.
-import { useContext, useEffect, useMemo, useState } from "react";
+// The grid follows Google Calendar's week view, because that is the layout
+// every user of this screen already knows, and because the two things it does
+// that the old grid did not are the two things a week view is FOR:
+// - An event's height is its length and its position is its start time, so a
+//   30-minute stand-up and a 3-hour workshop no longer look identical.
+//   Overlapping events split the column instead of stacking as a list. The
+//   arithmetic lives in lib/week-layout.ts, tested on its own.
+// - A red line marks now, so "where am I in the day" is answered by looking.
+// Also Google's, for recognition rather than function: Sunday-first columns, a
+// filled circle on today, 12-hour labels sitting ON the hour line, the zone
+// printed once in the gutter corner, and an opening scroll to the working
+// hours rather than to midnight.
+//
+// All-day events keep their own strip above the grid. Google's all-day end
+// date is EXCLUSIVE, so a multi-day one is fanned out over [start, end).
+// Times render in the browser's local timezone; the RFC 3339 offsets from the
+// API carry the absolute instant.
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ChevronLeft, ChevronRight, ExternalLink, X } from "lucide-react";
 import { apiGet } from "../lib/api";
 import { cn } from "../lib/cn";
+import { dayFraction, layoutDay } from "../lib/week-layout";
 import {
   CockpitFeedContext,
   useCockpitState,
@@ -53,7 +57,13 @@ interface OverlayCard {
   status: "suggested" | "approved";
 }
 
-const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+// Sunday-first, matching Google's default and the row it renders.
+const WEEKDAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+/** Pixels per hour. Google's default zoom; below ~40 the gutter labels collide. */
+const HOUR_PX = 48;
+const GRID_PX = 24 * HOUR_PX;
+/** Where the grid opens — nobody starts their day at 00:00. */
+const INITIAL_SCROLL_HOUR = 7;
 const MONTHS = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -61,9 +71,9 @@ const MONTHS = [
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 
 function startOfWeek(d: Date): Date {
-  // Monday-based: getDay() is Sunday-first, so (day + 6) % 7 is the offset.
+  // Sunday-based, like Google: getDay() is already Sunday-first.
   const out = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  out.setDate(out.getDate() - ((out.getDay() + 6) % 7));
+  out.setDate(out.getDate() - out.getDay());
   return out;
 }
 
@@ -102,6 +112,25 @@ function fmtTime(d: Date): string {
 
 function fmtRange(start: Date, end: Date | null): string {
   return end ? `${fmtTime(start)}–${fmtTime(end)}` : fmtTime(start);
+}
+
+// Google's gutter labels: "8 AM", "12 PM", and nothing at midnight — the line
+// there is the day boundary, and a label on it reads as owning the row below.
+function fmtHourLabel(h: number): string {
+  if (h === 0) return "";
+  const suffix = h < 12 ? "AM" : "PM";
+  return `${h % 12 === 0 ? 12 : h % 12} ${suffix}`;
+}
+
+// "GMT+08" for the gutter corner, so nobody has to assume which clock these
+// columns are in.
+function zoneLabel(): string {
+  const mins = -new Date().getTimezoneOffset();
+  const a = Math.abs(mins);
+  const mm = a % 60;
+  return `GMT${mins < 0 ? "-" : "+"}${String(Math.floor(a / 60)).padStart(2, "0")}${
+    mm ? `:${String(mm).padStart(2, "0")}` : ""
+  }`;
 }
 
 export default function CalendarScreen() {
@@ -144,11 +173,11 @@ export default function CalendarScreen() {
     };
   }, [weekStart, state]);
 
-  // ── layer 1: real events, grouped for the grid ─────────────────────
-  // timed: "YYYY-MM-DD-H" → events starting in that cell. allDay: fanned out
-  // over [start, end) day cells (Google's all-day end is exclusive).
+  // ── layer 1: real events ───────────────────────────────────────────
+  // Timed events become spans the layout can size and collide; all-day ones
+  // are fanned out over [start, end) into the strip (Google's end is exclusive).
   const { timed, allDay } = useMemo(() => {
-    const timed = new Map<string, CalEvent[]>();
+    const timed: Array<{ ev: CalEvent; start: Date; end: Date | null }> = [];
     const allDay = new Map<string, CalEvent[]>();
     for (const ev of events ?? []) {
       if (ev.allDay) {
@@ -160,10 +189,10 @@ export default function CalendarScreen() {
           allDay.set(k, [...(allDay.get(k) ?? []), ev]);
         }
       } else {
-        const s = new Date(ev.start);
-        if (Number.isNaN(s.getTime())) continue;
-        const k = `${dayKey(s)}-${s.getHours()}`;
-        timed.set(k, [...(timed.get(k) ?? []), ev]);
+        const st = new Date(ev.start);
+        if (Number.isNaN(st.getTime())) continue;
+        const en = ev.end ? new Date(ev.end) : null;
+        timed.push({ ev, start: st, end: en && !Number.isNaN(en.getTime()) ? en : null });
       }
     }
     return { timed, allDay };
@@ -193,14 +222,46 @@ export default function CalendarScreen() {
     }
     return out;
   }, [state]);
-  const cardsByCell = useMemo(() => {
-    const m = new Map<string, OverlayCard[]>();
-    for (const c of cards) {
-      const k = `${dayKey(c.start)}-${c.start.getHours()}`;
-      m.set(k, [...(m.get(k) ?? []), c]);
+
+  // Real events and pending proposals share one column, so they must share one
+  // layout pass — otherwise a proposal would be drawn straight over the meeting
+  // it conflicts with, which is the one thing this screen exists to reveal.
+  type Block =
+    | { kind: "event"; ev: CalEvent }
+    | { kind: "card"; card: OverlayCard };
+  const blocksByDay = useMemo(() => {
+    const all: Array<Block & { start: Date; end: Date | null }> = [
+      ...timed.map((t) => ({ kind: "event" as const, ev: t.ev, start: t.start, end: t.end })),
+      ...cards.map((card) => ({ kind: "card" as const, card, start: card.start, end: card.end })),
+    ];
+    const m = new Map<string, ReturnType<typeof layoutDay<(typeof all)[number]>>>();
+    for (const d of days) {
+      const k = dayKey(d);
+      m.set(
+        k,
+        layoutDay(all.filter((b) => sameDay(b.start, d) || (b.end && b.end > d)), d),
+      );
     }
     return m;
-  }, [cards]);
+  }, [timed, cards, days]);
+
+  // Open on the working hours. useLayoutEffect so it lands before paint —
+  // scrolling after the first frame reads as the page jumping on arrival.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    // A few pixels short of the hour, so that hour's gutter label — which is
+    // centred ON the line — is not left half-hidden under the sticky header.
+    if (scrollRef.current) scrollRef.current.scrollTop = INITIAL_SCROLL_HOUR * HOUR_PX - 10;
+  }, []);
+
+  // The now-line moves on its own clock; the feed's 15s tick is close enough
+  // to a minute hand not to warrant a second timer, but not close enough to
+  // trust, so this one is explicit.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(t);
+  }, []);
 
   const rangeLabel = `${MONTHS[weekStart.getMonth()]} ${weekStart.getDate()} – ${
     MONTHS[days[6]!.getMonth()]
@@ -253,103 +314,189 @@ export default function CalendarScreen() {
         </div>
       )}
 
-      <div className="flex-1 bg-background overflow-y-auto min-h-0">
-        <div className="grid grid-cols-[56px_repeat(7,minmax(0,1fr))]">
-          {/* Day header row — sticky so it survives scrolling the hours. */}
-          <div className="sticky top-0 z-10 bg-surface border-b border-outline" />
-          {days.map((d) => (
-            <div
-              key={dayKey(d)}
-              data-testid={`day-col-${dayKey(d)}`}
-              className={cn(
-                "sticky top-0 z-10 bg-surface border-b border-l border-outline px-2 py-1.5 text-center",
-                sameDay(d, today) && "bg-primary/10",
-              )}
-            >
-              <div className="text-label-sm text-on-surface-variant">{WEEKDAYS[(d.getDay() + 6) % 7]}</div>
-              <div className={cn("text-body-medium", sameDay(d, today) && "text-primary font-semibold")}>
-                {d.getDate()}
-              </div>
-            </div>
-          ))}
-
-          {/* All-day strip: one row of fanned-out all-day chips. */}
-          <div className="border-b border-outline px-1 py-1 text-label-sm text-on-surface-variant text-right">
-            all-day
-          </div>
-          {days.map((d) => (
-            <div
-              key={dayKey(d)}
-              className={cn(
-                "border-b border-l border-outline px-1 py-1 flex flex-col gap-0.5 min-h-[24px]",
-                sameDay(d, today) && "bg-primary/5",
-              )}
-            >
-              {(allDay.get(dayKey(d)) ?? []).map((ev) => (
-                <button
-                  key={ev.id}
-                  type="button"
-                  onClick={() => setOpenEventId(openEventId === ev.id ? null : ev.id)}
-                  className="text-left text-label-sm bg-surface-variant text-on-surface rounded px-1.5 py-0.5 truncate hover:opacity-80"
+      <div ref={scrollRef} className="flex-1 bg-background overflow-y-auto min-h-0">
+        {/* Header + all-day strip are sticky; only the hour grid scrolls,
+            which is what keeps the date row readable at 6 PM. */}
+        <div className="sticky top-0 z-20 bg-surface">
+          <div className="grid grid-cols-[64px_repeat(7,minmax(0,1fr))]">
+            <div className="border-b border-outline" />
+            {days.map((d) => {
+              const isToday = sameDay(d, today);
+              return (
+                <div
+                  key={dayKey(d)}
+                  data-testid={`day-col-${dayKey(d)}`}
+                  className="border-b border-l border-outline px-2 pt-2 pb-1 text-center"
                 >
-                  {ev.summary}
-                </button>
-              ))}
-            </div>
-          ))}
-
-          {/* Hour rows. */}
-          {HOURS.map((h) => (
-            <div key={h} className="contents">
-              <div className="border-b border-outline px-1 text-label-sm text-on-surface-variant text-right -translate-y-1.5">
-                {h > 0 ? `${String(h).padStart(2, "0")}:00` : ""}
-              </div>
-              {days.map((d) => {
-                const k = `${dayKey(d)}-${h}`;
-                return (
                   <div
-                    key={k}
-                    data-testid={`cell-${k}`}
                     className={cn(
-                      "relative border-b border-l border-outline min-h-[32px] p-0.5 flex flex-col gap-0.5",
-                      sameDay(d, today) && "bg-primary/5",
+                      "text-[11px] tracking-wide",
+                      isToday ? "text-primary" : "text-on-surface-variant",
                     )}
                   >
-                    {(timed.get(k) ?? []).map((ev) => (
+                    {WEEKDAYS[d.getDay()]}
+                  </div>
+                  {/* Today is a filled disc, not coloured text — Google's
+                      marker, and it survives being glanced at. */}
+                  <div
+                    className={cn(
+                      "mx-auto mt-0.5 w-9 h-9 flex items-center justify-center rounded-full text-[22px] leading-none",
+                      isToday ? "bg-primary text-white" : "text-on-surface",
+                    )}
+                  >
+                    {d.getDate()}
+                  </div>
+                </div>
+              );
+            })}
+
+            <div className="border-b border-outline px-1.5 py-1 text-[11px] text-on-surface-variant text-right">
+              {zoneLabel()}
+            </div>
+            {days.map((d) => (
+              <div
+                key={dayKey(d)}
+                className="border-b border-l border-outline px-1 py-1 flex flex-col gap-0.5 min-h-[26px]"
+              >
+                {(allDay.get(dayKey(d)) ?? []).map((ev) => (
+                  <button
+                    key={ev.id}
+                    type="button"
+                    onClick={() => setOpenEventId(openEventId === ev.id ? null : ev.id)}
+                    className="text-left text-label-sm bg-emerald-600/80 text-white rounded px-1.5 py-0.5 truncate hover:opacity-90"
+                  >
+                    {ev.summary}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* The hour grid. Lines are a background layer and every event is
+            absolutely positioned over it, which is what lets height mean
+            duration and lets two meetings sit side by side. */}
+        <div className="grid grid-cols-[64px_repeat(7,minmax(0,1fr))]">
+          <div className="relative" style={{ height: GRID_PX }}>
+            {HOURS.map((h) => (
+              <div
+                key={h}
+                className="absolute right-1.5 -translate-y-1/2 text-[11px] text-on-surface-variant"
+                style={{ top: h * HOUR_PX }}
+              >
+                {fmtHourLabel(h)}
+              </div>
+            ))}
+          </div>
+
+          {days.map((d) => {
+            const isToday = sameDay(d, today);
+            return (
+              <div
+                key={dayKey(d)}
+                data-testid={`day-${dayKey(d)}`}
+                className="relative border-l border-outline"
+                style={{ height: GRID_PX }}
+              >
+                {HOURS.map((h) => (
+                  <div
+                    key={h}
+                    className="absolute inset-x-0 border-b border-outline/60"
+                    style={{ top: h * HOUR_PX, height: HOUR_PX }}
+                  />
+                ))}
+
+                {(blocksByDay.get(dayKey(d)) ?? []).map((p) => {
+                  const b = p.item;
+                  const px = p.height * GRID_PX;
+                  // Under about two lines of type, stacking the title over the
+                  // time clips both. Google collapses short blocks to a single
+                  // line for the same reason.
+                  const oneLine = px < 34;
+                  const style = {
+                    top: p.top * GRID_PX,
+                    height: px,
+                    left: `calc(${p.left * 100}% + 2px)`,
+                    width: `calc(${p.width * 100}% - 4px)`,
+                  };
+                  if (b.kind === "event") {
+                    const ev = b.ev;
+                    return (
                       <button
                         key={ev.id}
                         type="button"
+                        data-testid={`event-${ev.id}`}
                         onClick={() => setOpenEventId(openEventId === ev.id ? null : ev.id)}
-                        className="text-left text-label-sm bg-surface-variant text-on-surface rounded px-1.5 py-0.5 hover:opacity-80"
-                      >
-                        <span className="text-on-surface-variant">
-                          {fmtRange(new Date(ev.start), ev.end ? new Date(ev.end) : null)}
-                        </span>{" "}
-                        {ev.summary}
-                      </button>
-                    ))}
-                    {(cardsByCell.get(k) ?? []).map((c) => (
-                      // The overlay is the queue's pending proposal, not a real
-                      // event: suggested = dashed, approved = solid primary.
-                      // Click jumps to the Queue with this card selected.
-                      <button
-                        key={c.id}
-                        type="button"
-                        onClick={() => navigate("/", { state: { selectedId: c.id } })}
+                        style={style}
                         className={cn(
-                          "text-left text-label-sm rounded px-1.5 py-0.5 border bg-primary/5 text-on-surface hover:bg-primary/10",
-                          c.status === "suggested" ? "border-primary border-dashed" : "border-primary",
+                          "absolute overflow-hidden text-left rounded-md px-1.5 py-0.5",
+                          "bg-[#7986cb] text-white hover:brightness-110 transition-[filter]",
+                          "text-label-sm leading-tight",
                         )}
                       >
-                        <span className="text-primary">{fmtRange(c.start, c.end)}</span> {c.title}{" "}
-                        <span className="text-primary uppercase text-[9px] font-semibold">{c.status}</span>
+                        {oneLine ? (
+                          <span className="block truncate">
+                            <span className="font-medium">{ev.summary}</span>{" "}
+                            <span className="opacity-90">{fmtTime(b.start)}</span>
+                          </span>
+                        ) : (
+                          <>
+                            <span className="block truncate font-medium">{ev.summary}</span>
+                            <span className="block truncate opacity-90">
+                              {fmtRange(b.start, b.end)}
+                            </span>
+                          </>
+                        )}
                       </button>
-                    ))}
+                    );
+                  }
+                  const c = b.card;
+                  // A proposal, not a booking: outlined rather than filled, so
+                  // it never reads as something already on the calendar.
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      data-testid={`card-${c.id}`}
+                      onClick={() => navigate("/", { state: { selectedId: c.id } })}
+                      style={style}
+                      className={cn(
+                        "absolute overflow-hidden text-left rounded-md px-1.5 py-0.5",
+                        "bg-primary/15 text-on-surface hover:bg-primary/25 border",
+                        "text-label-sm leading-tight",
+                        c.status === "suggested" ? "border-primary border-dashed" : "border-primary",
+                      )}
+                    >
+                      {oneLine ? (
+                        <span className="block truncate">
+                          <span className="font-medium">{c.title}</span>{" "}
+                          <span className="text-primary">{c.status}</span>
+                        </span>
+                      ) : (
+                        <>
+                          <span className="block truncate font-medium">{c.title}</span>
+                          <span className="block truncate text-primary">
+                            {fmtRange(c.start, c.end)} · {c.status}
+                          </span>
+                        </>
+                      )}
+                    </button>
+                  );
+                })}
+
+                {isToday && (
+                  <div
+                    data-testid="now-line"
+                    className="absolute inset-x-0 z-10 pointer-events-none"
+                    style={{ top: dayFraction(now) * GRID_PX }}
+                  >
+                    <div className="h-px bg-red-500" />
+                    <div className="absolute -left-1 -top-[5px] w-2.5 h-2.5 rounded-full bg-red-500" />
                   </div>
-                );
-              })}
-            </div>
-          ))}
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {events && events.length === 0 && cards.length === 0 && !calError && (
