@@ -222,16 +222,33 @@ export function isSupersedeExempt(a: ActionItem): boolean {
 // is a duplicate waiting to double-book — the event already exists. Refresh
 // used to skip this check entirely (phase 3 had it, phase 5 didn't), which is
 // how one meeting ended up approved into N real events.
-export function isCalendarAlreadyBooked(a: ActionItem, existing: ActionItem[]): boolean {
+// True when this calendar card would add nothing: the same commitment is
+// already booked, or is already sitting in the queue waiting to be approved.
+//
+// The pending half matters as much as the booked half. A refresh re-emits a
+// calendar card for a live conversation every TTL, and such cards are exempt
+// from supersede (a commitment must not be silently dropped) — so with only
+// the executed check, one meeting accumulated a new duplicate card every ten
+// minutes until the queue was nothing else. Observed: six cards for one
+// Thursday meeting.
+//
+// Matched on the START time, not on wording. A refreshed card whose start
+// MOVED is a real change and still lands, so "the meeting shifted an hour"
+// is not swallowed; only an identical restatement is.
+export function isCalendarRedundant(a: ActionItem, existing: ActionItem[]): boolean {
   if (a.action_type !== "calendar") return false;
   const start = typeof a.params?.start === "string" ? a.params.start : undefined;
-  return existing.some(
-    (e) =>
-      e.action_type === "calendar" &&
-      e.status === "executed" &&
-      ((a.task_id && e.task_id === a.task_id) ||
-        (start !== undefined && e.params?.start === start)),
-  );
+  return existing.some((e) => {
+    if (e.action_type !== "calendar") return false;
+    if (e.status === "executed") {
+      // Already on the calendar: same task or same slot is a re-booking.
+      return !!((a.task_id && e.task_id === a.task_id) || (start !== undefined && e.params?.start === start));
+    }
+    if (e.status !== "suggested") return false;
+    // Still pending: only an identical slot is redundant. Same task with a
+    // different time is the meeting moving, which the user needs to see.
+    return start !== undefined && e.params?.start === start;
+  });
 }
 
 export type ValidationResult =

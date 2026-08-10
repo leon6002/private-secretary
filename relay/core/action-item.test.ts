@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   approveAction,
-  isCalendarAlreadyBooked,
+  isCalendarRedundant,
   hasReceipt,
   InvalidActionTransition,
   markDone,
@@ -399,7 +399,7 @@ describe("requiresManualExecution", () => {
   });
 });
 
-describe("isCalendarAlreadyBooked", () => {
+describe("isCalendarRedundant", () => {
   const booked = item({
     id: "done1",
     action_type: "calendar",
@@ -409,16 +409,51 @@ describe("isCalendarAlreadyBooked", () => {
   });
   it("matches an executed calendar by exact start", () => {
     const fresh = item({ id: "f1", action_type: "calendar", params: { title: "Q3", start: "2026-08-02T15:00:00+08:00" } });
-    expect(isCalendarAlreadyBooked(fresh, [booked])).toBe(true);
+    expect(isCalendarRedundant(fresh, [booked])).toBe(true);
   });
   it("matches an executed calendar by task_id", () => {
     const fresh = item({ id: "f2", action_type: "calendar", task_id: "t9", params: { title: "Q3", start: "2026-08-03T15:00:00+08:00" } });
-    expect(isCalendarAlreadyBooked(fresh, [booked])).toBe(true);
+    expect(isCalendarRedundant(fresh, [booked])).toBe(true);
   });
   it("does NOT match a different start, a non-executed calendar, or a non-calendar action", () => {
     const other = item({ id: "f3", action_type: "calendar", params: { title: "Q3", start: "2026-08-04T15:00:00+08:00" } });
-    expect(isCalendarAlreadyBooked(other, [booked])).toBe(false);
-    expect(isCalendarAlreadyBooked(other, [item({ ...booked, status: "suggested" })])).toBe(false);
-    expect(isCalendarAlreadyBooked(item({ id: "f4", action_type: "task" }), [booked])).toBe(false);
+    expect(isCalendarRedundant(other, [booked])).toBe(false);
+    expect(isCalendarRedundant(other, [item({ ...booked, status: "suggested" })])).toBe(false);
+    expect(isCalendarRedundant(item({ id: "f4", action_type: "task" }), [booked])).toBe(false);
+  });
+});
+
+describe("isCalendarRedundant — pending duplicates", () => {
+  const cal = (over: Record<string, unknown> = {}) =>
+    ({
+      id: "x",
+      action_type: "calendar",
+      status: "suggested",
+      params: { start: "2026-08-13T22:00:00Z", end: "2026-08-13T23:00:00Z" },
+      task_id: "t1",
+      ...over,
+    }) as never;
+
+  // REGRESSION: refresh re-emits a calendar card every TTL, and those cards are
+  // exempt from supersede, so with only an executed-check one meeting grew a
+  // new duplicate every ten minutes. Six cards for one Thursday meeting.
+  it("treats a pending card for the same slot as redundant", () => {
+    expect(isCalendarRedundant(cal({ id: "new" }), [cal({ id: "old" })])).toBe(true);
+  });
+
+  // The meeting moving is a real change the user must see.
+  it("lets a pending card through when the start moved", () => {
+    const moved = cal({ id: "new", params: { start: "2026-08-13T21:00:00Z" } });
+    expect(isCalendarRedundant(moved, [cal({ id: "old" })])).toBe(false);
+  });
+
+  // Same task, different slot, already on the calendar: still a re-booking.
+  it("keeps blocking a re-book of an executed event by task", () => {
+    const other = cal({ id: "new", params: { start: "2026-08-14T09:00:00Z" } });
+    expect(isCalendarRedundant(other, [cal({ id: "done", status: "executed" })])).toBe(true);
+  });
+
+  it("ignores cards the user already acted on", () => {
+    expect(isCalendarRedundant(cal({ id: "new" }), [cal({ id: "skipped", status: "rejected" })])).toBe(false);
   });
 });

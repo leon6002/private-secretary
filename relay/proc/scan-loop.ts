@@ -30,7 +30,7 @@ import { acquireLock, loadState, releaseLock, saveState, type LoopState } from "
 import { appendLabels, buildLabel, labelsPathFor } from "../io/labels.js";
 import type { InboundMessage } from "../core/types.js";
 import type { ActionItem } from "../core/action-item.js";
-import { isCalendarAlreadyBooked, isSupersedeExempt } from "../core/action-item.js";
+import { isCalendarRedundant, isSupersedeExempt } from "../core/action-item.js";
 import { draftActions, type DraftDeps } from "./draft.js";
 import { consolidateTasks, type ConsolidateDeps } from "./consolidate.js";
 import { refreshOpenTasks, type RefreshDeps } from "./refresh.js";
@@ -649,7 +649,7 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
         // calendar whose task_id OR exact start matches an EXECUTED calendar. The
         // event already exists — a later re-mention shouldn't spawn a duplicate
         // card (the '看房 already created, why still here' bug).
-        const toCommit = draftedActions.filter((a) => !isCalendarAlreadyBooked(a, fresh.actions));
+        const toCommit = draftedActions.filter((a) => !isCalendarRedundant(a, fresh.actions));
         // Cross-tick clustering: a fresh SUGGESTED card for a sender supersedes
         // the prior still-suggested card(s) for that sender — one chatty contact
         // yields one evolving card, not a flood. EXEMPTION (see
@@ -843,7 +843,7 @@ export async function runScanTick(opts: ScanLoopOptions): Promise<ScanLoopResult
             // calendar cards for a meeting that was ALREADY executed, and each
             // approval created another real event (2026-08-02: six duplicate
             // Q3 预算评审会 bookings). Filter BEFORE the cards land.
-            const toAdd = newActions.filter((a) => !isCalendarAlreadyBooked(a, fresh.actions));
+            const toAdd = newActions.filter((a) => !isCalendarRedundant(a, fresh.actions));
             refreshBookedFiltered = newActions.length - toAdd.length;
             // P1: the refresh already carries the rep's task_id, but inherit
             // from ANY dropped card too — the rep may have been ungrouped
