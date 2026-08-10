@@ -890,6 +890,13 @@ function UpdateTab() {
         needs a terminal.
       </p>
 
+      {status && !status.error && status.behind > 0 && (
+        <p className="text-body-medium text-primary mb-3">
+          A new version is available — {status.behind} commit
+          {status.behind === 1 ? "" : "s"} behind.
+        </p>
+      )}
+
       {status?.error ? (
         <p className="text-label-sm text-error">Could not check for updates: {status.error}</p>
       ) : (

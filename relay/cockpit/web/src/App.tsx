@@ -19,6 +19,7 @@ import { Calendar, CalendarDays, CircleCheck, Users, Network, Settings } from "l
 import type { LucideIcon } from "lucide-react";
 import { apiPost } from "./lib/api";
 import { cn } from "./lib/cn";
+import { isUpdateAvailable, useUpdateAvailable } from "./lib/useUpdateAvailable";
 import { Toaster } from "./lib/toast";
 import { CockpitFeedContext, useCockpitState } from "./lib/useCockpitState";
 import QueueScreen from "./screens/QueueScreen";
@@ -47,7 +48,16 @@ const NAV: NavItem[] = [
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
-function RailButton({ item, badge }: { item: NavItem; badge?: number }) {
+function RailButton({
+  item,
+  badge,
+  dot,
+}: {
+  item: NavItem;
+  badge?: number;
+  /** A quiet "something is waiting here" mark — used for an available update. */
+  dot?: boolean;
+}) {
   const Icon = item.icon;
   return (
     <NavLink
@@ -64,6 +74,13 @@ function RailButton({ item, badge }: { item: NavItem; badge?: number }) {
       }
     >
       <Icon size={20} strokeWidth={1.75} />
+      {dot && (
+        <span
+          data-testid="update-dot"
+          aria-label="Update available"
+          className="absolute top-1 right-1 w-2 h-2 rounded-full bg-primary"
+        />
+      )}
       {item.to === "/" && (
         <span
           data-testid="pending-badge"
@@ -132,6 +149,8 @@ function Shell() {
       .finally(() => setBooted(true));
   }, []);
   const feed = useCockpitState({ enabled: booted });
+  const { info: updateInfo } = useUpdateAvailable();
+  const updateWaiting = isUpdateAvailable(updateInfo);
   const pending = feed.state?.counts?.pending ?? 0;
 
   const [helpOpen, setHelpOpen] = useState(false);
@@ -180,7 +199,13 @@ function Shell() {
           </div>
           <div className="flex flex-col gap-6 flex-1 w-full items-center">
             {NAV.map((item) => (
-              <RailButton key={item.to} item={item} badge={item.to === "/" ? pending : undefined} />
+              <RailButton
+                key={item.to}
+                item={item}
+                badge={item.to === "/" ? pending : undefined}
+                // Settings holds the Update tab, so that is where the mark belongs.
+                dot={item.to === "/settings" && updateWaiting}
+              />
             ))}
           </div>
           <div className="mt-auto w-8 h-8 rounded-full bg-surface-variant" />

@@ -483,10 +483,11 @@ describe("redundantPendingCalendarIds — cleaning up what already accumulated",
     expect(redundantPendingCalendarIds([cal("c1")])).toEqual([]);
   });
 
-  // A meeting that moved is a real change, not a duplicate.
-  it("keeps both when the start differs", () => {
+  // Reversed after seeing real data: grouping by time preserved three
+  // timezone mistakes as three "reschedules". The newest read wins instead.
+  it("keeps only the newest when the same task has several times", () => {
     const moved = cal("c2", { params: { start: "2026-08-13T21:00:00Z" } });
-    expect(redundantPendingCalendarIds([cal("c1"), moved])).toEqual([]);
+    expect(redundantPendingCalendarIds([cal("c1"), moved])).toEqual(["c1"]);
   });
 
   // Anything the user acted on is their decision, not ours to tidy.
@@ -500,9 +501,11 @@ describe("redundantPendingCalendarIds — cleaning up what already accumulated",
     expect(drop).toEqual([]);
   });
 
-  it("ignores calendar cards with no start to compare on", () => {
+  // A half-baked card with no time is still a pending calendar card for the
+  // task, and the newest one supersedes it.
+  it("collapses cards with no start too", () => {
     const noStart = (id: string) => cal(id, { params: {} });
-    expect(redundantPendingCalendarIds([noStart("c1"), noStart("c2")])).toEqual([]);
+    expect(redundantPendingCalendarIds([noStart("c1"), noStart("c2")])).toEqual(["c1"]);
   });
 
   it("does not merge different conversations that share a slot", () => {
@@ -534,17 +537,22 @@ describe("start times compare as instants, not strings", () => {
     expect(redundantPendingCalendarIds([a, b])).toEqual(["c1"]);
   });
 
-  it("still separates genuinely different moments", () => {
+  // isCalendarRedundant still lets a genuinely different moment through — a
+  // reschedule must be able to ARRIVE. The sweep then keeps only the newest.
+  it("lets a different moment arrive, then keeps only the newest", () => {
     const a = cal("c1", "2026-08-13T15:00:00+01:00"); // 14:00Z
     const b = cal("c2", "2026-08-13T15:00:00Z"); // 15:00Z
     expect(isCalendarRedundant(b, [a])).toBe(false);
-    expect(redundantPendingCalendarIds([a, b])).toEqual([]);
+    expect(redundantPendingCalendarIds([a, b])).toEqual(["c1"]);
   });
 
-  it("leaves an unparseable start alone rather than guessing", () => {
+  // The sweep groups by task, so an unreadable time is no escape hatch — but
+  // isCalendarRedundant still refuses to call two unparseable times equal,
+  // because it has no instant to compare.
+  it("never claims two unreadable times are the same instant", () => {
     const a = cal("c1", "next Thursday");
     const b = cal("c2", "next Thursday");
-    expect(redundantPendingCalendarIds([a, b])).toEqual([]);
+    expect(isCalendarRedundant(b, [a])).toBe(false);
   });
 });
 

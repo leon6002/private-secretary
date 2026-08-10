@@ -271,19 +271,26 @@ export function isCalendarRedundant(a: ActionItem, existing: ActionItem[]): bool
 // refresh tick, and upgrading must not leave the user to delete six cards by
 // hand — on someone else's laptop that means a terminal session.
 //
-// Keeps the NEWEST card per slot, because it reflects the most recent read of
-// the conversation, and only ever touches "suggested" cards: anything the user
-// approved, skipped or executed is their decision, not ours to tidy.
+// ONE pending calendar card per task, the newest.
 //
-// Grouped by start time, so a meeting that MOVED keeps both cards — the user
-// still needs to see the change.
+// This started out grouped by start time, so a meeting that "moved" kept both
+// cards. Real data killed that idea: the model got the timezone wrong three
+// different ways for one 3pm meeting, and grouping by time dutifully preserved
+// all four as separate "reschedules". Four contradictory times do not help
+// anyone see a change — they force a guess, and guessing wrong books the wrong
+// hour.
+//
+// The newest card is the most recent read of the conversation, which is what a
+// card is supposed to be. A real reschedule still shows: the newest card
+// carries the new time.
+//
+// Only "suggested" cards are touched. Anything approved, skipped or executed is
+// the user's decision, not ours to tidy.
 export function redundantPendingCalendarIds(actions: ActionItem[]): string[] {
   const bySlot = new Map<string, ActionItem[]>();
   for (const a of actions) {
     if (a.action_type !== "calendar" || a.status !== "suggested") continue;
-    const start = startInstant(a);
-    if (start === undefined) continue; // no slot to compare on — leave it alone
-    const key = `${a.task_id ?? clusterOf(a)}|${start}`;
+    const key = a.task_id ?? clusterOf(a);
     const list = bySlot.get(key);
     if (list) list.push(a);
     else bySlot.set(key, [a]);
