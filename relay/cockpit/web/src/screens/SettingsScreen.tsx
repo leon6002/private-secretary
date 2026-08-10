@@ -12,7 +12,9 @@
 // /api/settings is fetched once by the screen and shared by the Model + Keys
 // tabs; Key saves call reload() so the status dots/previews refresh.
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { Info, Plus } from "lucide-react";
+import { ModelBrandIcon, type ModelBrandId } from "../components/ConnectorIcon";
 import Button from "../components/Button";
 import { Textarea } from "../components/ui/textarea";
 import Tabs from "../components/Tabs";
@@ -106,31 +108,48 @@ function ThemeSegmented() {
   );
 }
 
+// Every IANA zone the browser knows. Intl.supportedValuesOf has shipped in
+// Safari and Chrome for years; the fallback exists so a stray older engine
+// gets a usable list rather than an empty dropdown.
+function allTimeZones(detected: string): string[] {
+  const supported = (
+    Intl as unknown as { supportedValuesOf?: (k: string) => string[] }
+  ).supportedValuesOf;
+  const list = supported ? supported("timeZone") : [detected, "UTC"];
+  return list.includes(detected) ? list : [detected, ...list];
+}
+
 // The owner's zone: the clock every relative date ("tomorrow 9am") resolves
 // against, and the zone a meeting is read in when the conversation does not
-// name one. A wrong value is silent, so the detected machine zone is offered
-// as an explicit reset rather than left implicit.
+// name one.
+//
+// A dropdown, not a text field: the value has to be an exact IANA name, and a
+// field that accepts "Portugal time" only to reject it makes the user guess at
+// a spelling. Locked until Edit is pressed, because this is a setting you set
+// once and then only ever change by accident — the extra click is the point.
 function TimezoneRow() {
-  const [tz, setTz] = useState<string>("");
   const [saved, setSaved] = useState<string>("");
+  const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const [zones] = useState(() => allTimeZones(detected));
 
   useEffect(() => {
     apiGet<{ timezone?: string }>("/api/settings")
-      .then((s) => {
-        setTz(s.timezone ?? "");
-        setSaved(s.timezone ?? "");
-      })
+      .then((s) => setSaved(s.timezone ?? detected))
       .catch(() => undefined);
-  }, []);
+  }, [detected]);
 
   async function save(next: string) {
+    if (next === saved) {
+      setEditing(false);
+      return;
+    }
     setBusy(true);
     try {
       const r = await apiPost<{ timezone: string }>("/api/settings/timezone", { timezone: next });
-      setTz(r.timezone);
       setSaved(r.timezone);
+      setEditing(false);
       toast(`Timezone set to ${r.timezone}. Takes effect on the next daemon start.`);
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), true);
@@ -142,32 +161,32 @@ function TimezoneRow() {
   return (
     <Row
       label="Timezone"
-      hint={`Anchors dates like "tomorrow 9am" and reads meetings stated without a zone. Detected: ${detected}`}
+      hint={'Anchors dates like "tomorrow 9am" and reads meetings stated without a zone.'}
     >
       <div className="flex gap-2 items-center">
-        <input
-          value={tz}
-          onChange={(e) => setTz(e.target.value)}
-          placeholder={detected}
+        <select
+          value={saved}
+          disabled={!editing || busy}
           aria-label="Timezone"
+          onChange={(e) => void save(e.target.value)}
           className={cn(
-            "w-[13rem] text-label-sm text-on-surface bg-surface border border-outline rounded",
-            "px-2 py-1 placeholder:text-on-surface-variant",
+            "w-[15rem] text-label-sm rounded-lg border px-2 py-1.5 bg-surface",
             "focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary",
+            editing
+              ? "border-primary text-on-surface"
+              : "border-outline text-on-surface-variant appearance-none",
           )}
-        />
-        <Button
-          variant="ghost"
-          disabled={busy || tz.trim() === saved}
-          onClick={() => void save(tz.trim())}
         >
-          Save
+          {zones.map((z) => (
+            <option key={z} value={z}>
+              {z}
+              {z === detected ? "  (this Mac)" : ""}
+            </option>
+          ))}
+        </select>
+        <Button variant="ghost" disabled={busy} onClick={() => setEditing((v) => !v)}>
+          {editing ? "Cancel" : "Edit"}
         </Button>
-        {saved !== detected && (
-          <Button variant="ghost" disabled={busy} onClick={() => void save("")}>
-            Use {detected}
-          </Button>
-        )}
       </div>
     </Row>
   );
@@ -185,14 +204,137 @@ function GeneralTab() {
 }
 
 // ─── Model ───────────────────────────────────────────────────────────
+// Backend and key are ONE decision, so they are one tab. Split across "Model"
+// and "Keys" the relationship had to be explained in prose ("needs the
+// Anthropic key") and acted on in two places; here the key lives inside the
+// provider that needs it, and picking a backend with no key shows the empty
+// field immediately.
 
-const MODE_OPTIONS: Array<{ id: LlmMode; label: string; hint: string }> = [
-  { id: "cli", label: "CLI (claude -p)", hint: "Claude Code subscription — no API spend" },
-  { id: "anthropic", label: "Anthropic API", hint: "billed per token, needs the Anthropic key" },
-  { id: "deepseek", label: "DeepSeek", hint: "chat-completions, needs the DeepSeek key" },
+const MODE_OPTIONS: Array<{
+  id: LlmMode;
+  brand: ModelBrandId;
+  label: string;
+  hint: string;
+  // The Keychain service this backend needs, if any. CLI borrows the Claude
+  // Code subscription and has no key of its own.
+  key?: "anthropic" | "deepseek";
+}> = [
+  {
+    id: "cli",
+    brand: "claude",
+    label: "Claude Code",
+    hint: "Runs claude -p against your subscription. No API spend, no key.",
+  },
+  {
+    id: "anthropic",
+    brand: "anthropic",
+    label: "Anthropic API",
+    hint: "Billed per token.",
+    key: "anthropic",
+  },
+  {
+    id: "deepseek",
+    brand: "deepseek",
+    label: "DeepSeek",
+    hint: "Chat-completions. Cheaper, and the drafts are noticeably plainer.",
+    key: "deepseek",
+  },
 ];
 
-function ModelTab({ llm }: { llm: SettingsData["llm"] }) {
+// The key field for the selected provider. No status dot and no repeated
+// provider name — the row it sits in already says which provider this is.
+function ProviderKey({
+  service,
+  status,
+  onChanged,
+}: {
+  service: "anthropic" | "deepseek";
+  status: KeyStatus;
+  onChanged: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  // Two-click remove: the first click arms, the second sends the delete (an
+  // empty value means "remove" server-side). No modal — the armed state IS the
+  // confirmation, and losing a key is re-pasteable, not destructive.
+  const [armingRemove, setArmingRemove] = useState(false);
+
+  async function submit(next: string, verb: string) {
+    setBusy(true);
+    try {
+      await apiPost("/api/settings/keys", { service, value: next });
+      toast(`API key ${verb}`);
+      setEditing(false);
+      setValue("");
+      setArmingRemove(false);
+      onChanged();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-2">
+        <input
+          type="password"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="paste the key — it is never shown again"
+          aria-label={`${service} key value`}
+          autoFocus
+          className="flex-1 min-w-0 rounded-lg border border-outline bg-surface px-2.5 py-1.5 text-body-base text-on-surface outline-none focus:border-primary"
+        />
+        <Button onClick={() => void submit(value, "saved to the Keychain")} disabled={busy || !value.trim()}>
+          Save
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={() => {
+            setEditing(false);
+            setValue("");
+          }}
+        >
+          Cancel
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-label-sm text-on-surface-variant flex-1">
+        {status.configured ? `Key stored in the macOS Keychain · ${status.preview ?? ""}` : "No key yet"}
+      </span>
+      <Button variant="ghost" onClick={() => setEditing(true)}>
+        {status.configured ? "Replace" : "Add key"}
+      </Button>
+      {status.configured && (
+        <Button
+          variant="ghost"
+          disabled={busy}
+          onClick={() => (armingRemove ? void submit("", "removed") : setArmingRemove(true))}
+          className={cn(armingRemove && "border-error/40 text-error")}
+        >
+          {armingRemove ? "Click again to remove" : "Remove"}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function ModelTab({
+  llm,
+  keys,
+  onChanged,
+}: {
+  llm: SettingsData["llm"];
+  keys: SettingsData["keys"];
+  onChanged: () => void;
+}) {
   const [mode, setMode] = useState<LlmMode>(llm.mode);
   const [draftModel, setDraftModel] = useState(llm.draftModel);
   const [saving, setSaving] = useState(false);
@@ -214,184 +356,91 @@ function ModelTab({ llm }: { llm: SettingsData["llm"] }) {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 max-w-[62ch]">
       <div className="flex flex-col gap-2" role="radiogroup" aria-label="Drafting backend">
-        {MODE_OPTIONS.map((o) => (
-          <label
-            key={o.id}
-            className={cn(
-              "flex items-start gap-2 rounded border px-3 py-2 cursor-pointer transition-colors",
-              mode === o.id ? "border-primary bg-primary/5" : "border-outline hover:bg-surface-variant",
-            )}
-          >
-            <input
-              type="radio"
-              name="llm-mode"
-              value={o.id}
-              checked={mode === o.id}
-              onChange={() => setMode(o.id)}
-              className="mt-1"
-            />
-            <span>
-              <span className="block text-body-medium text-on-surface">{o.label}</span>
-              <span className="block text-label-sm text-on-surface-variant">{o.hint}</span>
-            </span>
-          </label>
-        ))}
+        {MODE_OPTIONS.map((o) => {
+          const selected = mode === o.id;
+          return (
+            <div
+              key={o.id}
+              className={cn(
+                "rounded-xl border transition-colors",
+                selected ? "border-primary bg-primary/5" : "border-outline hover:bg-surface-variant",
+              )}
+            >
+              <label className="flex items-center gap-3 px-3.5 py-3 cursor-pointer">
+                <ModelBrandIcon id={o.brand} size={22} />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-body-medium text-on-surface">{o.label}</span>
+                  <span className="block text-label-sm text-on-surface-variant">{o.hint}</span>
+                </span>
+                <input
+                  type="radio"
+                  name="llm-mode"
+                  value={o.id}
+                  checked={selected}
+                  onChange={() => setMode(o.id)}
+                  className="accent-primary flex-shrink-0"
+                />
+              </label>
+              {/* The chosen backend's own settings, revealed in place. The
+                  height animates from 0 so the list does not jump. */}
+              <AnimatePresence initial={false}>
+                {selected && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ type: "spring", bounce: 0, duration: 0.3 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="px-3.5 pb-3.5 pt-1 flex flex-col gap-2.5 border-t border-outline/60 mt-0.5">
+                      <label className="flex items-center gap-2">
+                        <span className="text-label-sm text-on-surface w-[5.5rem] flex-shrink-0">
+                          Draft model
+                        </span>
+                        <input
+                          type="text"
+                          value={draftModel}
+                          onChange={(e) => setDraftModel(e.target.value)}
+                          placeholder={o.id === "cli" ? "opus" : o.id === "anthropic" ? "claude-opus-4-8" : "deepseek-v4-pro"}
+                          className="flex-1 min-w-0 rounded-lg border border-outline bg-surface px-2.5 py-1.5 text-body-base text-on-surface outline-none focus:border-primary"
+                        />
+                      </label>
+                      {o.key && (
+                        <ProviderKey service={o.key} status={keys[o.key]} onChanged={onChanged} />
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          );
+        })}
       </div>
-      <label className="flex flex-col gap-1">
-        <span className="text-body-medium text-on-surface">Draft model</span>
-        <input
-          type="text"
-          value={draftModel}
-          onChange={(e) => setDraftModel(e.target.value)}
-          className="rounded border border-outline bg-surface px-2 py-1.5 text-body-base text-on-surface outline-none focus:border-primary"
-        />
-        <span className="text-label-sm text-on-surface-variant">
-          e.g. opus, claude-opus-4-8, deepseek-v4-pro — passed to the selected backend as-is.
-        </span>
-      </label>
+
       <div className="flex items-center gap-3">
         <Button onClick={() => void save()} disabled={saving || !draftModel.trim()}>
           {saving ? "Saving…" : "Save"}
         </Button>
+        <span className="text-label-sm text-on-surface-variant">
+          The model name is passed to the backend as-is.
+        </span>
       </div>
+
       {restartNotice && (
         <div
           role="status"
-          className="rounded border border-amber-500/40 bg-amber-500/5 text-amber-600 dark:text-amber-400 px-3 py-2 text-body-base"
+          className="rounded-lg border border-amber-500/40 bg-amber-500/5 text-amber-600 dark:text-amber-400 px-3 py-2 text-body-base"
         >
           Restart the daemon for changes to take effect.
         </div>
       )}
-    </div>
-  );
-}
 
-// ─── Keys ────────────────────────────────────────────────────────────
-
-function KeyRow({
-  service,
-  label,
-  status,
-  onChanged,
-}: {
-  service: "anthropic" | "deepseek";
-  label: string;
-  status: KeyStatus;
-  onChanged: () => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState("");
-  const [busy, setBusy] = useState(false);
-  // Two-click remove: the first click arms, the second sends the delete
-  // (an empty value means "remove" server-side). No modal — the armed state
-  // IS the confirmation.
-  const [armingRemove, setArmingRemove] = useState(false);
-
-  async function save() {
-    setBusy(true);
-    try {
-      await apiPost("/api/settings/keys", { service, value });
-      toast(`${label} updated`);
-      setEditing(false);
-      setValue("");
-      onChanged();
-    } catch (e) {
-      toast(e instanceof Error ? e.message : String(e), true);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function remove() {
-    if (!armingRemove) {
-      setArmingRemove(true);
-      return;
-    }
-    setBusy(true);
-    try {
-      await apiPost("/api/settings/keys", { service, value: "" });
-      toast(`${label} removed`);
-      setArmingRemove(false);
-      onChanged();
-    } catch (e) {
-      toast(e instanceof Error ? e.message : String(e), true);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="bg-surface border border-outline rounded p-4 flex flex-col gap-2">
-      <div className="flex items-center gap-2">
-        <span
-          className={cn(
-            "w-2.5 h-2.5 rounded-full flex-shrink-0",
-            status.configured ? "bg-emerald-500" : "bg-slate-300 dark:bg-slate-600",
-          )}
-        />
-        <div className="flex-1">
-          <div className="text-body-medium text-on-surface">{label}</div>
-          <div className="text-label-sm text-on-surface-variant">
-            {status.configured ? `configured · ${status.preview ?? ""}` : "not configured"}
-          </div>
-        </div>
-        {!editing && (
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={() => setEditing(true)}>
-              {status.configured ? "Replace" : "Add"}
-            </Button>
-            {status.configured && (
-              <Button
-                variant="ghost"
-                disabled={busy}
-                onClick={() => void remove()}
-                className={cn(armingRemove && "border-error/40 text-error")}
-              >
-                {armingRemove ? "Click again to remove" : "Remove"}
-              </Button>
-            )}
-          </div>
-        )}
-      </div>
-      {editing && (
-        <div className="flex items-center gap-2">
-          <input
-            type="password"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder="paste the key — it is never shown again"
-            aria-label={`${label} value`}
-            className="flex-1 rounded border border-outline bg-surface px-2 py-1.5 text-body-base text-on-surface outline-none focus:border-primary"
-          />
-          <Button onClick={() => void save()} disabled={busy || !value.trim()}>
-            Save to macOS Keychain
-          </Button>
-          <Button
-            variant="ghost"
-            onClick={() => {
-              setEditing(false);
-              setValue("");
-            }}
-          >
-            Cancel
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function KeysTab({ keys, onChanged }: { keys: SettingsData["keys"]; onChanged: () => void }) {
-  return (
-    <div className="flex flex-col gap-2">
-      <KeyRow service="anthropic" label="Anthropic API key" status={keys.anthropic} onChanged={onChanged} />
-      <KeyRow service="deepseek" label="DeepSeek API key" status={keys.deepseek} onChanged={onChanged} />
-      <p className="text-label-sm text-on-surface-variant mt-2 leading-relaxed">
+      <p className="text-label-sm text-on-surface-variant leading-relaxed">
         Keys are stored only in the macOS Keychain — never written to a file, and the full value is
-        never shown here (at most the last 4 characters). Slack and Google tokens have their own
-        flows and are not editable here.
+        never shown here (at most the last 4 characters). Slack and Google have their own
+        authorization flows on the Connections screen.
       </p>
     </div>
   );
@@ -1039,7 +1088,12 @@ function UpdateTab() {
   }
 
   const upToDate = !!status && !status.error && status.behind === 0;
-  const blocked = !!status?.dirty || !!status?.error;
+  // "Update now" only when an update can actually be applied. A dirty checkout
+  // or a failed check leaves the button on Check — offering Update there would
+  // promise something the server is going to refuse. Checking itself is always
+  // allowed: it reads git, it changes nothing, and blocking it was the fastest
+  // way to make a stuck install look unfixable.
+  const canUpdate = !!status && !status.error && !status.dirty && status.behind > 0;
   const label =
     busy === "updating"
       ? "Updating…"
@@ -1047,9 +1101,9 @@ function UpdateTab() {
         ? "Restarting…"
         : busy === "checking"
           ? "Checking…"
-          : upToDate
-            ? "Check for updates"
-            : "Update now";
+          : canUpdate
+            ? "Update now"
+            : "Check for updates";
 
   return (
     <div className="max-w-[62ch]">
@@ -1091,10 +1145,7 @@ function UpdateTab() {
         </p>
       )}
 
-      <Button
-        onClick={() => void (upToDate ? check() : update())}
-        disabled={busy !== "" || (blocked && !status?.error) || (!status && busy === "")}
-      >
+      <Button onClick={() => void (canUpdate ? update() : check())} disabled={busy !== ""}>
         {label}
       </Button>
 
@@ -1118,7 +1169,6 @@ function UpdateTab() {
 const TABS = [
   { id: "general", label: "General" },
   { id: "model", label: "Model" },
-  { id: "keys", label: "Keys" },
   { id: "google", label: "Google" },
   { id: "tools", label: "Tools" },
   { id: "activity", label: "Activity" },
@@ -1148,8 +1198,9 @@ export default function SettingsScreen() {
           <Tabs tabs={TABS} active={tab} onChange={setTab} />
           {tab === "general" && <GeneralTab />}
           {tab === "update" && <UpdateTab />}
-          {tab === "model" && settings && <ModelTab llm={settings.llm} />}
-          {tab === "keys" && settings && <KeysTab keys={settings.keys} onChanged={reload} />}
+          {tab === "model" && settings && (
+            <ModelTab llm={settings.llm} keys={settings.keys} onChanged={reload} />
+          )}
           {tab === "google" && <GoogleTab />}
           {tab === "tools" && <ToolsTab />}
           {tab === "activity" && <ActivityTab />}

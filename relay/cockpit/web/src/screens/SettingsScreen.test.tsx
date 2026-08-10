@@ -73,21 +73,52 @@ describe("SettingsScreen", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Model" }));
     expect(await screen.findByText("Draft model")).toBeTruthy();
-    expect(screen.getByText("CLI (claude -p)")).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("tab", { name: "Keys" }));
-    expect(await screen.findByText("Anthropic API key")).toBeTruthy();
-    expect(screen.getByText("DeepSeek API key")).toBeTruthy();
+    expect(screen.getByText("Claude Code")).toBeTruthy();
+    expect(screen.getByText("Anthropic API")).toBeTruthy();
+    expect(screen.getByText("DeepSeek")).toBeTruthy();
   });
 
-  it("Keys tab shows the last-4 preview, never the full key", async () => {
+  // The zone is set once and afterwards only ever changed by accident, so the
+  // dropdown is inert until Edit is pressed.
+  it("keeps the timezone dropdown disabled until Edit is pressed", async () => {
+    mockApi();
+    render(<SettingsScreen />);
+
+    const select = (await screen.findByLabelText("Timezone")) as HTMLSelectElement;
+    expect(select.disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect((screen.getByLabelText("Timezone") as HTMLSelectElement).disabled).toBe(false);
+  });
+
+  // Backend and key are one tab now: the key field belongs to the provider
+  // that needs it and only appears once that provider is selected.
+  it("shows a provider's key field only when it is the selected backend", async () => {
+    mockApi();
+    render(<SettingsScreen />);
+    fireEvent.click(screen.getByRole("tab", { name: "Model" }));
+
+    // Fixture mode is "cli", which has no key of its own.
+    expect(await screen.findByText("Draft model")).toBeTruthy();
+    expect(screen.queryByText(/macOS Keychain ·/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("radio", { name: /Anthropic API/ }));
+    expect(await screen.findByText(/Key stored in the macOS Keychain · …1234/)).toBeTruthy();
+  });
+
+  // RED LINE: the full key must never reach the DOM, only its last 4 chars.
+  it("shows the last-4 preview, never the full key", async () => {
     mockApi();
     const { container } = render(<SettingsScreen />);
-    fireEvent.click(screen.getByRole("tab", { name: "Keys" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Model" }));
+    fireEvent.click(await screen.findByRole("radio", { name: /Anthropic API/ }));
 
-    expect(await screen.findByText("configured · …1234")).toBeTruthy();
-    expect(screen.getByText("not configured")).toBeTruthy(); // deepseek row
+    expect(await screen.findByText(/…1234/)).toBeTruthy();
     expect(container.textContent).not.toContain(FULL_KEY);
+
+    // The unconfigured provider says so rather than showing a stale preview.
+    fireEvent.click(screen.getByRole("radio", { name: /DeepSeek/ }));
+    expect(await screen.findByText("No key yet")).toBeTruthy();
   });
 
   it("Activity tab renders log rows and refetches with ?kind= when a chip is clicked", async () => {
