@@ -52,6 +52,23 @@ describe("updateStatus", () => {
   });
 });
 
+// A pull discards local MODIFICATIONS, never untracked files — so the dirty
+// check has to ask git the narrow question. Getting this wrong meant a single
+// scratch file in an install directory stopped it updating permanently.
+describe("dirty", () => {
+  it("asks git to exclude untracked files", async () => {
+    const { runner, calls } = fakeGit(CLEAN);
+    await updateStatus(runner);
+    expect(calls).toContainEqual(["git", "status", "--porcelain", "--untracked-files=no"]);
+  });
+
+  it("still refuses when a tracked file is modified", async () => {
+    const { runner } = fakeGit({ ...CLEAN, "status --porcelain": " M relay/cli.ts" });
+    expect((await updateStatus(runner)).dirty).toBe(true);
+    expect(await runUpdate(runner)).toMatchObject({ ok: false, needsRestart: false });
+  });
+});
+
 describe("runUpdate", () => {
   // Nothing to pull is not the same as nothing to do: a machine that pulled
   // but never restarted is still running the old code, and with no separate

@@ -93,7 +93,14 @@ export async function updateStatus(
   const now = (opts.now ?? Date.now)();
   try {
     const branch = await git(runner, "rev-parse", "--abbrev-ref", "HEAD");
-    const dirty = (await git(runner, "status", "--porcelain")).length > 0;
+    // --untracked-files=no is the whole point: a pull can only ever discard
+    // MODIFICATIONS to tracked files. An untracked file — a scratch script, a
+    // downloaded log — survives it untouched, so counting those as "dirty"
+    // blocked updates to protect something that was never at risk. One stray
+    // file in an install directory was enough to stop it updating for good.
+    // (If an incoming commit does add a file at that same path, git refuses
+    // the pull itself and the step reports it — caught where it is real.)
+    const dirty = (await git(runner, "status", "--porcelain", "--untracked-files=no")).length > 0;
     const current = await git(runner, "rev-parse", "--short", "HEAD");
     const currentSubject = await git(runner, "log", "-1", "--format=%s");
 
